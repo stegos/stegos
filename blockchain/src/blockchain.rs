@@ -35,7 +35,7 @@ use crate::output::*;
 use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rocksdb;
@@ -939,7 +939,7 @@ impl Blockchain {
     /// Returns current activity map,
     /// Also returns account PublicKey of the winner of service award,
     /// and amount of winning, if winner was found.
-    pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVector, Option<(PublicKey, i64)>) {
+    pub fn awards_from_active_epoch(&self, random: &VRF) -> (BitVec, Option<(PublicKey, i64)>) {
         let mut service_awards = self.service_awards().clone();
 
         let epoch_activity = self.epoch_activity().clone();
@@ -967,14 +967,14 @@ impl Blockchain {
             self.validators().len()
         );
 
-        let mut activity_map = BitVector::new(epoch_validators.len());
-
-        for (id, (validator, _)) in epoch_validators.iter().enumerate() {
+        let mut activity_map = BitVec::from_elem(epoch_validators.len(), false);
+        for (validator_id, (validator, _)) in epoch_validators.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
                 Some(ValidatorAwardState::Failed { .. }) | None => {}
                 Some(ValidatorAwardState::Active) => {
-                    activity_map.insert(id);
+                    assert!(!activity_map[validator_id as usize]);
+                    activity_map.set(validator_id as usize, true);
                 }
             }
         }
@@ -996,15 +996,14 @@ impl Blockchain {
     /// This activity_map should be validated by consensus.
     pub(crate) fn epoch_activity_from_macro_block(
         &self,
-        activity_map: &BitVector,
+        activity_map: &BitVec,
     ) -> Result<BTreeMap<PublicKey, ValidatorAwardState>, BlockchainError> {
         let mut validators_activity = BTreeMap::new();
         let validators = self.validators_at_epoch_start();
         if activity_map.len() > validators.len() {
             return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
         };
-        for (validator_id, (validator, _)) in validators.iter().enumerate() {
-            let activity = activity_map.contains(validator_id);
+        for ((validator, _slots), activity) in validators.iter().zip(activity_map.iter()) {
             let validator_account = self
                 .escrow
                 .account_by_network_key(validator)

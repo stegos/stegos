@@ -1141,7 +1141,7 @@ pub mod tests {
     use crate::output::PaymentOutput;
     use crate::output::StakeOutput;
     use crate::timestamp::Timestamp;
-    use bitvector::BitVector;
+    use bit_vec::BitVec;
     use stegos_crypto::pbc;
 
     ///
@@ -1575,7 +1575,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 inputs1,
                 outputs1,
@@ -1601,7 +1601,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 inputs1,
                 outputs1,
@@ -1648,7 +1648,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 input_hashes,
                 outputs,
@@ -1677,7 +1677,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 input_hashes,
                 outputs,
@@ -1708,7 +1708,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 input_hashes,
                 outputs,
@@ -1743,7 +1743,7 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVector::new(0),
+                BitVec::new(),
                 gamma,
                 input_hashes,
                 outputs,
@@ -1787,7 +1787,7 @@ pub mod tests {
             complexity,
             timestamp,
             block_reward,
-            BitVector::new(0),
+            BitVec::new(),
             gamma,
             input_hashes,
             outputs,

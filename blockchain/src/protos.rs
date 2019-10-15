@@ -22,17 +22,14 @@
 #![allow(bare_trait_objects)]
 
 use crate::transaction::PaymentTransaction;
-use failure::{ensure, format_err, Error, Fail};
-use stegos_serialization::traits::*;
-
-use bitvector::BitVector;
-
 use crate::view_changes::*;
 use crate::*;
+use failure::{Error, Fail};
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig};
+use stegos_serialization::traits::*;
 
 #[derive(Debug, Fail)]
 pub enum ProtoError {
@@ -44,9 +41,10 @@ pub enum ProtoError {
 
 // link protobuf dependencies
 use crate::awards::Awards;
+use bit_vec::BitVec;
 use std::collections::BTreeMap;
+use std::iter::FromIterator;
 use stegos_crypto::protos::*;
-use stegos_crypto::CryptoError;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 impl ProtoConvert for LSN {
@@ -888,13 +886,7 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_timestamp(self.timestamp.into());
         proto.set_block_reward(self.block_reward);
         proto.set_gamma(self.gamma.into_proto());
-        if !self.activity_map.is_empty() {
-            assert!(self.activity_map.len() <= VALIDATORS_MAX);
-            proto.activity_map.resize(VALIDATORS_MAX, false);
-            for bit in self.activity_map.iter() {
-                proto.activity_map[bit] = true;
-            }
-        }
+        proto.activity_map.extend(self.activity_map.iter());
         proto.set_inputs_len(self.inputs_len);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_len(self.outputs_len);
@@ -912,22 +904,12 @@ impl ProtoConvert for MacroBlockHeader {
         let difficulty = proto.get_difficulty();
         let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
-        let mut activity_map = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.activity_map.iter().enumerate() {
-            if *val {
-                activity_map.insert(bit);
-            }
-        }
+        let activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
         let gamma = Fr::from_proto(proto.get_gamma())?;
         let inputs_len = proto.get_inputs_len();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_len = proto.get_outputs_len();
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
-        if proto.activity_map.len() > VALIDATORS_MAX {
-            return Err(
-                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.activity_map.len()).into(),
-            );
-        }
         Ok(MacroBlockHeader {
             version,
             previous,
@@ -954,13 +936,7 @@ impl ProtoConvert for MacroBlock {
         let mut proto = blockchain::MacroBlock::new();
         proto.set_header(self.header.into_proto());
         proto.set_multisig(self.multisig.into_proto());
-        if !self.multisigmap.is_empty() {
-            assert!(self.multisigmap.len() <= VALIDATORS_MAX);
-            proto.multisigmap.resize(VALIDATORS_MAX, false);
-            for bit in self.multisigmap.iter() {
-                proto.multisigmap[bit] = true;
-            }
-        }
+        proto.multisigmap.extend(self.multisigmap.iter());
         for input in &self.inputs {
             proto.inputs.push(input.into_proto());
         }
@@ -977,18 +953,7 @@ impl ProtoConvert for MacroBlock {
         } else {
             pbc::Signature::zero()
         };
-        if proto.multisigmap.len() > VALIDATORS_MAX {
-            return Err(
-                CryptoError::InvalidBinaryLength(VALIDATORS_MAX, proto.multisigmap.len()).into(),
-            );
-        }
-
-        let mut multisigmap = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.multisigmap.iter().enumerate() {
-            if *val {
-                multisigmap.insert(bit);
-            }
-        }
+        let multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
 
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
@@ -1072,13 +1037,7 @@ impl ProtoConvert for ViewChangeProof {
         if !self.multisig.is_zero() {
             proto.set_multisig(self.multisig.into_proto());
         }
-        if !self.multimap.is_empty() {
-            assert!(self.multimap.len() <= VALIDATORS_MAX);
-            proto.multimap.resize(VALIDATORS_MAX, false);
-            for bit in self.multimap.iter() {
-                proto.multimap[bit] = true;
-            }
-        }
+        proto.multimap.extend(self.multimap.iter());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
@@ -1087,19 +1046,7 @@ impl ProtoConvert for ViewChangeProof {
         } else {
             pbc::Signature::zero()
         };
-        ensure!(
-            proto.multimap.len() <= VALIDATORS_MAX,
-            format_err!(
-                "multimap greater than max count of max validators: map_len={}",
-                proto.multimap.len()
-            )
-        );
-        let mut multimap = BitVector::new(VALIDATORS_MAX);
-        for (bit, val) in proto.multimap.iter().enumerate() {
-            if *val {
-                multimap.insert(bit);
-            }
-        }
+        let multimap = BitVec::from_iter(proto.multimap.iter().map(|x| *x));
         Ok(ViewChangeProof { multisig, multimap })
     }
 }
@@ -1251,8 +1198,8 @@ mod tests {
 
         // View Changes Proof.
         let sig = pbc::sign_hash(&previous, &skeypbc);
-        let signatures = vec![(1u32, &sig)];
-        let view_change_proof = Some(ViewChangeProof::new(signatures.into_iter()));
+        let signatures = vec![(0u32, &sig)];
+        let view_change_proof = Some(ViewChangeProof::new(signatures.into_iter(), 1));
 
         // Transactions.
         let (tx, _inputs, _outputs) =
@@ -1293,6 +1240,7 @@ mod tests {
         let view_change = 15;
         let amount: i64 = 1_000_000;
         let block_reward = 1000;
+        let activity_map = BitVec::new();
         let previous = Hash::digest(&"test".to_string());
 
         // "genesis" output by 0
@@ -1317,7 +1265,7 @@ mod tests {
             difficulty,
             timestamp,
             block_reward,
-            BitVector::new(0),
+            activity_map,
             gamma,
             inputs1,
             outputs1,

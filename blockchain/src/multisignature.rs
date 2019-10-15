@@ -22,8 +22,8 @@
 // SOFTWARE.
 
 use crate::error::MultisignatureError;
-use crate::VALIDATORS_MAX;
-use bitvector::BitVector;
+use crate::ValidatorId;
+use bit_vec::BitVec;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -45,7 +45,7 @@ pub fn check_supermajority(got_votes: i64, total_votes: i64) -> bool {
 pub fn create_multi_signature(
     validators: &Vec<(pbc::PublicKey, i64)>,
     signatures: &BTreeMap<pbc::PublicKey, pbc::Signature>,
-) -> (pbc::Signature, BitVector) {
+) -> (pbc::Signature, BitVec) {
     create_multi_signature_index(
         // convert Map<Pk, Signature> -> Iterator<(id, Signature)>
         validators
@@ -56,6 +56,7 @@ pub fn create_multi_signature(
                 // map pk -> Option<signature>
                 signatures.get(pk).map(|pk| (id, pk))
             }),
+        validators.len(),
     )
 }
 
@@ -63,25 +64,23 @@ pub fn create_multi_signature(
 /// Create a new multi-signature from individual signatures
 /// version which work for array of validators id's
 ///
-pub fn create_multi_signature_index<'a, I>(signatures: I) -> (pbc::Signature, BitVector)
+pub fn create_multi_signature_index<'a, I>(
+    signatures: I,
+    validators_len: usize,
+) -> (pbc::Signature, BitVec)
 where
-    I: Iterator<Item = (u32, &'a pbc::Signature)>,
+    I: Iterator<Item = (ValidatorId, &'a pbc::Signature)>,
 {
     let mut multisig = pbc::G1::zero();
-    let mut multisigmap = BitVector::new(VALIDATORS_MAX);
-    let mut vec: Vec<_> = signatures.collect();
-    vec.sort_by_key(|i| i.0);
-
-    for (bit, sig) in vec {
-        assert!(bit < VALIDATORS_MAX as u32);
+    let mut multisigmap = BitVec::from_elem(validators_len, false);
+    for (validator_id, sig) in signatures {
+        assert!((validator_id as usize) < validators_len);
+        assert!(!multisigmap[validator_id as usize]);
+        multisigmap.set(validator_id as usize, true);
         let sig: pbc::G1 = sig.clone().into();
         multisig += sig;
-        let ok = multisigmap.insert(bit as usize);
-        assert!(ok);
     }
-
     let multisig: pbc::Signature = multisig.into();
-
     (multisig, multisigmap)
 }
 
@@ -91,7 +90,7 @@ where
 pub fn check_multi_signature(
     hash: &Hash,
     multisig: &pbc::Signature,
-    multisigmap: &BitVector,
+    multisigmap: &BitVec,
     validators: &Vec<(pbc::PublicKey, i64)>,
     total_slots: i64,
 ) -> Result<(), MultisignatureError> {
@@ -107,18 +106,13 @@ pub fn check_multi_signature(
     // total count of group slots
     let mut group_total_slots = 0;
 
-    for bit in multisigmap.iter() {
-        if bit >= validators.len() {
-            return Err(MultisignatureError::TooBigBitmap(bit, validators.len()));
+    for ((validator_pkey, slots), val) in validators.iter().zip(multisigmap.iter()) {
+        if !val {
+            continue;
         }
-
-        let validator = &validators[bit];
-        let pkey: pbc::G2 = validator.0.into();
-        let slots = validator.1;
-        assert!(slots > 0);
-
-        multisigpkey += pkey;
-        group_total_slots += slots;
+        assert!(*slots > 0);
+        multisigpkey += validator_pkey.clone().into();
+        group_total_slots += *slots;
     }
 
     // Multi-signature must be signed by the supermajority of validators.
@@ -162,7 +156,8 @@ mod tests {
             pbc::check_hash(hash, &signatures[i].0, &validators[i].0).unwrap();
         }
 
-        let multisig = create_multi_signature_index(signatures.iter().map(|p| (p.1, &p.0)));
+        let multisig =
+            create_multi_signature_index(signatures.iter().map(|p| (p.1, &p.0)), NUM_VALIDATORS);
         assert!(check_multi_signature(hash, &multisig.0, &multisig.1, &validators, 1).is_ok())
     }
 }

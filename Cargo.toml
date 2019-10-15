@@ -37,7 +37,7 @@ stegos_node = { version = "0.2.0", path = "./node" }
 stegos_serialization = { version = "0.2.0", path = "./serialization" }
 stegos_wallet = { version = "0.2.0", path = "./wallet" }
 assert_matches = "1.3.0"
-bitvector = "0.1"
+bit-vec = "0.6"
 clap = "2.32"
 dirs = "2.0"
 failure = "0.1"

@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use clap::{crate_version, App, Arg};
 use log::*;
 use simple_logger;
@@ -255,7 +255,7 @@ fn main() {
     let last_macro_block_random = Hash::digest("genesis");
     let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].2, &seed);
-    let activity_map = BitVector::ones(keychains.len());
+    let activity_map = BitVec::from_elem(keychains.len(), true);
     let timestamp = Timestamp::now();
 
     // Create a block.

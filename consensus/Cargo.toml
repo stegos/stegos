@@ -16,7 +16,7 @@ description = "Stegos - Consensus Implementation"
 stegos_blockchain = { version = "0.2.0", path = "../blockchain" }
 stegos_crypto = { version = "0.2.0", path = "../crypto" }
 stegos_serialization = { version = "0.2.0", path = "../serialization" }
-bitvector = "0.1"
+bit-vec = "0.6"
 failure = "0.1"
 log = "0.4"
 protobuf = "2.6"

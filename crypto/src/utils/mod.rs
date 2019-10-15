@@ -23,12 +23,13 @@
 
 use crate::CryptoError;
 
-use bitvector::BitVector;
+use bit_vec::BitVec;
 use hex;
 use ristretto_bulletproofs::RangeProof;
 use serde::{de, Deserialize, Deserializer, Serializer};
 use std::cmp::Ordering;
 use std::fmt::Write;
+
 // -------------------------------------------------------------------
 // general utility functions
 
@@ -197,33 +198,28 @@ pub fn ushr_le(src: &[u8], dst: &mut [u8], nsh: usize) {
     }
 }
 
-pub fn deserialize_bitvec<'de, D>(deserializer: D) -> Result<BitVector, D::Error>
+pub fn deserialize_bitvec<'de, D>(deserializer: D) -> Result<BitVec, D::Error>
 where
     D: Deserializer<'de>,
 {
     let string_vec: String = Deserialize::deserialize(deserializer)?;
-
-    let mut bit_vec = BitVector::new(string_vec.len());
-
-    for (id, b) in string_vec.chars().enumerate() {
-        match b {
-            '1' => bit_vec.insert(id),
-            '0' => bit_vec.remove(id),
-            _ => return Err(de::Error::custom("Expecting 0 or 1.")),
-        };
-    }
-
-    Ok(bit_vec)
+    string_vec
+        .chars()
+        .map(|b| match b {
+            '1' => Ok(true),
+            '0' => Ok(false),
+            _ => Err(de::Error::custom("Expecting 0 or 1.")),
+        })
+        .collect()
 }
 
-pub fn serialize_bitvec<S>(vec: &BitVector, serializer: S) -> Result<S::Ok, S::Error>
+pub fn serialize_bitvec<S>(vec: &BitVec, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
     let mut string_vec = String::new();
-
-    for id in 0..vec.capacity() {
-        match vec.contains(id) {
+    for val in vec.iter() {
+        match val {
             true => string_vec.push('1'),
             false => string_vec.push('0'),
         }

@@ -162,7 +162,7 @@ impl ProtoConvert for SealedViewChangeProof {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitvector::BitVector;
+    use bit_vec::BitVec;
     use stegos_blockchain::Timestamp;
     use stegos_crypto::hash::{Hashable, Hasher};
     use stegos_crypto::{pbc, scc};
@@ -228,7 +228,7 @@ mod tests {
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
         let difficulty = 100500;
         let block_reward = 0;
-        let activity_map = BitVector::new(0);
+        let activity_map = BitVec::new();
         let block = MacroBlock::empty(
             previous,
             epoch,

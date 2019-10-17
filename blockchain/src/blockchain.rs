@@ -1916,6 +1916,9 @@ impl Blockchain {
         Ok((inputs, outputs, txs))
     }
 
+    ///
+    /// Remove the last micro block.
+    ///
     pub fn pop_micro_block(
         &mut self,
     ) -> Result<

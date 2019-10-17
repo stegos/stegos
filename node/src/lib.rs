@@ -818,28 +818,7 @@ impl NodeService {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
-            self.last_block_clock = clock::now();
-            self.mempool.pop_microblock(txs.clone());
-            let transaction_statuses = txs
-                .iter()
-                .map(|tx| {
-                    (
-                        Hash::digest(&tx),
-                        TransactionStatus::Rollback {
-                            epoch: self.chain.epoch(),
-                            offset: self.chain.offset(),
-                        },
-                    )
-                })
-                .collect();
-            let msg = RevertedMicroBlock {
-                block,
-                transaction_statuses,
-                pruned_outputs,
-                recovered_inputs,
-            };
-            notify_subscribers(&mut self.chain_subscribers, msg.into());
+            self.pop_micro_block()?;
         }
         assert_eq!(offset, self.chain.offset());
 
@@ -1044,16 +1023,7 @@ impl NodeService {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            let (pruned_outputs, recovered_inputs, _txs, block) = self.chain.pop_micro_block()?;
-            self.last_block_clock = clock::now();
-            let msg = RevertedMicroBlock {
-                block,
-                transaction_statuses: HashMap::new(),
-                pruned_outputs,
-                recovered_inputs,
-            };
-
-            notify_subscribers(&mut self.chain_subscribers, msg.into());
+            self.pop_micro_block()?;
         }
         assert_eq!(0, self.chain.offset());
 
@@ -1332,41 +1302,50 @@ impl NodeService {
         TransactionStatus::Accepted {}
     }
 
+    ///
+    /// Remove the last micro block.
+    ///
+    /// # Arguments
+    ///
+    /// * `notify_tx_statuses` - notify subscribers that transactions has been reverted.
+    ///
+    fn pop_micro_block(&mut self) -> Result<(), Error> {
+        let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
+        self.last_block_clock = clock::now();
+        let transaction_statuses = txs
+            .iter()
+            .map(|tx| {
+                (
+                    Hash::digest(&tx),
+                    TransactionStatus::Rollback {
+                        epoch: self.chain.epoch(),
+                        offset: self.chain.offset(),
+                    },
+                )
+            })
+            .collect();
+        self.mempool.pop_micro_block(txs);
+        let msg = RevertedMicroBlock {
+            block,
+            transaction_statuses,
+            pruned_outputs,
+            recovered_inputs,
+        };
+        notify_subscribers(&mut self.chain_subscribers, msg.into());
+        self.update_validation_status();
+        Ok(())
+    }
+
     /// Handler for NodeMessage::RevertMicroBlock.
     fn handle_pop_micro_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
-        if self.chain.offset() > 1 {
-            let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
-            self.last_block_clock = clock::now();
-
-            self.mempool.pop_microblock(txs.clone());
-
-            let transaction_statuses: HashMap<_, _> = txs
-                .iter()
-                .map(|tx| {
-                    (
-                        Hash::digest(&tx),
-                        TransactionStatus::Rollback {
-                            epoch: self.chain.epoch(),
-                            offset: self.chain.offset(),
-                        },
-                    )
-                })
-                .collect();
-            let msg = RevertedMicroBlock {
-                block,
-                transaction_statuses,
-                pruned_outputs,
-                recovered_inputs,
-            };
-            notify_subscribers(&mut self.chain_subscribers, msg.into());
-            self.update_validation_status()
-        } else {
-            error!(
+        if self.chain.offset() == 0 {
+            return format_err!(
                 "Attempt to revert a macro block: epoch={}",
                 self.chain.epoch()
             );
         }
+        self.pop_micro_block()?;
         Ok(())
     }
 

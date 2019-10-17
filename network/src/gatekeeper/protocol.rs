@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::metrics;
+
 use bytes::{BufMut, BytesMut};
 use futures::future;
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
@@ -31,6 +33,9 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
 
 use super::proto::gatekeeper_proto::{self, Message, Message_oneof_typ};
+
+// Prtocol label for metrics
+const PROTOCOL_LABEL: &'static str = "gatekeeper";
 
 /// Implementation of `ConnectionUpgrade` for the Gatekeeper protocol.
 #[derive(Debug, Clone, Default)]
@@ -139,6 +144,9 @@ impl Encoder for GatekeeperCodec {
         // Reserve enough space for the data and the length. The length has a maximum of 32 bits,
         // which means that 5 bytes is enough for the variable-length integer.
         dst.reserve(msg_size as usize + 5);
+        metrics::OUTGOING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(msg_size as i64 + 5);
 
         proto
             .write_length_delimited_to_writer(&mut dst.by_ref().writer())
@@ -155,6 +163,10 @@ impl Decoder for GatekeeperCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        metrics::INCOMING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(src.len() as i64);
+
         let packet = match self.length_prefix.decode(src)? {
             Some(p) => p,
             None => return Ok(None),

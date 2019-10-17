@@ -26,6 +26,7 @@
 //!
 //! The `Stream` component is used to poll the underlying transport, and the `Sink` component is
 //! used to send messages.
+use crate::metrics;
 
 use super::dht_proto;
 use bytes::BytesMut;
@@ -42,6 +43,9 @@ use stegos_crypto::pbc;
 use tokio::codec::Framed;
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
+
+// Protocol label for metrics
+const PROTOCOL_LABEL: &'static str = "kademlia";
 
 /// Status of our connection to a node reported by the Kademlia protocol.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
@@ -187,11 +191,23 @@ where
                 .from_err::<IoError>()
                 .with::<_, fn(_) -> _, _>(|response| -> Result<_, IoError> {
                     let proto_struct = resp_msg_to_proto(response);
-                    proto_struct
+                    let res = proto_struct
                         .write_to_bytes()
-                        .map_err(|err| IoError::new(IoErrorKind::InvalidData, err.to_string()))
+                        .map_err(|err| IoError::new(IoErrorKind::InvalidData, err.to_string()));
+                    match res {
+                        Ok(bytes) => {
+                            metrics::OUTGOING_TRAFFIC
+                                .with_label_values(&[&PROTOCOL_LABEL])
+                                .inc_by(bytes.len() as i64);
+                            Ok(bytes)
+                        }
+                        Err(e) => Err(e),
+                    }
                 })
                 .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                    metrics::INCOMING_TRAFFIC
+                        .with_label_values(&[&PROTOCOL_LABEL])
+                        .inc_by(bytes.len() as i64);
                     let request = protobuf::parse_from_bytes(&bytes)?;
                     proto_to_req_msg(request)
                 }),
@@ -218,11 +234,19 @@ where
                 .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
                     let proto_struct = req_msg_to_proto(request);
                     match proto_struct.write_to_bytes() {
-                        Ok(msg) => Ok(msg),
+                        Ok(msg) => {
+                            metrics::OUTGOING_TRAFFIC
+                                .with_label_values(&[&PROTOCOL_LABEL])
+                                .inc_by(msg.len() as i64);
+                            Ok(msg)
+                        }
                         Err(err) => Err(IoError::new(IoErrorKind::Other, err.to_string())),
                     }
                 })
                 .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                    metrics::INCOMING_TRAFFIC
+                        .with_label_values(&[&PROTOCOL_LABEL])
+                        .inc_by(bytes.len() as i64);
                     let response = protobuf::parse_from_bytes(&bytes)?;
                     proto_to_resp_msg(response)
                 }),

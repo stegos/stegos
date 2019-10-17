@@ -29,9 +29,21 @@ lazy_static! {
     )
     .unwrap();
     pub static ref INCOMING_RATES: GaugeVec = register_gauge_vec!(
-        "stegos_pubsub_incoming_rate",
+        "stegos_pubsub_incoming_rate_per_peer",
         "Incoming messages per sec",
         &["peer"]
+    )
+    .unwrap();
+    pub static ref OUTGOING_PUBSUB_TRAFFIC: IntCounterVec = register_int_counter_vec!(
+        "stegos_pubsub_outgoing_traffic_per_topic",
+        "Outgoing bytes per topic",
+        &["topic"]
+    )
+    .unwrap();
+    pub static ref INCOMING_PUBSUB_TRAFFIC: IntCounterVec = register_int_counter_vec!(
+        "stegos_pubsub_incoming_traffic_per_topic",
+        "Outgoing bytes per topic",
+        &["topic"]
     )
     .unwrap();
 }

@@ -19,6 +19,7 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::metrics;
+use crate::pubsub::metrics as pubsub_metrics;
 use crate::pubsub::proto::pubsub_proto as rpc_proto;
 
 use bytes::{BufMut, BytesMut};
@@ -109,6 +110,9 @@ impl Encoder for FloodsubCodec {
         let mut proto = rpc_proto::RPC::new();
 
         for message in item.messages.into_iter() {
+            pubsub_metrics::OUTGOING_PUBSUB_TRAFFIC
+                .with_label_values(&[&message.topic])
+                .inc_by(message.data.len() as i64);
             let mut msg = rpc_proto::Message::new();
             msg.set_data(message.data);
             msg.set_topic(message.topic);
@@ -158,10 +162,12 @@ impl Decoder for FloodsubCodec {
 
         let mut messages = Vec::with_capacity(rpc.get_publish().len());
         for mut publish in rpc.take_publish().into_iter() {
-            messages.push(FloodsubMessage {
-                data: publish.take_data(),
-                topic: publish.take_topic(),
-            });
+            let data = publish.take_data();
+            let topic = publish.take_topic();
+            pubsub_metrics::INCOMING_PUBSUB_TRAFFIC
+                .with_label_values(&[&topic])
+                .inc_by(data.len() as i64);
+            messages.push(FloodsubMessage { data, topic });
         }
 
         Ok(Some(FloodsubRpc {

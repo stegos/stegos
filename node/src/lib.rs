@@ -56,7 +56,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
-use stegos_consensus::optimistic::{SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage};
+use stegos_consensus::optimistic::{
+    AddressedViewChangeProof, SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage,
+};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -106,6 +108,8 @@ pub const TX_TOPIC: &'static str = "tx";
 const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic for ViewChange message.
 pub const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
+/// Topic for ViewChange proofs broadcasts.
+pub const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
 /// Topic for ViewChange proofs.
 pub const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
@@ -121,6 +125,7 @@ pub enum NodeMessage {
     Consensus(Vec<u8>),
     Block(Vec<u8>),
     ViewChangeMessage(Vec<u8>),
+    ViewChangeProof(Vec<u8>),
     ViewChangeProofMessage(UnicastMessage),
     ChainLoaderMessage(UnicastMessage),
 }
@@ -356,6 +361,11 @@ impl NodeService {
             .subscribe(&VIEW_CHANGE_TOPIC)?
             .map(|m| NodeMessage::ViewChangeMessage(m));
         streams.push(Box::new(view_change_rx));
+
+        let view_change_proofs_rx = network
+            .subscribe(&VIEW_CHANGE_PROOFS_TOPIC)?
+            .map(|m| NodeMessage::ViewChangeProof(m));
+        streams.push(Box::new(view_change_proofs_rx));
 
         let view_change_unicast_rx = network
             .subscribe_unicast(&VIEW_CHANGE_DIRECT)?
@@ -1834,6 +1844,31 @@ impl NodeService {
             self.chain.last_block_hash(),
         );
         self.handle_view_change_message(msg)?;
+
+        // if we have proof, broadcast it
+        if let Some(proof) = self.chain.view_change_proof() {
+            assert!(self.chain.view_change() > 0);
+            let chain_info = ChainInfo {
+                epoch: self.chain.epoch(),
+                offset: self.chain.offset(),
+                // correct information about proof, to refer previous on view_change;
+                view_change: self.chain.view_change() - 1,
+                last_block: self.chain.last_block_hash(),
+            };
+
+            debug!("Broadcasting view change proof proof={:?}", proof);
+            let view_change_proof = SealedViewChangeProof {
+                chain: chain_info,
+                proof: proof.clone(),
+            };
+            let proof = AddressedViewChangeProof {
+                view_change_proof,
+                pkey: self.network_pkey,
+            };
+
+            self.network
+                .publish(VIEW_CHANGE_PROOFS_TOPIC, proof.into_buffer()?)?;
+        }
         self.on_status_changed();
 
         Ok(())
@@ -2209,6 +2244,11 @@ impl Future for NodeService {
                             .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_view_change_message(msg)),
+                        NodeMessage::ViewChangeProof(msg) => {
+                            AddressedViewChangeProof::from_buffer(&msg).and_then(|proof| {
+                                self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
+                            })
+                        }
                         NodeMessage::ViewChangeProofMessage(msg) => {
                             SealedViewChangeProof::from_buffer(&msg.data)
                                 .and_then(|proof| self.handle_view_change_direct(proof, msg.from))

@@ -43,3 +43,8 @@ message SealedViewChangeProof {
     stegos.blockchain.ChainInfo chain = 1;
     stegos.blockchain.ViewChangeProof proof = 2;
 }
+
+message AddressedViewChangeProof {
+    SealedViewChangeProof view_change_proof = 1;
+    stegos.crypto.SecurePublicKey pkey = 2;
+}

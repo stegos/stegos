@@ -44,6 +44,12 @@ pub struct SealedViewChangeProof {
     pub proof: ViewChangeProof,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AddressedViewChangeProof {
+    pub view_change_proof: SealedViewChangeProof,
+    pub pkey: pbc::PublicKey,
+}
+
 impl Hashable for ViewChangeMessage {
     fn hash(&self, state: &mut Hasher) {
         self.chain.hash(state);

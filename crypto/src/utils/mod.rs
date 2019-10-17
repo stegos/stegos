@@ -228,6 +228,16 @@ where
     serializer.serialize_str(&string_vec)
 }
 
+/// Remove all trailing zeros from bitvec.
+pub fn trim_bitvec(vec: &mut BitVec) {
+    while let Some(last) = vec.pop() {
+        if last {
+            vec.push(last);
+            break;
+        }
+    }
+}
+
 pub fn vec_deserialize_from_hex<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: Deserializer<'de>,

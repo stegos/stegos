@@ -24,6 +24,7 @@
 use crate::error::MultisignatureError;
 use crate::ValidatorId;
 use bit_vec::BitVec;
+use log::warn;
 use std::collections::BTreeMap;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -96,6 +97,7 @@ pub fn check_multi_signature(
 ) -> Result<(), MultisignatureError> {
     // Check for trailing bits in the bitmap.
     if multisigmap.len() > validators.len() {
+        warn!("multisigmap = {:?}", multisigmap);
         return Err(MultisignatureError::TooBigBitmap(
             multisigmap.len(),
             validators.len(),

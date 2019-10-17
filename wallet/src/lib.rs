@@ -856,7 +856,7 @@ impl UnsealedAccountService {
         balance.total.available =
             balance.payment.available + balance.stake.available + balance.public_payment.available;
         assert!(balance.total.available <= balance.total.current);
-        balance.is_final = !self.current_epoch_balance_changed;
+        balance.is_final = !self.current_epoch_balance_changed || !self.pending_payments.is_empty();
         balance
     }
 

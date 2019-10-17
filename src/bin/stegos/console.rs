@@ -931,10 +931,6 @@ impl ConsoleService {
             let new_password = read_password_with_confirmation()?;
             let request = AccountRequest::ChangePassword { new_password };
             self.send_account_request(request)?
-        } else if msg == "use" {
-            let mut locked = self.account_id.lock().unwrap();
-            std::mem::replace(&mut *locked, String::new());
-            return Ok(true);
         } else if msg.starts_with("use ") {
             let caps = match USE_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,

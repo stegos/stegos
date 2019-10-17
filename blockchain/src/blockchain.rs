@@ -1820,6 +1820,7 @@ impl Blockchain {
         election_result.view_change = 0;
         election_result.random = block.header.random;
         self.election_result.insert(lsn, (), election_result);
+        self.view_change_proof = None;
 
         //
         // Update metrics.

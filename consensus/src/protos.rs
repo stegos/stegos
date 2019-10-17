@@ -159,6 +159,25 @@ impl ProtoConvert for SealedViewChangeProof {
     }
 }
 
+impl ProtoConvert for AddressedViewChangeProof {
+    type Proto = consensus::AddressedViewChangeProof;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = consensus::AddressedViewChangeProof::new();
+        proto.set_view_change_proof(self.view_change_proof.into_proto());
+        proto.set_pkey(self.pkey.into_proto());
+        proto
+    }
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let view_change_proof = SealedViewChangeProof::from_proto(proto.get_view_change_proof())?;
+        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
+
+        Ok(AddressedViewChangeProof {
+            view_change_proof,
+            pkey,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

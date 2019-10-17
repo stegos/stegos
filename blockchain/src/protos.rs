@@ -904,7 +904,9 @@ impl ProtoConvert for MacroBlockHeader {
         let difficulty = proto.get_difficulty();
         let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
-        let activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
+        let mut activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
+
+        stegos_crypto::utils::trim_bitvec(&mut activity_map);
         let gamma = Fr::from_proto(proto.get_gamma())?;
         let inputs_len = proto.get_inputs_len();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
@@ -953,7 +955,8 @@ impl ProtoConvert for MacroBlock {
         } else {
             pbc::Signature::zero()
         };
-        let multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
+        let mut multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
+        stegos_crypto::utils::trim_bitvec(&mut multisigmap);
 
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {

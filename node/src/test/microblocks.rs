@@ -319,6 +319,10 @@ fn double_view_change() {
             r.parts
                 .1
                 .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+
+            r.parts
+                .1
+                .filter_broadcast(&[crate::VIEW_CHANGE_PROOFS_TOPIC]);
             let mut msgs = Vec::new();
             for node in &mut r.parts.1.nodes {
                 let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
@@ -725,6 +729,11 @@ fn issue_896_resolve_fork() {
         let msg: ViewChangeMessage = first_leader
             .network_service
             .get_broadcast(crate::VIEW_CHANGE_TOPIC);
+
+        let _: AddressedViewChangeProof = first_leader
+            .network_service
+            .get_broadcast(crate::VIEW_CHANGE_PROOFS_TOPIC);
+
         assert_eq!(msg.chain.view_change, starting_view_changes + 1);
     });
 }

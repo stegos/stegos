@@ -18,6 +18,8 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use crate::metrics;
+use crate::pubsub::metrics as pubsub_metrics;
 use crate::pubsub::proto::pubsub_proto as rpc_proto;
 
 use bytes::{BufMut, BytesMut};
@@ -30,6 +32,9 @@ use std::{io, iter};
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
+
+// Protocol label for metrics
+const PROTOCOL_LABEL: &'static str = "pubsub";
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
 #[derive(Debug, Clone)]
@@ -105,6 +110,9 @@ impl Encoder for FloodsubCodec {
         let mut proto = rpc_proto::RPC::new();
 
         for message in item.messages.into_iter() {
+            pubsub_metrics::OUTGOING_PUBSUB_TRAFFIC
+                .with_label_values(&[&message.topic])
+                .inc_by(message.data.len() as i64);
             let mut msg = rpc_proto::Message::new();
             msg.set_data(message.data);
             msg.set_topic(message.topic);
@@ -122,6 +130,9 @@ impl Encoder for FloodsubCodec {
         // Reserve enough space for the data and the length. The length has a maximum of 32 bits,
         // which means that 5 bytes is enough for the variable-length integer.
         dst.reserve(msg_size as usize + 5);
+        metrics::OUTGOING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(msg_size as i64 + 5);
 
         proto
             .write_length_delimited_to_writer(&mut dst.by_ref().writer())
@@ -138,6 +149,10 @@ impl Decoder for FloodsubCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        metrics::INCOMING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(src.len() as i64);
+
         let packet = match self.length_prefix.decode(src)? {
             Some(p) => p,
             None => return Ok(None),
@@ -147,10 +162,12 @@ impl Decoder for FloodsubCodec {
 
         let mut messages = Vec::with_capacity(rpc.get_publish().len());
         for mut publish in rpc.take_publish().into_iter() {
-            messages.push(FloodsubMessage {
-                data: publish.take_data(),
-                topic: publish.take_topic(),
-            });
+            let data = publish.take_data();
+            let topic = publish.take_topic();
+            pubsub_metrics::INCOMING_PUBSUB_TRAFFIC
+                .with_label_values(&[&topic])
+                .inc_by(data.len() as i64);
+            messages.push(FloodsubMessage { data, topic });
         }
 
         Ok(Some(FloodsubRpc {

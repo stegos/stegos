@@ -19,6 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::metrics;
+
 use bytes::BytesMut;
 use futures::future;
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
@@ -27,6 +29,9 @@ use std::iter;
 use tokio::codec::{Decoder, Encoder, Framed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
+
+// Protocol label for metrics
+const PROTOCOL_LABEL: &'static str = "replication";
 
 /// Implementation of `ConnectionUpgrade` for the replication protocol.
 #[derive(Debug, Clone)]
@@ -99,7 +104,16 @@ impl Encoder for ReplicationCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        self.length_prefix.encode(item.into(), dst)
+        let msg = self.length_prefix.encode(item.into(), dst);
+        match msg {
+            Ok(_) => {
+                metrics::OUTGOING_TRAFFIC
+                    .with_label_values(&[&PROTOCOL_LABEL])
+                    .inc_by(dst.len() as i64);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -108,6 +122,9 @@ impl Decoder for ReplicationCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        metrics::INCOMING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(src.len() as i64);
         match self.length_prefix.decode(src)? {
             Some(bytes) => Ok(Some(bytes.to_vec())),
             None => Ok(None),

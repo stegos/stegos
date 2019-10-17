@@ -31,6 +31,7 @@ mod gatekeeper;
 mod kad;
 mod libp2p_network;
 pub mod loopback;
+mod metrics;
 mod ncp;
 mod pubsub;
 mod replication;

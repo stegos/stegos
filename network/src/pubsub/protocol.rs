@@ -132,7 +132,7 @@ impl Encoder for FloodsubCodec {
         dst.reserve(msg_size as usize + 5);
         metrics::OUTGOING_TRAFFIC
             .with_label_values(&[&PROTOCOL_LABEL])
-            .inc_by(msg_size as i64 + 5);
+            .inc_by(msg_size as i64);
 
         proto
             .write_length_delimited_to_writer(&mut dst.by_ref().writer())
@@ -149,14 +149,14 @@ impl Decoder for FloodsubCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        metrics::INCOMING_TRAFFIC
-            .with_label_values(&[&PROTOCOL_LABEL])
-            .inc_by(src.len() as i64);
-
         let packet = match self.length_prefix.decode(src)? {
             Some(p) => p,
             None => return Ok(None),
         };
+
+        metrics::INCOMING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(packet.len() as i64);
 
         let mut rpc: rpc_proto::RPC = protobuf::parse_from_bytes(&packet)?;
 

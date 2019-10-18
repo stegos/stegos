@@ -21,11 +21,7 @@ if [[ -z "${NUMCPUS}" ]]; then
   echo "NUMCPUS was not set, so setting number of jobs to count of cpus cores."
   export NUMCPUS=$(grep -c '^processor' /proc/cpuinfo)
 fi
-gmp_vers=6.1.2
-mpfr_vers=4.0.2
-flint_vers=2.5.2
 rocksdb_ver=6.2.2
-
 
 configure_mingw() {
     echo "Found Win-GNU, setting tar to local, and sudo to nothing"
@@ -44,7 +40,7 @@ configure_mingw() {
     export PATH=/mingw64/bin:$PATH
     export HOME=`cygpath -u $USERPROFILE`
     export RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN-x86_64-pc-windows-gnu
-    export CPATH=/usr/local/include:/mingw64/include/flint:/mingw64/include/
+    export CPATH=/mingw64/include/
     export FLINT_LIB_DIR=/mingw64/lib
     export SNAPPY_LIB_DIR=/mingw64/lib
     export ZSTD_LIB_DIR=/mingw64/lib
@@ -71,7 +67,6 @@ install_packages_linux() {
             git \
             gzip \
             libiberty-dev \
-            libmpfr-dev \
             libssl-dev \
             pkg-config \
             tar \
@@ -85,12 +80,9 @@ install_packages_linux() {
             gcc \
             gcc-c++ \
             git \
-            gmp-devel \
-            gmp-static \
             gzip \
             kernel-devel \
             make \
-            mpfr-devel \
             m4 \
             openssl-devel \
             pkg-config \
@@ -106,7 +98,7 @@ install_packages_linux() {
 # Install dependencies on macOS via brew
 install_packages_macos() {
     echo "Installing dependencies using brew..."
-    for formula in gmp mpfr protobuf zlib cmake pkg-config; do
+    for formula in protobuf zlib cmake pkg-config; do
         if ! brew ls --versions $formula >/dev/null; then
             brew install $formula
         fi
@@ -129,8 +121,6 @@ install_packages_mingw() {
       mingw-w64-x86_64-zstd \
       mingw-w64-x86_64-lz4 \
       mingw-w64-x86_64-snappy \
-      mingw-w64-x86_64-gmp \
-      mingw-w64-x86_64-mpfr \
       mingw-w64-x86_64-gcc  \
       mingw-w64-x86_64-cmake  \
       m4 make diffutils curl patch tar
@@ -167,98 +157,6 @@ install_toolchain() {
     fi
 }
 
-install_gmp_linux() {
-    # Ignore /usr/lib/x86_64-linux-gnu/libgmp.a (Debian/Ubuntu)
-    # because it doesn't have -fPIC
-    if test -f /usr/local/lib/libgmp.a || \
-        test -f /usr/lib64/libgmp.a; then
-         return 0
-    fi
-    # install gmp
-    echo "Building libgmp..."
-    curl -L https://gmplib.org/download/gmp/gmp-${gmp_vers}.tar.xz | tar xvfJ - &&
-    cd gmp-${gmp_vers} &&
-    ./configure --prefix=/usr/local \
-        --enable-static \
-        --disable-shared &&
-    make -j $NUMCPUS &&
-    sudo make install &&
-    cd .. &&
-    rm -r gmp-${gmp_vers}
-    sudo ldconfig
-}
-
-# Build dependencies on Linux
-install_mpfr_linux() {
-    # Ignore /usr/lib/x86_64-linux-gnu/libmpfr.a (Debian/Ubuntu)
-    # because it doesn't have -fPIC
-    if test -f /usr/local/lib/libmpfr.a || \
-        test -f /usr/lib64/libmpfr.a; then
-       return 0
-    fi
-
-    echo "Building libmpfr..."
-    curl -L https://www.mpfr.org/mpfr-current/mpfr-${mpfr_vers}.tar.gz | tar xvzf - && \
-    cd mpfr-${mpfr_vers} && \
-    ./configure \
-       --prefix=/usr/local \
-       --with-gmp=/usr/local \
-       --enable-static \
-       --disable-shared \
-    && \
-    make -j 8 && \
-    sudo make install && \
-    cd .. && \
-    rm -rf mpfr-${mpfr_vers}
-    sudo ldconfig
-}
-
-install_flint_linux() {
-    if test -f /usr/local/lib/libflint.a; then
-        return 0
-    fi
-    echo "Building libflint..."
-    curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
-    cd flint-${flint_vers} && \
-    ./configure \
-       --prefix=/usr/local \
-       --with-gmp=/usr/local \
-       --with-mpfr=/usr/local \
-       --enable-static \
-       --disable-shared \
-       --enable-tls \
-       --enable-cxx && \
-    make -j $NUMCPUS
-    sudo make install && \
-    cd .. && \
-    rm -rf flint-${flint_vers}
-    sudo ldconfig
-}
-
-
-install_flint_mingw() {
-    if test -f /mingw64/lib/libflint.a; then
-       return 0
-    fi
-    echo "Building libflint..."
-    curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
-    cd flint-${flint_vers} && \
-    ./configure \
-        --prefix=/mingw64 \
-        --with-gmp=/mingw64 \
-        --with-mpfr=/mingw64 \
-        --enable-static \
-        --disable-shared \
-        --enable-tls \
-        --enable-cxx && \
-    make -j $NUMCPUS
-    sudo make install && \
-    cd .. && \
-    rm -rf flint-${flint_vers}
-    sudo ldconfig
-}
-
-
 install_rocksdb_mingw() {
     if test -f /mingw64/lib/librocksdb.a ; then
           return 0
@@ -292,33 +190,16 @@ install_rocksdb_mingw() {
 
 # Build dependencies on Linux
 install_libraries_linux() {
-    install_gmp_linux
-    install_mpfr_linux
-    install_flint_linux
+    echo
 }
 
 # Build dependencies on macOS
 install_libraries_macos() {
-    if ! test -f /usr/local/lib/libflint.a; then
-        echo "Building libflint..."
-        curl -L http://www.flintlib.org/flint-${flint_vers}.tar.gz | tar xvzf - && \
-        cd flint-${flint_vers} && \
-        ./configure \
-            --prefix=/usr/local \
-            --enable-static \
-            --enable-tls \
-        && \
-        make -j 8 && \
-        sudo make install && \
-        cd .. && \
-        rm -rf flint-${flint_vers}
-        (cd /usr/local/lib && sudo install_name_tool -id '@rpath/libflint.dylib' libflint.dylib)
-    fi
+    echo
 }
 
 # Build dependencies on mingw
 install_libraries_mingw() {
-    install_flint_mingw
     install_rocksdb_mingw
 }
 

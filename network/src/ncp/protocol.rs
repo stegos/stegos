@@ -152,7 +152,7 @@ impl Encoder for NcpCodec {
         dst.reserve(msg_size as usize + 5);
         metrics::OUTGOING_TRAFFIC
             .with_label_values(&[&PROTOCOL_LABEL])
-            .inc_by(msg_size as i64 + 5);
+            .inc_by(msg_size as i64);
 
         proto
             .write_length_delimited_to_writer(&mut dst.by_ref().writer())
@@ -169,14 +169,14 @@ impl Decoder for NcpCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        metrics::INCOMING_TRAFFIC
-            .with_label_values(&[&PROTOCOL_LABEL])
-            .inc_by(src.len() as i64);
-
         let packet = match self.length_prefix.decode(src)? {
             Some(p) => p,
             None => return Ok(None),
         };
+
+        metrics::INCOMING_TRAFFIC
+            .with_label_values(&[&PROTOCOL_LABEL])
+            .inc_by(packet.len() as i64);
         let message: ncp_proto::Message = protobuf::parse_from_bytes(&packet)?;
 
         match message.get_field_type() {

@@ -44,6 +44,7 @@ use update_rate::{RateCounter, RollingRateCounter};
 // How many samples to use for rate calculation
 const PUBSUB_SAMPLES: u64 = 100;
 const METRICS_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
+const LRU_EXPIRE_TIME: Duration = Duration::from_secs(60 * 4 + 30); // 4.5 minutes to allow transaction retransmit
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -95,7 +96,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             allowed_remotes: HashSet::new(),
             subscribed_topics: SmallVec::new(),
             received: LruCache::with_expiry_duration_and_capacity(
-                Duration::from_secs(60 * 15),
+                LRU_EXPIRE_TIME,
                 1_000_000,
             ),
             incoming_rates: HashMap::new(),
@@ -143,7 +144,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             return;
         }
 
-        self.received.insert(message.digest(), ());
+        self.received.notify_insert(message.digest(), ());
         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
 
         // Send to peers we know are subscribed to the topic.
@@ -300,7 +301,12 @@ where
                 for message in event.messages {
                     // Use `self.received` to skip the messages that we have already received in the past.
                     // Note that this can false positive.
-                    if self.received.insert(message.digest(), ()).is_some() {
+                    if self
+                        .received
+                        .notify_insert(message.digest(), ())
+                        .0
+                        .is_some()
+                    {
                         trace!(target: "stegos_network::pubsub", "LRU cache hit");
                         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                         continue;

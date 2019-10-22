@@ -905,7 +905,6 @@ impl ProtoConvert for MacroBlockHeader {
         let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
         let mut activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
-
         stegos_crypto::utils::trim_bitvec(&mut activity_map);
         let gamma = Fr::from_proto(proto.get_gamma())?;
         let inputs_len = proto.get_inputs_len();
@@ -1049,7 +1048,8 @@ impl ProtoConvert for ViewChangeProof {
         } else {
             pbc::Signature::zero()
         };
-        let multimap = BitVec::from_iter(proto.multimap.iter().map(|x| *x));
+        let mut multimap = BitVec::from_iter(proto.multimap.iter().map(|x| *x));
+        stegos_crypto::utils::trim_bitvec(&mut multimap);
         Ok(ViewChangeProof { multisig, multimap })
     }
 }

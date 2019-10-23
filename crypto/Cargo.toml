@@ -17,6 +17,8 @@ stegos_serialization = { version = "0.2.0", path = "../serialization" }
 bit-vec = "0.6"
 bech32 = "0.7"
 failure = "0.1"
+gmp-mpfr-sys = { version = "1.1", git = "https://github.com/stegos/gmp-mpfr-sys.git", branch = "stegos" }
+flint-sys = { version = "0.1", git = "https://github.com/stegos/flint-sys.git", branch = "stegos" }
 hex = "0.3"
 lazy_static = "1.1"
 log = "0.4"

@@ -160,8 +160,8 @@ pub struct StakeOutput {
 
 /// Blockchain UTXO.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
+#[serde(from = "crate::api::OutputInfo")]
+#[serde(into = "crate::api::OutputInfo")]
 pub enum Output {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),

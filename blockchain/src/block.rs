@@ -83,9 +83,10 @@ pub struct MicroBlockHeader {
 
 /// Micro Block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "crate::api::MicroBlockInfo")]
+#[serde(into = "crate::api::MicroBlockInfo")]
 pub struct MicroBlock {
     /// Header.
-    #[serde(flatten)]
     pub header: MicroBlockHeader,
 
     /// BLS signature by leader.
@@ -284,17 +285,16 @@ impl Hashable for MacroBlockHeader {
 
 /// Macro Block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(from = "crate::api::MacroBlockInfo")]
+#[serde(into = "crate::api::MacroBlockInfo")]
 pub struct MacroBlock {
     /// Header.
-    #[serde(flatten)]
     pub header: MacroBlockHeader,
 
     /// BLS (multi-)signature.
     pub multisig: pbc::Signature,
 
     /// Bitmap of signers in the multi-signature.
-    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
-    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub multisigmap: BitVec,
 
     /// The list of transaction inputs in a Merkle Tree.

@@ -95,10 +95,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             unlocked_remotes: HashMap::new(),
             allowed_remotes: HashSet::new(),
             subscribed_topics: SmallVec::new(),
-            received: LruCache::with_expiry_duration_and_capacity(
-                LRU_EXPIRE_TIME,
-                1_000_000,
-            ),
+            received: LruCache::with_expiry_duration_and_capacity(LRU_EXPIRE_TIME, 1_000_000),
             incoming_rates: HashMap::new(),
             metrics_update_delay: Delay::new(Instant::now() + METRICS_UPDATE_INTERVAL),
             relaying,

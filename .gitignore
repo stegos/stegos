@@ -13,6 +13,7 @@
 /testing/node*/accounts/*/history
 /testing/node*/api.token
 /testing/node*/stegosd.log
+/testing/node*/logs
 /data
 /logs
 core

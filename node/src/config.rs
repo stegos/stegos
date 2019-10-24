@@ -32,6 +32,8 @@ pub struct NodeConfig {
     pub micro_block_timeout: Duration,
     /// How long wait for the keu blocks.
     pub macro_block_timeout: Duration,
+    /// Timeout to check updates in synchronized status.
+    pub sync_check_timeout: Duration,
     /// The maximal number of outputs in a transaction.
     pub max_inputs_in_tx: usize,
     /// The maximal number of outputs in a transaction.
@@ -56,6 +58,7 @@ impl Default for NodeConfig {
             // Sic: synchronize this value with ChainConfig::vetted_timeout.
             micro_block_timeout: Duration::from_secs(30),
             macro_block_timeout: Duration::from_secs(30),
+            sync_check_timeout: Duration::from_secs(30),
             max_inputs_in_tx: 1000,
             max_outputs_in_tx: 50,
             max_inputs_in_block: 10000,

@@ -43,8 +43,6 @@ const MAX_BYTES_PER_BATCH: u64 = 10 * 1024 * 1024; // 10Mb.
 
 /// Replication Peer.
 pub(super) enum Peer {
-    /// A temporary state for std::mem::replace().
-    Unregistered,
     /// Peer has been discovered by libp2p.
     Registered {
         peer_id: PeerId,
@@ -124,13 +122,13 @@ impl Peer {
     ///
     /// # Panics
     ///
-    /// Panics if the current state is not Discovered.
+    /// Panics if the current state is not Registered.
     ///
     pub(super) fn connecting(&mut self) {
-        let (peer_id, multiaddr) = match std::mem::replace(self, Peer::Unregistered) {
+        let (peer_id, multiaddr) = match self {
             Peer::Registered {
                 peer_id, multiaddr, ..
-            } => (peer_id, multiaddr),
+            } => (peer_id.clone(), multiaddr.clone()),
             _ => {
                 // Unexpected state - disconnect.
                 return self.disconnected();
@@ -159,14 +157,13 @@ impl Peer {
         rx: mpsc::Receiver<Vec<u8>>,
         mut tx: mpsc::Sender<Vec<u8>>,
     ) {
-        let (peer_id, multiaddr) = match std::mem::replace(self, Peer::Unregistered) {
+        let (peer_id, multiaddr) = match self {
             Peer::Connecting {
                 peer_id, multiaddr, ..
-            } => (peer_id, multiaddr),
+            } => (peer_id.clone(), multiaddr.clone()),
             _ => {
                 // Unexpected state - disconnect.
-                self.disconnected();
-                return;
+                return self.disconnected();
             }
         };
         let request = ReplicationRequest::Subscribe { epoch, offset };
@@ -194,7 +191,7 @@ impl Peer {
     /// # Panics
     ///
     pub(super) fn disconnected(&mut self) {
-        let (peer_id, multiaddr) = match std::mem::replace(self, Peer::Unregistered) {
+        let (peer_id, multiaddr) = match self {
             Peer::Registered {
                 peer_id, multiaddr, ..
             }
@@ -212,11 +209,10 @@ impl Peer {
             }
             | Peer::Sending {
                 peer_id, multiaddr, ..
-            } => (peer_id, multiaddr),
-            Peer::Failed {
+            }
+            | Peer::Failed {
                 peer_id, multiaddr, ..
-            } => (peer_id, multiaddr),
-            Peer::Unregistered {} => unreachable!(),
+            } => (peer_id.clone(), multiaddr.clone()),
         };
         let new_state = Peer::registered(peer_id, multiaddr);
         std::mem::replace(self, new_state);
@@ -248,7 +244,6 @@ impl Peer {
             | Peer::Failed { peer_id, .. } => {
                 debug!("[{}] Rejected", peer_id);
             }
-            Peer::Unregistered => unreachable!("Unregistered"),
         }
     }
 
@@ -257,7 +252,6 @@ impl Peer {
     ///
     pub(super) fn info(&self) -> PeerInfo {
         match self {
-            Peer::Unregistered => unreachable!("Never happens"),
             Peer::Registered {
                 peer_id,
                 multiaddr,
@@ -494,8 +488,6 @@ impl Peer {
     ///
     pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Vec<Block>> {
         match self {
-            Peer::Unregistered => unreachable!(),
-
             //--------------------------------------------------------------------------------------
             // Discovered
             //--------------------------------------------------------------------------------------
@@ -570,8 +562,8 @@ impl Peer {
                 // Process the response.
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
-                let (peer_id, multiaddr, rx, tx) = match std::mem::replace(self, Peer::Unregistered)
-                {
+                let tmp_state = Self::registered(peer_id.clone(), multiaddr.clone());
+                let (peer_id, multiaddr, rx, tx) = match std::mem::replace(self, tmp_state) {
                     Peer::Connected {
                         peer_id,
                         multiaddr,
@@ -678,17 +670,17 @@ impl Peer {
                 // Process the request.
                 //
                 trace!("[{}] -> {:?}", peer_id, request);
-                let (peer_id, multiaddr, rx, mut tx) =
-                    match std::mem::replace(self, Peer::Unregistered) {
-                        Peer::Accepted {
-                            peer_id,
-                            multiaddr,
-                            rx,
-                            tx,
-                            ..
-                        } => (peer_id, multiaddr, rx, tx),
-                        _ => unreachable!("Expected Accepted state"),
-                    };
+                let tmp_state = Self::registered(peer_id.clone(), multiaddr.clone());
+                let (peer_id, multiaddr, rx, mut tx) = match std::mem::replace(self, tmp_state) {
+                    Peer::Accepted {
+                        peer_id,
+                        multiaddr,
+                        rx,
+                        tx,
+                        ..
+                    } => (peer_id, multiaddr, rx, tx),
+                    _ => unreachable!("Expected Accepted state"),
+                };
                 match request {
                     ReplicationRequest::Subscribe { epoch, offset } => {
                         if epoch > chain.epoch() {

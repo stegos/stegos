@@ -462,9 +462,15 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
         metrics::EMISSION.set(self.balance().block_reward);
         metrics::DIFFICULTY.set(self.difficulty as i64);
+        metrics::STAKERS_COUNT.set(self.escrow.escrow.len() as i64);
+        metrics::STAKERS_MAJORITY_COUNT.set(
+            self.escrow
+                .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
+                .len() as i64,
+        );
         for (key, stake) in self.validators().iter() {
             let key_str = key.to_string();
-            metrics::VALIDATOR_STAKE_GAUGEVEC
+            metrics::VALIDATOR_SLOTS_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
         }
@@ -1406,9 +1412,16 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
         metrics::EMISSION.set(self.balance().block_reward);
         metrics::DIFFICULTY.set(self.difficulty as i64);
+        metrics::STAKERS_COUNT.set(self.escrow.escrow.len() as i64);
+        metrics::STAKERS_MAJORITY_COUNT.set(
+            self.escrow
+                .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
+                .len() as i64,
+        );
+        metrics::VALIDATOR_SLOTS_GAUGEVEC.reset();
         for (key, stake) in self.validators().iter() {
             let key_str = key.to_string();
-            metrics::VALIDATOR_STAKE_GAUGEVEC
+            metrics::VALIDATOR_SLOTS_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
         }

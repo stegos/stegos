@@ -25,10 +25,17 @@ use lazy_static::lazy_static;
 use prometheus::*;
 
 lazy_static! {
-    pub static ref VALIDATOR_STAKE_GAUGEVEC: IntGaugeVec = register_int_gauge_vec!(
-        "stegos_stakes_vector",
-        "stakes per validator",
+    pub static ref VALIDATOR_SLOTS_GAUGEVEC: IntGaugeVec = register_int_gauge_vec!(
+        "stegos_slots_vector",
+        "slots per validator in current epoch",
         &["validator"]
+    )
+    .unwrap();
+    pub static ref STAKERS_COUNT: IntGauge =
+        register_int_gauge!("stegos_stakers_count", "Count of stakers").unwrap();
+    pub static ref STAKERS_MAJORITY_COUNT: IntGauge = register_int_gauge!(
+        "stegos_stakers_majority_count",
+        "Count of stakers above min_stake_amount"
     )
     .unwrap();
     pub static ref EPOCH: IntGauge =

@@ -795,7 +795,7 @@ dependencies = [
 [[package]]
 name = "flint-sys"
 version = "0.1.0"
-source = "git+https://github.com/stegos/flint-sys.git?branch=stegos#ad8ad4c716bc1838491e5004a9678c5c828936af"
+source = "git+https://github.com/stegos/flint-sys.git?branch=stegos#def3a71a98fe12047ebacb103ac5e9998e72fd57"
 dependencies = [
  "cc 1.0.45 (registry+https://github.com/rust-lang/crates.io-index)",
  "fs_extra 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",

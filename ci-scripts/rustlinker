@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Invoke cc for HOST binaries
+case $@ in
+    *build_script*)
+        exec cc $@
+        ;;
+     *-shared*)
+        exec cc $@
+        ;;
+esac
+
+# Patch linker arguments for TARGET
+linker=$(basename $(echo $0 | sed 's#rustlinker$#clang\+\+#'))
+CMD="$linker -lc++"
+while test $# -gt 0
+do
+    if test "$1" = "-lstdc++"; then
+        shift
+        continue
+    fi
+
+    CMD="$CMD $1"
+    shift
+done
+
+echo $CMD >> /tmp/rustlinker.log
+exec $CMD
+
+# vim: set et ts=4 sts=4 sw=4:

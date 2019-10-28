@@ -65,7 +65,7 @@ use stegos_crypto::pbc;
 use stegos_network::{Network, ReplicationEvent};
 use stegos_network::{PeerId, UnicastMessage};
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::{clock, Delay};
+use tokio_timer::{clock, Delay, Interval};
 use Validation::*;
 
 // ----------------------------------------------------------------
@@ -290,6 +290,9 @@ pub struct NodeService {
     /// Automatic re-staking status.
     is_restaking_enabled: bool,
 
+    /// Timer to check sync status
+    check_sync: Interval,
+
     //
     // Communication with environment.
     //
@@ -386,6 +389,7 @@ impl NodeService {
 
         let events = select_all(streams);
 
+        let check_sync = Interval::new_interval(cfg.sync_check_timeout);
         let chain_disk_subscribers = Vec::new();
         let chain_subscribers = Vec::new();
         let node = Node {
@@ -416,6 +420,7 @@ impl NodeService {
             chain_subscribers,
             node: node.clone(),
             network: network.clone(),
+            check_sync,
             events,
             txpool_service,
             replication,
@@ -2062,6 +2067,27 @@ impl Future for NodeService {
         };
         if let Err(e) = result {
             error!("Error: {}", e);
+        }
+
+        loop {
+            match self.check_sync.poll() {
+                Ok(Async::Ready(Some(_))) => {
+                    if !self.is_synchronized() {
+                        self.on_status_changed();
+                    }
+                }
+                Ok(Async::Ready(None)) => {
+                    error!("Error during process sync status");
+                    return Ok(Async::Ready(()));
+                }
+                Err(e) => {
+                    error!("Error: {}", e);
+                    return Err(());
+                }
+                Ok(Async::NotReady) => {
+                    break;
+                }
+            }
         }
 
         // Poll chain readers.

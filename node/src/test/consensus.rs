@@ -339,7 +339,7 @@ fn lock() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
-        s.poll();;
+        s.poll();
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -457,7 +457,7 @@ fn pack_of_prevotes() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
-        s.poll();;
+        s.poll();
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -582,7 +582,7 @@ fn pack_of_prevotes_and_precommits() {
 
     Sandbox::start(config, |mut s| {
         // Create one micro block.
-        s.poll();;
+        s.poll();
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -1029,7 +1029,7 @@ fn invalid_proposes_on_2nd_round() {
         info!("====== Waiting for keyblock timeout. =====");
         s.poll();
 
-        let round = s.nodes[0].node_service.chain.view_change() + 1;;
+        let round = s.nodes[0].node_service.chain.view_change() + 1;
         invalid_proposes_inner(&mut s, round);
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });

@@ -598,7 +598,9 @@ where
                                         })
                                 }
                             }
-                            Err(e) => error!(target:"stegos_network::delivery", "Failure decoding unicast message: {}", e),
+                            Err(e) => {
+                                error!(target:"stegos_network::delivery", "Failure decoding unicast message: {}", e)
+                            }
                         }
                         return;
                     }

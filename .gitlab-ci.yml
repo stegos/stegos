@@ -15,7 +15,7 @@ fast_checks:
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: stegos/rust:nightly-2019-08-05
+  image: quay.io/stegos/rust:nightly-2019-10-24
 
 .test:
   stage: test

@@ -2086,8 +2086,14 @@ pub mod tests {
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
-        let blockchain = Blockchain::new(cfg, chain_dir.path(), false, block1.clone(), timestamp)
-            .expect("Failed to create blockchain");
+        let blockchain = Blockchain::new(
+            cfg,
+            chain_dir.path(),
+            ConsistencyCheck::None,
+            block1.clone(),
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
         let outputs: Vec<Output> = block1.outputs.clone();
         let mut unspent: Vec<Hash> = outputs.iter().map(|o| Hash::digest(o)).collect();
         unspent.sort();
@@ -2158,7 +2164,7 @@ pub mod tests {
         let mut chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::Full,
             genesis.clone(),
             timestamp,
         )
@@ -2234,8 +2240,14 @@ pub mod tests {
         let block_hash = chain.last_block_hash();
         let balance = chain.balance().clone();
         drop(chain);
-        let chain = Blockchain::new(cfg, chain_dir.path(), true, genesis, timestamp)
-            .expect("Failed to create blockchain");
+        let chain = Blockchain::new(
+            cfg,
+            chain_dir.path(),
+            ConsistencyCheck::Full,
+            genesis,
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
         assert_eq!(epoch, chain.epoch());
         assert_eq!(offset, chain.offset());
         assert_eq!(block_hash, chain.last_block_hash());
@@ -2266,7 +2278,7 @@ pub mod tests {
         let mut chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::None,
             genesis.clone(),
             timestamp,
         )
@@ -2375,7 +2387,7 @@ pub mod tests {
         let mut chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::Full,
             genesis.clone(),
             timestamp,
         )
@@ -2427,7 +2439,7 @@ pub mod tests {
         let chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::None,
             genesis.clone(),
             timestamp,
         )
@@ -2462,8 +2474,14 @@ pub mod tests {
         let (keychains, blocks) =
             test::fake_genesis(stake, 10 * cfg.min_stake_amount, 1, timestamp, None);
         let chain_dir = TempDir::new("test").unwrap();
-        let mut blockchain = Blockchain::new(cfg, chain_dir.path(), true, blocks, timestamp)
-            .expect("Failed to create blockchain");
+        let mut blockchain = Blockchain::new(
+            cfg,
+            chain_dir.path(),
+            ConsistencyCheck::None,
+            blocks,
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
         let epoch = blockchain.epoch();
         let starting_offset = blockchain.offset();
         // len of genesis
@@ -2530,7 +2548,7 @@ pub mod tests {
         let mut chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::None,
             genesis.clone(),
             timestamp,
         )

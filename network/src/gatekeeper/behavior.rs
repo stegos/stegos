@@ -109,7 +109,7 @@ impl<TSubstream> Gatekeeper<TSubstream> {
         addrs.shuffle(&mut rng);
 
         for addr in addrs.iter() {
-            let addr = addr.parse::<SocketAddr>().expect("Invalid seed_node");;
+            let addr = addr.parse::<SocketAddr>().expect("Invalid seed_node");
             let addr = socket_to_multi_addr(&addr);
             debug!(target: "stegos_network::gatekeeper", "dialing peer with address {}", addr);
             events.push_back(NetworkBehaviourAction::DialAddress {

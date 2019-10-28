@@ -216,6 +216,8 @@ pub struct Blockchain {
     // Configuration.
     //
     cfg: ChainConfig,
+    // Don't store consistency check into `ChainConfig`, because it can be different on nodes.
+    consistency_check: ConsistencyCheck,
 
     //
     // Storage.
@@ -276,7 +278,7 @@ impl Blockchain {
     pub fn new(
         cfg: ChainConfig,
         chain_dir: &Path,
-        force_check: bool,
+        consistency_check: ConsistencyCheck,
         genesis: MacroBlock,
         timestamp: Timestamp,
     ) -> Result<Blockchain, BlockchainError> {
@@ -323,6 +325,7 @@ impl Blockchain {
 
         let mut blockchain = Blockchain {
             cfg,
+            consistency_check,
             database,
             block_by_hash,
             output_by_hash,
@@ -343,7 +346,7 @@ impl Blockchain {
             epoch_activity,
         };
 
-        blockchain.init(genesis, timestamp, force_check)?;
+        blockchain.init(genesis, timestamp, consistency_check)?;
         Ok(blockchain)
     }
 
@@ -362,11 +365,7 @@ impl Blockchain {
     }
     /// Try recover using local snapshot of state.
     /// Return true if success.
-    fn try_recover_fast(
-        &mut self,
-        timestamp: Timestamp,
-        force_check: bool,
-    ) -> Result<bool, BlockchainError> {
+    fn try_recover_fast(&mut self, timestamp: Timestamp) -> Result<bool, BlockchainError> {
         let cf_block_by_hash = self.database.cf_handle(BLOCK_BY_HASH).unwrap();
         let cf_output_by_hash = self.database.cf_handle(OUTPUT_BY_HASH).unwrap();
         let cf_escrow = self.database.cf_handle(ESCROW).unwrap();
@@ -459,7 +458,7 @@ impl Blockchain {
 
             // Recover remaining blocks.
             for block in blocks {
-                this.recover_block(block, timestamp, force_check)?;
+                this.recover_block(block, timestamp, ConsistencyCheck::Full)?;
             }
             Ok(())
         })?;
@@ -493,7 +492,7 @@ impl Blockchain {
         &mut self,
         genesis_hash: Hash,
         timestamp: Timestamp,
-        force_check: bool,
+        force_check: ConsistencyCheck,
     ) -> Result<bool, BlockchainError> {
         self.with_snapshot(move |this, snapshot| -> Result<bool, BlockchainError> {
             let mut blocks = snapshot
@@ -538,9 +537,9 @@ impl Blockchain {
         &mut self,
         genesis: MacroBlock,
         timestamp: Timestamp,
-        force_check: bool,
+        force_check: ConsistencyCheck,
     ) -> Result<(), BlockchainError> {
-        if self.try_recover_fast(timestamp, force_check)? {
+        if force_check != ConsistencyCheck::Full && self.try_recover_fast(timestamp)? {
             return Ok(());
         }
 
@@ -562,7 +561,7 @@ impl Blockchain {
         &mut self,
         block: Block,
         timestamp: Timestamp,
-        force_check: bool,
+        force_check: ConsistencyCheck,
     ) -> Result<(), BlockchainError> {
         // Skip validate_macro_block()/validate_micro_block().
         match block {
@@ -573,7 +572,7 @@ impl Blockchain {
                     block.header.offset,
                     Hash::digest(&block)
                 );
-                if force_check {
+                if force_check == ConsistencyCheck::Full {
                     self.validate_micro_block(&block, timestamp, true)?;
                 }
                 let lsn = LSN(block.header.epoch, block.header.offset);
@@ -585,7 +584,7 @@ impl Blockchain {
                     "Recovering a macro block from the disk: epoch={}, block={}",
                     block.header.epoch, block_hash
                 );
-                if force_check {
+                if force_check == ConsistencyCheck::Full {
                     self.validate_macro_block(&block, timestamp)?;
                 }
                 let lsn = LSN(block.header.epoch, MACRO_BLOCK_OFFSET);
@@ -1289,7 +1288,7 @@ impl Blockchain {
         //
         // Double-check if debug.
         //
-        if cfg!(debug_assertions) {
+        if self.consistency_check >= ConsistencyCheck::Incoming {
             self.validate_macro_block(&block, timestamp)
                 .expect("block is valid");
         }
@@ -1587,7 +1586,7 @@ impl Blockchain {
         //
         // Double-check if debug.
         //
-        if cfg!(debug_assertions) {
+        if self.consistency_check >= ConsistencyCheck::Incoming {
             self.validate_micro_block(&block, timestamp, true)
                 .expect("block is valid");
         }

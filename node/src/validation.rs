@@ -150,8 +150,8 @@ mod test {
         let (network_skey, network_pkey) = (keychain.network_skey, keychain.network_pkey);
         let mut mempool = Mempool::new();
         let chain_dir = TempDir::new("test").unwrap();
-        let force_check = true;
-        let chain = Blockchain::new(cfg, chain_dir.path(), force_check, genesis, timestamp)
+        let consistency_check = ConsistencyCheck::Full;
+        let chain = Blockchain::new(cfg, chain_dir.path(), consistency_check, genesis, timestamp)
             .expect("Failed to create blockchain");
         let mut inputs: Vec<Output> = Vec::new();
         let mut stakes: Vec<Output> = Vec::new();

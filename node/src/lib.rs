@@ -464,7 +464,7 @@ impl NodeService {
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
-        if !self.is_synchronized() {
+        if !tx.is_restaking() && !self.is_synchronized() {
             debug!(
                 "Node is not synchronized - ignore transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
                 &tx_hash,
@@ -525,14 +525,26 @@ impl NodeService {
 
         // Validate transaction.
         let timestamp = Timestamp::now();
-        validate_external_transaction(
+        let result = validate_external_transaction(
             &tx,
             &self.mempool,
             &self.chain,
             timestamp,
             self.cfg.min_payment_fee,
             self.cfg.min_stake_fee,
-        )?;
+        );
+
+        match result {
+            Err(ref e) if !self.is_synchronized() => {
+                debug!(
+                    "Error during transaction validating when not synchronized: {}",
+                    e
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+            Ok(()) => {}
+        };
 
         // Queue to mempool.
         info!("Transaction is valid, adding to mempool: tx={}", &tx_hash);

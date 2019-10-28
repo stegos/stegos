@@ -608,6 +608,13 @@ impl Transaction {
             Transaction::ServiceAwardTransaction(_tx) => (),
         }
     }
+
+    pub fn is_restaking(&self) -> bool {
+        match self {
+            Transaction::RestakeTransaction(_) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Hashable for Transaction {

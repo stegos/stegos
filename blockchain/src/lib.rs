@@ -23,6 +23,7 @@
 
 #![deny(warnings)]
 
+pub mod api;
 mod awards;
 mod block;
 mod blockchain;

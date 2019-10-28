@@ -24,6 +24,17 @@
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 
+#[derive(Copy, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsistencyCheck {
+    /// Don't check anything in macroblock. Only block multisig.
+    None,
+    /// Check all incoming blocks consistency.
+    Incoming,
+    /// Check even persistence state.
+    Full,
+}
+
 /// Blockchain configuration.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(default)]

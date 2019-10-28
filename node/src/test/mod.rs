@@ -274,8 +274,14 @@ impl NodeSandbox {
         // Create node, with first node keychain.
         let timestamp = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
-        let chain = Blockchain::new(chain_cfg, chain_dir.path(), true, genesis, timestamp)
-            .expect("Failed to create blockchain");
+        let chain = Blockchain::new(
+            chain_cfg,
+            chain_dir.path(),
+            ConsistencyCheck::Full,
+            genesis,
+            timestamp,
+        )
+        .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(
             node_cfg,
             chain,

@@ -13,7 +13,7 @@ api_endpoint = "127.0.0.1:3145"
 # Data directory (default is ~/.local/share/stegos)
 data_dir = "./data"
 # Force full validation (BP + BLS + VRF) of blockchain on recovery.
-force_check = true
+consistency_check = "full"
 
 [network]
 # Local IP to bind to

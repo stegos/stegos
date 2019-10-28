@@ -29,7 +29,7 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::result::Result;
-use stegos_blockchain::ChainConfig;
+use stegos_blockchain::{ChainConfig, ConsistencyCheck};
 use stegos_network::NetworkConfig;
 use stegos_node::NodeConfig;
 use toml;
@@ -78,7 +78,7 @@ pub struct GeneralConfig {
     /// Data directory.
     pub data_dir: PathBuf,
     /// Force strict checking (BP + BLS + VRF) of blockchain on the disk.
-    pub force_check: bool,
+    pub consistency_check: ConsistencyCheck,
     /// Log4RS configuration file
     pub log_config: PathBuf,
     /// Prometheus exporter endpoint
@@ -96,7 +96,11 @@ impl Default for GeneralConfig {
         GeneralConfig {
             chain: "testnet".to_string(),
             data_dir,
-            force_check: cfg!(debug_assertions),
+            consistency_check: if cfg!(debug_assertions) {
+                ConsistencyCheck::Full
+            } else {
+                ConsistencyCheck::None
+            },
             log_config: PathBuf::new(),
             prometheus_endpoint: "".to_string(),
             api_endpoint: "127.0.0.1:3145".to_string(),

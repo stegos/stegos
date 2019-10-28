@@ -3,7 +3,7 @@ chain = "dev"
 prometheus_endpoint = "127.0.0.1:9892"
 api_endpoint = "127.0.0.1:3146"
 data_dir = "testing/node02"
-force_check = true
+consistency_check = "full"
 
 [network]
 endpoint = "127.0.0.1:10056"

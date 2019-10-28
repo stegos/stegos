@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
 use stegos_api::{load_or_create_api_token, WebSocketServer};
-use stegos_blockchain::{Block, Blockchain, MacroBlock, Timestamp};
+use stegos_blockchain::{Block, Blockchain, ConsistencyCheck, MacroBlock, Timestamp};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_keychain::{self as keychain, KeyError};
@@ -276,7 +276,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
 
     // Override global.force_check via command-line.
     if args.is_present("force-check") {
-        cfg.general.force_check = true;
+        cfg.general.consistency_check = ConsistencyCheck::Full;
     }
 
     // Override network.endpoint via command-line or environment.
@@ -589,7 +589,7 @@ fn run() -> Result<(), Error> {
     let chain = Blockchain::new(
         cfg.chain.clone(),
         &chain_dir,
-        cfg.general.force_check,
+        cfg.general.consistency_check,
         genesis,
         timestamp,
     )?;

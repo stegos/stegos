@@ -39,7 +39,7 @@ use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
 use log::*;
 use rocksdb;
-use rocksdb::{ColumnFamily, WriteBatch};
+use rocksdb::{ColumnFamily, Snapshot, WriteBatch};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
@@ -343,7 +343,7 @@ impl Blockchain {
             epoch_activity,
         };
 
-        blockchain.recover(genesis, timestamp, force_check)?;
+        blockchain.init(genesis, timestamp, force_check)?;
         Ok(blockchain)
     }
 
@@ -351,6 +351,15 @@ impl Blockchain {
     // Recovery.
     //----------------------------------------------------------------------------------------------
 
+    fn with_snapshot<F, X>(&mut self, mut func: F) -> X
+    where
+        F: for<'a> FnMut(&'a mut Self, Snapshot<'a>) -> X,
+    {
+        let snapshot: Snapshot<'_> = self.database.snapshot();
+        // Use unsafe to free database from previous borrowing
+        let snapshot: Snapshot<'static> = unsafe { std::mem::transmute(snapshot) };
+        func(self, snapshot)
+    }
     /// Try recover using local snapshot of state.
     /// Return true if success.
     fn try_recover_fast(
@@ -432,26 +441,28 @@ impl Blockchain {
         let mut microblock_lsn = lsn;
         microblock_lsn.1 = 0;
         microblock_lsn.0 += 1;
-        let blocks = self
-            .database
-            .full_iterator(rocksdb::IteratorMode::From(
-                &Self::block_key(microblock_lsn),
-                rocksdb::Direction::Forward,
-            ))
-            .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
-            // assert thats we have no macroblocks out of snapshot.
-            .inspect(|b| match b {
-                Block::MacroBlock(b) => {
-                    panic!("Should be no new macroblocks epoch={}", b.header.epoch)
-                }
-                _ => {}
-            });
 
-        // Recover remaining blocks.
-        for block in blocks {
-            self.recover_block(block, timestamp, force_check)?;
-        }
+        self.with_snapshot(|this, snapshot| -> Result<(), BlockchainError> {
+            let blocks = snapshot
+                .iterator(rocksdb::IteratorMode::From(
+                    &Self::block_key(microblock_lsn),
+                    rocksdb::Direction::Forward,
+                ))
+                .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
+                // assert thats we have no macroblocks out of snapshot.
+                .inspect(|b| match b {
+                    Block::MacroBlock(b) => {
+                        panic!("Should be no new macroblocks epoch={}", b.header.epoch)
+                    }
+                    _ => {}
+                });
 
+            // Recover remaining blocks.
+            for block in blocks {
+                this.recover_block(block, timestamp, force_check)?;
+            }
+            Ok(())
+        })?;
         info!(
             "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
             self.epoch, self.offset, self.last_block_hash
@@ -478,7 +489,52 @@ impl Blockchain {
         Ok(true)
     }
 
-    fn recover(
+    fn try_recover_blocks(
+        &mut self,
+        genesis_hash: Hash,
+        timestamp: Timestamp,
+        force_check: bool,
+    ) -> Result<bool, BlockchainError> {
+        self.with_snapshot(move |this, snapshot| -> Result<bool, BlockchainError> {
+            let mut blocks = snapshot
+                .iterator(rocksdb::IteratorMode::Start)
+                .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."));
+
+            let block = blocks.next();
+            let block = if let Some(block) = block {
+                block
+            } else {
+                return Ok(false);
+            };
+
+            info!("Recovering blockchain from the disk...");
+
+            // Recover genesis.
+            this.recover_block(block, timestamp, force_check)?;
+
+            // Check genesis.
+            if genesis_hash != this.last_block_hash() {
+                return Err(BlockchainError::IncompatibleGenesis(
+                    genesis_hash,
+                    this.last_block_hash(),
+                )
+                .into());
+            }
+            // Recover remaining blocks.
+            for block in blocks {
+                this.recover_block(block, timestamp, force_check)?;
+            }
+
+            info!(
+                "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
+                this.epoch, this.offset, this.last_block_hash
+            );
+
+            Ok(true)
+        })
+    }
+
+    fn init(
         &mut self,
         genesis: MacroBlock,
         timestamp: Timestamp,
@@ -489,42 +545,16 @@ impl Blockchain {
         }
 
         let genesis_hash = Hash::digest(&genesis);
-
-        let mut blocks = self.blocks();
-        let block = blocks.next();
-        let block = if let Some(block) = block {
-            block
-        } else {
-            debug!("Creating a new blockchain...");
-            self.push_macro_block(genesis, timestamp)?;
-            info!(
-                "Initialized a new blockchain: epoch={}, offset={}, last_block={}",
-                self.epoch, self.offset, self.last_block_hash
-            );
+        if self.try_recover_blocks(genesis_hash, timestamp, force_check)? {
             return Ok(());
-        };
-
-        info!("Recovering blockchain from the disk...");
-
-        // Recover genesis.
-        self.recover_block(block, timestamp, force_check)?;
-
-        // Check genesis.
-        if genesis_hash != self.last_block_hash() {
-            return Err(
-                BlockchainError::IncompatibleGenesis(genesis_hash, self.last_block_hash()).into(),
-            );
-        }
-        // Recover remaining blocks.
-        for block in blocks {
-            self.recover_block(block, timestamp, force_check)?;
         }
 
+        debug!("Creating a new blockchain...");
+        self.push_macro_block(genesis, timestamp)?;
         info!(
-            "Recovered blockchain from the disk: epoch={}, offset={}, last_block={}",
+            "Initialized a new blockchain: epoch={}, offset={}, last_block={}",
             self.epoch, self.offset, self.last_block_hash
         );
-
         Ok(())
     }
 
@@ -747,18 +777,22 @@ impl Blockchain {
     }
 
     /// Returns iterator over saved blocks.
-    pub fn blocks(&self) -> impl Iterator<Item = Block> {
+    pub fn blocks<'a>(&'a self) -> impl Iterator<Item = Block> + 'a {
         self.database
-            .full_iterator(rocksdb::IteratorMode::Start)
+            .iterator(rocksdb::IteratorMode::Start)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
     /// Returns iterator over saved blocks.
-    pub fn blocks_starting(&self, epoch: u64, offset: u32) -> impl Iterator<Item = Block> {
+    pub fn blocks_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> impl Iterator<Item = Block> + 'a {
         let key = Self::block_key(LSN(epoch, offset));
         let mode = rocksdb::IteratorMode::From(&key, rocksdb::Direction::Forward);
         self.database
-            .full_iterator(mode)
+            .iterator(mode)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
     }
 
@@ -1455,8 +1489,13 @@ impl Blockchain {
             EPOCH,
             &LSN(self.epoch - 1, MACRO_BLOCK_OFFSET),
         )?;
-        Self::write_meta(&mut batch, cf_meta, ELECTION_RESULT, self.election_result())?;
-        Self::write_meta(&mut batch, cf_meta, AWARDS, &self.awards)?;
+        Self::write_meta(
+            &mut batch,
+            &cf_meta,
+            ELECTION_RESULT,
+            self.election_result(),
+        )?;
+        Self::write_meta(&mut batch, &cf_meta, AWARDS, &self.awards)?;
 
         let validators = self
             .election_result()
@@ -1980,7 +2019,7 @@ impl Blockchain {
 
     fn write_meta<V>(
         batch: &mut WriteBatch,
-        meta_cf: ColumnFamily,
+        meta_cf: &ColumnFamily,
         key: &'static str,
         value: &V,
     ) -> Result<(), BlockchainError>
@@ -1995,7 +2034,7 @@ impl Blockchain {
     /// Undolog is actualy a patchset, so just apply it to the block.
     fn write_log<K, V>(
         batch: &mut WriteBatch,
-        cf: ColumnFamily,
+        cf: &ColumnFamily,
         diff: BTreeMap<K, Option<V>>,
     ) -> Result<(), BlockchainError>
     where

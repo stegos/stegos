@@ -73,7 +73,7 @@ pub struct AccountDatabase {
     utxos: HashMap<Hash, UnspentOutput>,
     /// Index of UTXOS that known to be change.
     known_changes: HashSet<Hash>,
-    /// Index of all created transactions by this wallet.
+    /// Index of all created UTXOs by this wallet.
     utxos_list: HashMap<Hash, Timestamp>,
     /// Index of all created transactions by this wallet.
     created_txs: HashMap<Hash, Timestamp>,
@@ -139,7 +139,14 @@ impl AccountDatabase {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
         let starting_time = Timestamp::UNIX_EPOCH;
-        for (timestamp, entry) in self.iter_range(starting_time, u64::max_value()) {
+        // Motivation: We need to update in memory indexes while iterating over DB.
+        // 1) We update only in memory indexes, without modifying database.
+        // 2) rocksdb internally support modifying while iterating,
+        // but rust binding limiting us with this..
+        let static_db: &'static DB = unsafe { mem::transmute(&self.database) };
+        let static_iter = Self::iter_range_inner(static_db, starting_time, u64::max_value());
+
+        for (timestamp, entry) in static_iter {
             match entry {
                 LogEntry::Incoming { output } => {
                     let output_hash = Hash::digest(&output.to_output());
@@ -161,6 +168,7 @@ impl AccountDatabase {
                 }
             }
         }
+        drop(static_db);
 
         let meta_cf = self.database.cf_handle(META).expect("cf created");
 
@@ -452,16 +460,16 @@ impl AccountDatabase {
         Ok(result)
     }
 
-    /// List log entries starting from `offset`, limited by `limit`.
-    pub fn iter_range(
-        &self,
+    /// For internall usage only create a iter from database .
+    fn iter_range_inner<'a>(
+        database: &'a DB,
         starting_from: Timestamp,
         limit: u64,
-    ) -> impl Iterator<Item = (Timestamp, LogEntry)> {
-        let log_cf = self.database.cf_handle(HISTORY).expect("cf created");
+    ) -> impl Iterator<Item = (Timestamp, LogEntry)> + 'a {
+        let log_cf = database.cf_handle(HISTORY).expect("cf created");
         let key = Self::bytes_from_timestamp(starting_from);
         let mode = IteratorMode::From(&key, Direction::Forward);
-        self.database
+        database
             .iterator_cf(log_cf, mode)
             .expect("cannot open cf")
             .map(|(k, v)| {
@@ -470,6 +478,15 @@ impl AccountDatabase {
                 (k, v)
             })
             .take(limit as usize)
+    }
+
+    /// List log entries starting from `offset`, limited by `limit`.
+    pub fn iter_range<'a>(
+        &'a self,
+        starting_from: Timestamp,
+        limit: u64,
+    ) -> impl Iterator<Item = (Timestamp, LogEntry)> + 'a {
+        Self::iter_range_inner(&self.database, starting_from, limit)
     }
 
     //

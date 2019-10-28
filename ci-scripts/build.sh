@@ -157,36 +157,6 @@ install_toolchain() {
     fi
 }
 
-install_rocksdb_mingw() {
-    if test -f /mingw64/lib/librocksdb.a ; then
-          return 0
-    fi
-    # install librocksdb
-    echo "Building librocksdb..."
-    curl -L https://github.com/facebook/rocksdb/archive/v${rocksdb_ver}.tar.gz  | tar xvzf -
-
-    echo "Patching rocksdb..."
-    cd rocksdb-${rocksdb_ver}
-    patch ./CMakeLists.txt ../ci-scripts/win/rocksdb_cmake.patch
-    patch ./port/win/port_win.h ../ci-scripts/win/rocksdb_localtime_mingw.patch
-
-    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_INSTALL_LIBDIR=lib \
-          -DWITH_ZSTD=ON -DWITH_SNAPPY=ON -DWITH_SNAPPY=ON \
-          -DWITH_GFLAGS=OFF -DWITH_WINDOWS_UTF8_FILENAMES=ON -DPORTABLE=ON \
-          -DUSE_RTTI=ON -DWITH_TESTS=OFF -DFAIL_ON_WARNINGS=OFF \
-          -DSNAPPY_LIBRARIES="/mingw64/lib/libsnappy.a" \
-          -DZSTD_LIBRARIES="/mingw64/lib/libzstd.a" \
-          -G "MSYS Makefiles" \
-          -S . -B build &&
-    cmake --build build --target rocksdb-shared -- -j $NUMCPUS &&
-    # cmake --build build --target install
-    # install script broken for mingw, so just copy
-    mkdir -p /mingw64/lib/
-    mv ./build/librocksdb-shared.dll.a /mingw64/lib/librocksdb.a &&
-    mv ./build/librocksdb-shared.dll /mingw64/bin/librocksdb-shared.dll &&
-    cd .. &&
-    rm -r rocksdb-${rocksdb_ver}
-}
 
 # Build dependencies on Linux
 install_libraries_linux() {
@@ -200,7 +170,7 @@ install_libraries_macos() {
 
 # Build dependencies on mingw
 install_libraries_mingw() {
-    install_rocksdb_mingw
+    echo
 }
 
 # Install dependencies

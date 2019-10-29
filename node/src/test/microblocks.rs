@@ -857,7 +857,9 @@ fn invalid_microblock() {
             macro_rules! modify_block {
                 ($block: ident, $do:stmt) => {
                     let mut $block = source.clone();
-                    $do;
+                    {
+                        $do
+                    }
                     $block.sign(
                         &leader.node_service.network_skey,
                         &leader.node_service.network_pkey,

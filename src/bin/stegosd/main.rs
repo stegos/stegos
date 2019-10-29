@@ -692,8 +692,14 @@ mod tests {
         let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
         let timestamp = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
-        Blockchain::new(config.chain, chain_dir.path(), true, genesis, timestamp)
-            .expect("testnet looks like unloadable.");
+        Blockchain::new(
+            config.chain,
+            chain_dir.path(),
+            ConsistencyCheck::Full,
+            genesis,
+            timestamp,
+        )
+        .expect("testnet looks like unloadable.");
     }
 
     #[test]
@@ -709,7 +715,7 @@ mod tests {
         Blockchain::new(
             Default::default(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::Full,
             genesis,
             timestamp,
         )
@@ -728,7 +734,7 @@ mod tests {
         Blockchain::new(
             Default::default(),
             chain_dir.path(),
-            true,
+            ConsistencyCheck::Full,
             genesis,
             timestamp,
         )

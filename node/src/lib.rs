@@ -405,6 +405,22 @@ impl NodeService {
             replication_rx,
         );
 
+        let stake_amount = chain
+            .iter_validator_stakes(&network_pkey)
+            .map(|(_, amount, ..)| amount)
+            .sum();
+        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
+
+        let slots_count = chain
+            .election_result()
+            .validators
+            .iter()
+            .find(|(key, _)| key == &network_pkey)
+            .map(|(_, v)| *v)
+            .unwrap_or(0);
+
+        metrics::NODE_SLOTS_COUNT.set(slots_count);
+
         let service = NodeService {
             cfg,
             chain_name,
@@ -567,9 +583,11 @@ impl NodeService {
         assert_eq!(self.cfg.min_stake_fee, 0);
         let mut inputs: Vec<Output> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
+        let mut stake_amount = 0;
         for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
+            stake_amount += amount;
             // Re-stake in one epoch before expiration.
             if active_until_epoch >= self.chain.epoch() + 1 {
                 debug!(
@@ -608,7 +626,7 @@ impl NodeService {
             outputs.push(output);
         }
         assert_eq!(inputs.len(), outputs.len());
-
+        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
         if inputs.is_empty() {
             return Ok(()); // Nothing to re-stake.
         }
@@ -1086,6 +1104,17 @@ impl NodeService {
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
         self.restake_expiring_stakes()?;
+
+        let slots_count = self
+            .chain
+            .election_result()
+            .validators
+            .iter()
+            .find(|(key, _)| key == &self.network_pkey)
+            .map(|(_, v)| *v)
+            .unwrap_or(0);
+
+        metrics::NODE_SLOTS_COUNT.set(slots_count);
 
         Ok(())
     }

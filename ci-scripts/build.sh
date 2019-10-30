@@ -3,7 +3,10 @@
 # CI tool
 #
 
-SCRIPT_DIR=$(cd "$(dirname "$0")"; pwd -P)
+SCRIPT_DIR=$(
+    cd "$(dirname "$0")"
+    pwd -P
+)
 
 if test $(id -u) -eq 0; then
     sudo() {
@@ -21,7 +24,7 @@ export CFLAGS="-O3 -mtune=generic -g -fexceptions -funwind-tables -fno-omit-fram
 export CXXFLAGS="$CFLAGS"
 
 if test -z "${NUMCPUS}"; then
-  export NUMCPUS=$(grep -c '^processor' /proc/cpuinfo)
+    export NUMCPUS=$(grep -c '^processor' /proc/cpuinfo)
 fi
 
 # Path to ~/Downloads to save all downloaded tarballs.
@@ -39,8 +42,7 @@ configure_mingw() {
     alias tar=/usr/bin/tar
 
     #don't call sudo and ldconfig under mingw
-    sudo()
-    {
+    sudo() {
         $@
     }
     ldconfig() {
@@ -48,7 +50,7 @@ configure_mingw() {
     }
 
     export PATH=/mingw64/bin:$PATH
-    export HOME=`cygpath -u $USERPROFILE`
+    export HOME=$(cygpath -u $USERPROFILE)
     export RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN-x86_64-pc-windows-gnu
     export CPATH=/mingw64/include/
     export FLINT_LIB_DIR=/mingw64/lib
@@ -67,25 +69,25 @@ install_packages_linux() {
     if test -f /etc/debian_version; then
         echo "Installing dependencies using apt..."
         export DEBIAN_FRONTEND=noninteractive
-        sudo apt-get update && \
-        sudo apt-get install -y \
-            binutils-dev \
-            build-essential \
-            libc6-dev-i386 \
-            m4 \
-            clang \
-            curl \
-            git \
-            gzip \
-            libiberty-dev \
-            libssl-dev \
-            openjdk-8-jdk-headless \
-            pkg-config \
-            tar \
-            zip \
-            zlib1g-dev
+        sudo apt-get update &&
+            sudo apt-get install -y \
+                binutils-dev \
+                build-essential \
+                libc6-dev-i386 \
+                m4 \
+                clang \
+                curl \
+                git \
+                gzip \
+                libiberty-dev \
+                libssl-dev \
+                openjdk-8-jdk-headless \
+                pkg-config \
+                tar \
+                zip \
+                zlib1g-dev
     elif test -f /etc/redhat-release; then
-        sudo yum install -y\
+        sudo yum install -y \
             binutils-devel \
             clang \
             curl \
@@ -103,15 +105,15 @@ install_packages_linux() {
             zip \
             zlib-devel
     else
-        2>&1 echo "Unsupported Linux distro"
+        echo 2>&1 "Unsupported Linux distro"
         exit 1
     fi
 }
 
 install_packages_macos() {
     if ! clang -v; then
-        2>&1 echo "Please install Command Line Tools:"
-        2>&1 echo "xcode-select --install"
+        echo 2>&1 "Please install Command Line Tools:"
+        echo 2>&1 "xcode-select --install"
         exit 1
     fi
 }
@@ -128,13 +130,13 @@ install_packages_mingw() {
     # Also install building dependencies for rocksdb.
 
     pacman -S --noconfirm --needed mingw-w64-x86_64-gflags \
-      mingw-w64-x86_64-zlib \
-      mingw-w64-x86_64-zstd \
-      mingw-w64-x86_64-lz4 \
-      mingw-w64-x86_64-snappy \
-      mingw-w64-x86_64-gcc  \
-      mingw-w64-x86_64-cmake  \
-      m4 make diffutils curl patch tar
+        mingw-w64-x86_64-zlib \
+        mingw-w64-x86_64-zstd \
+        mingw-w64-x86_64-lz4 \
+        mingw-w64-x86_64-snappy \
+        mingw-w64-x86_64-gcc \
+        mingw-w64-x86_64-cmake \
+        m4 make diffutils curl patch tar
 
     #downgrade clang to specific versions for bindgen
     pacman -U --noconfirm $MINGW_URL-clang-$URL_VER $MINGW_URL-llvm-$URL_VER
@@ -144,11 +146,11 @@ install_packages_mingw() {
 install_android_toolchain() {
     platform=$(uname -s)
     case "$platform" in
-        Linux*)
-            ;;
-        *)
-            2>&1 echo "Platform $platform is not supported"
-            ;;
+    Linux*) ;;
+
+    *)
+        echo 2>&1 "Platform $platform is not supported"
+        ;;
     esac
     if test ! -x $ANDROID_SDK_DIR/tools/bin/sdkmanager; then
         echo "Install Android SDK"
@@ -164,22 +166,22 @@ install_android_toolchain() {
         $ANDROID_SDK_DIR/tools/bin/sdkmanager "$@"
     }
     bindir=$ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin
-    if test ! -d $bindir ; then
+    if test ! -d $bindir; then
         echo "Install Android NDK, build-tools, etc."
         yes | sdkmanager --licenses
         sdkmanager "build-tools;29.0.2" "platform-tools" "platforms;android-$ANDROID_API_LEVEL" "ndk-bundle"
-        echo "export PATH=\$PATH:$bindir" >> ~/.profile
+        echo "export PATH=\$PATH:$bindir" >>~/.profile
     fi
     export PATH=$PATH:$bindir
     for triplet in armv7a-linux-androideabi aarch64-linux-android i686-linux-android x86_64-linux-android; do
         if test ! -x $bindir/$triplet-gcc; then
             echo "Create symlinks for $triplet"
             (
-                cd $bindir;
-                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-clang;
-                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-gcc;
-                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-clang++;
-                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-g++;
+                cd $bindir
+                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-clang
+                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-gcc
+                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-clang++
+                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-g++
             )
         fi
         if test ! -x $bindir/$triplet-rustlinker; then
@@ -193,7 +195,7 @@ install_android_toolchain() {
         rustup target add $target
     done
 
-    if ! grep android ~/.cargo/config &> /dev/null; then
+    if ! grep android ~/.cargo/config &>/dev/null; then
         echo "Configure Cargo for Android"
         mkdir -p ~/.cargo
         cp -p $SCRIPT_DIR/cargo-config ~/.cargo/config
@@ -217,7 +219,7 @@ install_toolchain() {
         rustup component add rustfmt || true
     fi
 
-    if uname -s | grep -q Linux && ! cargo-audit --help > /dev/null; then
+    if uname -s | grep -q Linux && ! cargo-audit --help >/dev/null; then
         echo "Installing cargo-audit"
         cargo install cargo-audit
     fi
@@ -242,14 +244,14 @@ do_builddep() {
         install_packages_macos
         install_toolchain
         ;;
-    MSYS*|MINGW*)
+    MSYS* | MINGW*)
         install_packages_mingw
         configure_mingw
         install_toolchain
         ;;
 
     *)
-        2>&1 echo "$0 doesn't support $(uname -s)"
+        echo 2>&1 "$0 doesn't support $(uname -s)"
         exit 1
         ;;
     esac
@@ -278,43 +280,43 @@ do_release() {
     extension=""
     strip="strip"
     case $1 in
-        linux-x64)
-            target=x86_64-unknown-linux-gnu
-            ;;
-        macos-x64)
-            target=x86_64-apple-darwin
-            ;;
-        win-x64)
-            target=x86_64-pc-windows-gnu
-            extension=".exe"
-            ;;
-        android-x64)
-            target=x86_64-linux-android
-            strip=x86_64-linux-android-strip
-            ;;
-        android-aarch64)
-            target=aarch64-linux-android
-            strip=aarch64-linux-android-strip
-            ;;
-        *)
-            2>&1 echo "Unknown platform: $0"
-            exit 1
-            ;;
+    linux-x64)
+        target=x86_64-unknown-linux-gnu
+        ;;
+    macos-x64)
+        target=x86_64-apple-darwin
+        ;;
+    win-x64)
+        target=x86_64-pc-windows-gnu
+        extension=".exe"
+        ;;
+    android-x64)
+        target=x86_64-linux-android
+        strip=x86_64-linux-android-strip
+        ;;
+    android-aarch64)
+        target=aarch64-linux-android
+        strip=aarch64-linux-android-strip
+        ;;
+    *)
+        echo 2>&1 "Unknown platform: $0"
+        exit 1
+        ;;
     esac
+    rustup target add $target
     cargo build --bins --release --target $target
     ls -lah target/$target/release
     mkdir -p release
     for bin in stegos stegosd bootstrap; do
-      mv target/$target/release/$bin$extension release/$bin-$1.debug$extension;
-      $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension;
+        mv target/$target/release/$bin$extension release/$bin-$1.debug$extension
+        $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension
     done
 
-    if test $1 = "win-x64"
-    then
-      for lib in gcc_s_seh-1 rocksdb-shared stdc++-6 winpthread-1; do
-        cp /mingw64/bin/lib$lib.dll ./release/
-      done
-      $strip -S ./release/librocksdb-shared.dll
+    if test $1 = "win-x64"; then
+        for lib in gcc_s_seh-1 rocksdb-shared stdc++-6 winpthread-1; do
+            cp /mingw64/bin/lib$lib.dll ./release/
+        done
+        $strip -S ./release/librocksdb-shared.dll
     fi
     ls -lah release
 }
@@ -350,7 +352,7 @@ do_coverage() {
 # Upload the code coverage information
 do_coverage_push() {
     if test -z "${CODECOV_TOKEN}"; then
-        2>&1 echo "Missing CODECOV_TOKEN"
+        echo 2>&1 "Missing CODECOV_TOKEN"
         exit 1
     fi
     if test ! -f lconv.info; then
@@ -362,44 +364,45 @@ do_coverage_push() {
 # Build base Docker image
 do_docker_base() {
     if ! docker inspect --type=image stegos/rust:${RUST_TOOLCHAIN} 2>/dev/null 1>/dev/null; then
-        echo "Building stegos/rust:${RUST_TOOLCHAIN} Docker image"
-        docker build -t stegos/rust:${RUST_TOOLCHAIN} $SCRIPT_DIR
+        echo "Building quay.io/stegos/rust:${RUST_TOOLCHAIN} Docker image"
+        docker build -t quay.io/stegos/rust:${RUST_TOOLCHAIN} $SCRIPT_DIR
     fi
 }
 
 # Build Docker image
 do_docker() {
     do_docker_base
-    echo "Building stegos/stegos:latest Docker image"
+    echo "Building quay.io/stegos/stegos:latest Docker image"
     # Check that Dockerfile has proper RUST_TOOLCHAIN
-    if ! grep -q "FROM stegos/rust:${RUST_TOOLCHAIN}" Dockerfile; then
-        2>&1 echo "Inconsistent ./rust-toolchain and FROM in ./Dockerfile"
+    if ! grep -q "FROM quay.io/stegos/rust:${RUST_TOOLCHAIN}" Dockerfile; then
+        echo 2>&1 "Inconsistent ./rust-toolchain and FROM in ./Dockerfile"
         exit 1
     fi
-    docker build -t stegos/stegos:latest -f Dockerfile $SCRIPT_DIR
+    docker build -t quay.io/stegos/stegos:latest -f Dockerfile $SCRIPT_DIR
 }
 
 case $1 in
-    builddep|androiddep|docker|docker_base|build|test|install|coverage|coverage_push|release)
-        set -xe
-        do_$1 $2
-        ;;
-    "")
-        set -xe
-        do_build
-        ;;
-    *)
-        2>&1 echo "Usage: $0 builddep|docker|docker_base|build|test|install|coverage|coverage_push"
-        2>&1 echo " builddep        - install the build dependencies"
-        2>&1 echo "     WITH_ANDROID=1     with Android toolchain"
-        2>&1 echo " docker_base     - build Docker image for CI"
-        2>&1 echo " docker          - build Docker image"
-        2>&1 echo " build           - compile applications"
-        2>&1 echo " test            - run the test suite"
-        2>&1 echo " release         - compile and release applications"
-        2>&1 echo " install         - compile and install applications"
-        2>&1 echo " coverage        - generate the code coverage report"
-        2>&1 echo " coverage_push   - upload the code coverage report to codecov.io"
-        2>&1 echo ""
-        exit 1
+builddep | androiddep | docker | docker_base | build | test | install | coverage | coverage_push | release)
+    set -xe
+    do_$1 $2
+    ;;
+"")
+    set -xe
+    do_build
+    ;;
+*)
+    echo 2>&1 "Usage: $0 builddep|docker|docker_base|build|test|install|coverage|coverage_push"
+    echo 2>&1 " builddep        - install the build dependencies"
+    echo 2>&1 "     WITH_ANDROID=1     with Android toolchain"
+    echo 2>&1 " docker_base     - build Docker image for CI"
+    echo 2>&1 " docker          - build Docker image"
+    echo 2>&1 " build           - compile applications"
+    echo 2>&1 " test            - run the test suite"
+    echo 2>&1 " release         - compile and release applications"
+    echo 2>&1 " install         - compile and install applications"
+    echo 2>&1 " coverage        - generate the code coverage report"
+    echo 2>&1 " coverage_push   - upload the code coverage report to codecov.io"
+    echo 2>&1 ""
+    exit 1
+    ;;
 esac

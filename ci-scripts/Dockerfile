@@ -1,6 +1,6 @@
 FROM ubuntu:xenial as source
 LABEL maintainer="Stegos AG <info@stegos.com>"
-ARG RUST_TOOLCHAIN=nightly-2019-08-05
-COPY build.sh /
-RUN /build.sh builddep && apt-get clean all && rm -rf /root/.cargo/registry
-ENV PATH="/root/.cargo/bin:$PATH"
+COPY * /usr/src/
+WORKDIR /usr/src
+RUN WITH_ANDROID=1 ./build.sh builddep && apt-get clean all && rm -rf /root/.cargo/registry
+ENV PATH="$PATH:/root/.cargo/bin:/root/Android/Sdk/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/bin"

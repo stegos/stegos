@@ -21,19 +21,19 @@ fast_checks:
   stage: test
   script: ./ci-scripts/build.sh test
 
-test:linux:
+test:linux_x64:
   extends: .test
-  image: stegos/rust:nightly-2019-08-05
+  image: quay.io/stegos/rust:nightly-2019-10-24
   tags:
     - linux
 
-test:macos:
+test:macos_x64:
   extends: .test
   tags:
     - macos
 
 # Temporary only build on windows, without running tests
-test:windows:
+test:windows_x64:
   extends: .test
   script: ./ci-scripts/build.sh build
   tags:
@@ -41,7 +41,7 @@ test:windows:
 
 code_coverage:
   stage: test
-  image: stegos/rust:nightly-2019-08-05
+  image: quay.io/stegos/rust:nightly-2019-10-24
   script: ./ci-scripts/build.sh coverage_push
   tags:
     - linux
@@ -51,25 +51,39 @@ code_coverage:
   stage: release
   dependencies: []
   artifacts:
-    expire_in: 1 week
+    expire_in: 3 week
     paths:
       - release/
 
-release:linux:
+release:linux-x64:
   extends: .release
-  image: stegos/rust:nightly-2019-08-05
-  script: ./ci-scripts/build.sh release linux
+  image: quay.io/stegos/rust:nightly-2019-10-24
+  script: ./ci-scripts/build.sh release linux-x64
   tags:
     - linux
 
-release:macos:
+release:macos-x64:
   extends: .release
-  script: ./ci-scripts/build.sh release macos
+  script: ./ci-scripts/build.sh release macos-x64
   tags:
     - macos
 
-release:windows:
+release:windows-x64:
   extends: .release
-  script: ./ci-scripts/build.sh release win
+  script: ./ci-scripts/build.sh release win-x64
   tags:
     - win2019
+
+release:android-x64:
+  extends: .release
+  image: quay.io/stegos/rust:nightly-2019-10-24
+  script: ./ci-scripts/build.sh release android-x64
+  tags:
+    - linux
+
+release:android-aarch64:
+  extends: .release
+  image: quay.io/stegos/rust:nightly-2019-10-24
+  script: ./ci-scripts/build.sh release android-aarch64
+  tags:
+    - linux

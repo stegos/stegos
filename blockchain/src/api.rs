@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, MicroBlockHeader};
+use crate::chat::ChatMessageOutput;
 use crate::output::{Output, PaymentOutput, PublicPaymentOutput, StakeOutput};
 use crate::transaction::Transaction;
 use bit_vec::BitVec;
@@ -115,6 +116,7 @@ pub enum OriginalOutput {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),
     StakeOutput(StakeOutput),
+    ChatMessageOutput(ChatMessageOutput),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -130,6 +132,7 @@ impl From<Output> for OriginalOutput {
             Output::PaymentOutput(p) => OriginalOutput::PaymentOutput(p),
             Output::PublicPaymentOutput(p) => OriginalOutput::PublicPaymentOutput(p),
             Output::StakeOutput(p) => OriginalOutput::StakeOutput(p),
+            Output::ChatMessageOutput(p) => OriginalOutput::ChatMessageOutput(p),
         }
     }
 }
@@ -139,6 +142,7 @@ impl From<OriginalOutput> for Output {
             OriginalOutput::PaymentOutput(p) => Output::PaymentOutput(p),
             OriginalOutput::PublicPaymentOutput(p) => Output::PublicPaymentOutput(p),
             OriginalOutput::StakeOutput(p) => Output::StakeOutput(p),
+            OriginalOutput::ChatMessageOutput(p) => Output::ChatMessageOutput(p),
         }
     }
 }

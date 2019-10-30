@@ -34,11 +34,42 @@ message StakeOutput {
     stegos.crypto.SecureSignature signature = 5;
 }
 
+message ChatPayloadEncryptedPlaintext {
+    bytes encrypted_message = 1;
+}
+
+message ChatPayloadEncryptedChains {
+    repeated stegos.crypto.Pt chains = 1;
+}
+
+message ChatPayload {
+    oneof payload {
+        ChatPayloadEncryptedPlaintext message_payload = 1;
+        ChatPayloadEncryptedChains chains_payload = 2;
+    }
+}
+
+message ChatMessageOutput {
+    stegos.crypto.Pt recipient = 1;
+    stegos.crypto.Pt recipient_keying_hint = 2;
+    stegos.crypto.Fr recipient_cloaking_hint = 3;
+    stegos.crypto.Pt sender = 4;
+    stegos.crypto.Pt sender_keying_hint = 5;
+    stegos.crypto.Fr sender_cloaking_hint = 6;
+    uint64 created = 7;
+    uint64 sequence = 8;
+    uint32 msg_nbr = 9;
+    uint32 msg_tot = 10;
+    stegos.crypto.SchnorrSig signature = 11;
+    ChatPayload payload = 12;
+}
+
 message Output {
     oneof output {
         PaymentOutput payment_output = 1;
         PublicPaymentOutput public_payment_output = 2;
         StakeOutput stake_output = 3;
+        ChatMessageOutput chat_output = 4;
     }
 }
 

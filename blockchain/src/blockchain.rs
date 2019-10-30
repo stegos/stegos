@@ -1745,6 +1745,7 @@ impl Blockchain {
                         .unstake(lsn, o.validator, input_hash.clone(), self.epoch);
                     assert_eq!(self.escrow.current_lsn(), lsn);
                 }
+                Output::ChatMessageOutput(_) => {}
             }
 
             debug!(
@@ -1788,6 +1789,7 @@ impl Blockchain {
                     );
                     assert_eq!(self.escrow.current_lsn(), lsn);
                 }
+                Output::ChatMessageOutput(_) => {}
             }
 
             debug!(

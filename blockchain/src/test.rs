@@ -102,6 +102,7 @@ fn recover_account(
             Output::PaymentOutput(o) => o.decrypt_payload(&account_pkey, &account_skey).is_ok(),
             Output::PublicPaymentOutput(o) => &o.recipient == account_pkey,
             Output::StakeOutput(o) => &o.recipient == account_pkey,
+            Output::ChatMessageOutput(_o) => false,
         };
         if is_my_utxo {
             let output = OutputRecovery {
@@ -378,6 +379,14 @@ pub fn create_fake_micro_block(
                         continue;
                     }
                     staking_balance += o.amount;
+                    stakes.push(output);
+                }
+                Output::ChatMessageOutput(ref o) => {
+                    // failure in this unwrap indicates a program error
+                    let good_until = o.get_expiration_date().unwrap();
+                    if Timestamp::now() > good_until {
+                        continue;
+                    }
                     stakes.push(output);
                 }
             }

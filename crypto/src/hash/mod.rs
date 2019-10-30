@@ -122,6 +122,22 @@ impl Hash {
     pub fn bounds() -> (Hash, Hash) {
         (Hash([0u8; HASH_SIZE]), Hash([255u8; HASH_SIZE]))
     }
+
+    // Right shift - used to convert hash into Fr
+    // When viewed as a little-endian value, this right-shifts the value
+    pub fn rshift(&self, nbits: usize) -> Self {
+        let mut bits = self.0;
+        let nb = bits.len();
+        for _ in 0..nbits {
+            let mut cy = 0;
+            for ix in (0..nb).rev() {
+                let byt = bits[ix];
+                bits[ix] = (byt >> 1) | (cy << 7);
+                cy = byt & 1;
+            }
+        }
+        Hash(bits)
+    }
 }
 
 impl fmt::Debug for Hash {

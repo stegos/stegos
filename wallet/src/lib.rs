@@ -25,6 +25,7 @@
 
 pub mod api;
 mod change;
+mod chat;
 mod error;
 mod metrics;
 mod protos;
@@ -943,6 +944,9 @@ impl UnsealedAccountService {
     fn on_output_created(&mut self, epoch: u64, output: &Output, block_timestamp: Timestamp) {
         let hash = Hash::digest(&output);
         match output {
+            Output::ChatMessageOutput(_o) => {
+                // TODO - wire this in...
+            }
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
                     o.decrypt_payload(&self.account_pkey, &self.account_skey)

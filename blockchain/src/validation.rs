@@ -240,7 +240,9 @@ impl RestakeTransaction {
                 txin.validate()?;
             }
             match txin {
-                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                Output::PaymentOutput(_)
+                | Output::PublicPaymentOutput(_)
+                | Output::ChatMessageOutput(_) => {
                     return Err(TransactionError::InvalidRestakingInput(tx_hash, *txin_hash).into());
                 }
                 Output::StakeOutput(o) => {
@@ -282,7 +284,9 @@ impl RestakeTransaction {
             }
             txout.validate()?;
             match txout {
-                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                Output::PaymentOutput(_)
+                | Output::PublicPaymentOutput(_)
+                | Output::ChatMessageOutput(_) => {
                     return Err(
                         TransactionError::InvalidRestakingOutput(tx_hash, txout_hash).into(),
                     );

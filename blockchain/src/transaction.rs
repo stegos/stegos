@@ -238,6 +238,7 @@ impl PaymentTransaction {
                     gamma_adj += payload.gamma;
                     eff_skey += payload.delta * payload.gamma;
                 }
+                Output::ChatMessageOutput(_) => {}
                 Output::PublicPaymentOutput(_) => {}
                 Output::StakeOutput(_o) => {}
             }
@@ -428,7 +429,9 @@ impl RestakeTransaction {
         for txin in inputs {
             let h = Hash::digest(&txin);
             match txin {
-                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                Output::PaymentOutput(_)
+                | Output::PublicPaymentOutput(_)
+                | Output::ChatMessageOutput(_) => {
                     return Err(TransactionError::InvalidRestakingInput(htx, h).into());
                 }
                 Output::StakeOutput(o) => {
@@ -462,7 +465,9 @@ impl RestakeTransaction {
             txout.validate()?;
             let h = Hash::digest(txout);
             match txout {
-                Output::PaymentOutput(_) | Output::PublicPaymentOutput(_) => {
+                Output::PaymentOutput(_)
+                | Output::PublicPaymentOutput(_)
+                | Output::ChatMessageOutput(_) => {
                     return Err(TransactionError::InvalidRestakingOutput(htx, h).into())
                 }
                 Output::StakeOutput(o) => {

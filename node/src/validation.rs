@@ -53,6 +53,7 @@ pub(crate) fn validate_external_transaction(
             Output::PaymentOutput(_o) => payment_fee,
             Output::PublicPaymentOutput(_o) => payment_fee,
             Output::StakeOutput(_o) => stake_fee,
+            Output::ChatMessageOutput(_o) => payment_fee,
         };
     }
     if tx.fee() < min_fee {
@@ -160,6 +161,7 @@ mod test {
                 Output::PaymentOutput(ref _o) => inputs.push(output),
                 Output::PublicPaymentOutput(ref _o) => inputs.push(output),
                 Output::StakeOutput(ref _o) => stakes.push(output),
+                Output::ChatMessageOutput(ref _o) => inputs.push(output),
             }
         }
 

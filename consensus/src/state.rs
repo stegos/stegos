@@ -294,6 +294,25 @@ impl Consensus {
         assert!(self.should_prevote());
         let block_hash = Hash::digest(&block);
         assert_eq!(&block_hash, self.block_hash.as_ref().unwrap());
+
+        // If propose was different from our locked, don't send it
+        if let Some(locked_round) = &self.locked_round {
+            let locked_block_hash = Hash::digest(&locked_round.block);
+            if block_hash != locked_block_hash
+                || Hash::digest(&locked_round.block_proposal)
+                    != Hash::digest(self.block_proposal.as_ref().unwrap())
+            {
+                info!("{}({}:{}): Found valid propose, but we already locked at other propose, locked_block={}, current_block={}",
+                      self.state.name(),
+                      self.epoch,
+                      self.round,
+                      locked_block_hash,
+                      block_hash,
+                );
+                return;
+            }
+        }
+
         debug!(
             "{}({}:{}): pre-vote block={:?}",
             self.state.name(),

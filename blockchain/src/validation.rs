@@ -565,7 +565,7 @@ impl Blockchain {
                 &block_hash,
                 &block.multisig,
                 &block.multisigmap,
-                self.validators(),
+                &self.validators_at_epoch_start(),
                 self.total_slots(),
             )
             .map_err(|e| BlockError::InvalidBlockSignature(e, epoch, block_hash))?;

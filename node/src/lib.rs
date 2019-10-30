@@ -1340,10 +1340,10 @@ impl NodeService {
     fn handle_pop_micro_block(&mut self) -> Result<(), Error> {
         warn!("Received a request to revert the latest block");
         if self.chain.offset() == 0 {
-            return format_err!(
+            return Err(format_err!(
                 "Attempt to revert a macro block: epoch={}",
                 self.chain.epoch()
-            );
+            ));
         }
         self.pop_micro_block()?;
         Ok(())

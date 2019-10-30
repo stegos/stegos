@@ -273,6 +273,7 @@ impl Escrow {
                     let stake = staking_balance.entry(o.validator).or_insert(0);
                     *stake -= o.amount;
                 }
+                Output::ChatMessageOutput(_o) => {}
             }
         }
         for output in outputs {
@@ -295,6 +296,7 @@ impl Escrow {
                     let stake = staking_balance.entry(o.validator).or_insert(0);
                     *stake += o.amount;
                 }
+                Output::ChatMessageOutput(_) => {}
             };
         }
 

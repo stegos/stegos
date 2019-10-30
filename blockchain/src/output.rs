@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::chat::{ChatCanary, ChatMessageOutput};
 use crate::timestamp::Timestamp;
 use crate::BlockchainError;
 use failure::{Error, Fail};
@@ -80,6 +81,8 @@ pub enum OutputError {
     UtfError(std::str::Utf8Error),
     #[fail(display = "Invalid payment certificate")]
     InvalidCertificate,
+    #[fail(display = "Invalid signature on group message: utxo={}", _0)]
+    InvalidMessageSignature(Hash),
 }
 
 impl From<CryptoError> for OutputError {
@@ -152,6 +155,7 @@ pub enum Output {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),
     StakeOutput(StakeOutput),
+    ChatMessageOutput(ChatMessageOutput),
 }
 
 /// PaymentOutput canary for the light nodes.
@@ -179,6 +183,7 @@ pub enum Canary {
     PaymentCanary(PaymentCanary),
     PublicPaymentCanary(PublicPaymentCanary),
     StakeCanary(StakeCanary),
+    ChatCanary(ChatCanary),
 }
 
 /// Cloak recipient's public key.
@@ -741,6 +746,7 @@ impl Output {
             Output::PaymentOutput(o) => o.validate(),
             Output::PublicPaymentOutput(o) => o.validate(),
             Output::StakeOutput(o) => o.validate(),
+            Output::ChatMessageOutput(o) => o.validate(),
         }
     }
 
@@ -750,6 +756,7 @@ impl Output {
             Output::PaymentOutput(o) => o.recipient,
             Output::PublicPaymentOutput(o) => o.recipient,
             Output::StakeOutput(o) => o.recipient,
+            Output::ChatMessageOutput(o) => PublicKey::from(o.recipient),
         }))
     }
 
@@ -759,6 +766,7 @@ impl Output {
             Output::PaymentOutput(o) => o.pedersen_commitment(),
             Output::PublicPaymentOutput(o) => o.pedersen_commitment(),
             Output::StakeOutput(o) => o.pedersen_commitment(),
+            Output::ChatMessageOutput(_o) => Ok(Pt::inf()),
         }
     }
 
@@ -768,6 +776,7 @@ impl Output {
             Output::PaymentOutput(o) => o.canary().into(),
             Output::PublicPaymentOutput(o) => o.canary().into(),
             Output::StakeOutput(o) => o.canary().into(),
+            Output::ChatMessageOutput(o) => o.canary().into(),
         }
     }
 }
@@ -787,6 +796,12 @@ impl From<StakeOutput> for Output {
 impl From<PublicPaymentOutput> for Output {
     fn from(output: PublicPaymentOutput) -> Output {
         Output::PublicPaymentOutput(output)
+    }
+}
+
+impl From<ChatMessageOutput> for Output {
+    fn from(output: ChatMessageOutput) -> Output {
+        Output::ChatMessageOutput(output)
     }
 }
 
@@ -825,6 +840,7 @@ impl Hashable for Output {
             Output::PaymentOutput(payment) => payment.hash(state),
             Output::PublicPaymentOutput(payment) => payment.hash(state),
             Output::StakeOutput(stake) => stake.hash(state),
+            Output::ChatMessageOutput(msg) => msg.hash(state),
         }
     }
 }
@@ -879,6 +895,12 @@ impl From<PublicPaymentCanary> for Canary {
     }
 }
 
+impl From<ChatCanary> for Canary {
+    fn from(canary: ChatCanary) -> Canary {
+        Canary::ChatCanary(canary)
+    }
+}
+
 impl Hashable for PaymentCanary {
     fn hash(&self, state: &mut Hasher) {
         "Payment".hash(state);
@@ -907,6 +929,7 @@ impl Hashable for Canary {
             Canary::PaymentCanary(payment) => payment.hash(state),
             Canary::PublicPaymentCanary(payment) => payment.hash(state),
             Canary::StakeCanary(stake) => stake.hash(state),
+            Canary::ChatCanary(msg) => msg.hash(state),
         }
     }
 }

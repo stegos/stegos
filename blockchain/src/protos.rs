@@ -510,6 +510,98 @@ impl ProtoConvert for StakeOutput {
     }
 }
 
+impl ProtoConvert for chat::ChatMessageOutput {
+    type Proto = blockchain::ChatMessageOutput;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::ChatMessageOutput::new();
+        proto.set_recipient(self.recipient.into_proto());
+        proto.set_recipient_keying_hint(self.recipient_keying_hint.into_proto());
+        proto.set_recipient_cloaking_hint(self.recipient_cloaking_hint.into_proto());
+        proto.set_sender(self.sender.into_proto());
+        proto.set_sender_keying_hint(self.sender_keying_hint.into_proto());
+        proto.set_sender_cloaking_hint(self.sender_cloaking_hint.into_proto());
+        let ts: u64 = self.created.into();
+        proto.set_created(ts);
+        proto.set_sequence(self.sequence);
+        proto.set_msg_nbr(self.msg_nbr);
+        proto.set_msg_tot(self.msg_tot);
+        proto.set_signature(self.signature.into_proto());
+        proto.set_payload(self.payload.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let recipient = Pt::from_proto(proto.get_recipient())?;
+        let recipient_keying_hint = Pt::from_proto(proto.get_recipient_keying_hint())?;
+        let recipient_cloaking_hint = Fr::from_proto(proto.get_recipient_cloaking_hint())?;
+        let sender = Pt::from_proto(proto.get_sender())?;
+        let sender_keying_hint = Pt::from_proto(proto.get_sender_keying_hint())?;
+        let sender_cloaking_hint = Fr::from_proto(proto.get_sender_cloaking_hint())?;
+        let created = Timestamp::from(proto.get_created());
+        let sequence = proto.get_sequence();
+        let msg_nbr = proto.get_msg_nbr();
+        let msg_tot = proto.get_msg_tot();
+        let signature = SchnorrSig::from_proto(proto.get_signature())?;
+        let payload = chat::MessagePayload::from_proto(proto.get_payload())?;
+        Ok(chat::ChatMessageOutput {
+            recipient,
+            recipient_keying_hint,
+            recipient_cloaking_hint,
+            sender,
+            sender_keying_hint,
+            sender_cloaking_hint,
+            created,
+            sequence,
+            msg_nbr,
+            msg_tot,
+            signature,
+            payload,
+        })
+    }
+}
+
+impl ProtoConvert for chat::MessagePayload {
+    type Proto = blockchain::ChatPayload;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::ChatPayload::new();
+        match self {
+            chat::MessagePayload::EncryptedMessage(m) => {
+                let mut carrier = blockchain::ChatPayloadEncryptedPlaintext::new();
+                carrier.set_encrypted_message(m.to_vec());
+                proto.set_message_payload(carrier);
+            }
+            chat::MessagePayload::EncryptedChainCodes(pts) => {
+                let mut carrier = blockchain::ChatPayloadEncryptedChains::new();
+                for pt in pts {
+                    carrier.chains.push(pt.into_proto());
+                }
+                proto.set_chains_payload(carrier);
+            }
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        match proto.payload {
+            Some(blockchain::ChatPayload_oneof_payload::message_payload(ref output)) => {
+                let msg = output.get_encrypted_message();
+                Ok(chat::MessagePayload::EncryptedMessage(msg.to_vec()))
+            }
+            Some(blockchain::ChatPayload_oneof_payload::chains_payload(ref output)) => {
+                let pts = output.get_chains();
+                let mut v = Vec::<Pt>::new();
+                for pt in pts {
+                    v.push(Pt::try_from_bytes(&pt.data)?);
+                }
+                Ok(chat::MessagePayload::EncryptedChainCodes(v))
+            }
+            None => {
+                Err(ProtoError::MissingField("payload".to_string(), "payload".to_string()).into())
+            }
+        }
+    }
+}
+
 impl ProtoConvert for Output {
     type Proto = blockchain::Output;
     fn into_proto(&self) -> Self::Proto {
@@ -520,6 +612,7 @@ impl ProtoConvert for Output {
                 proto.set_public_payment_output(output.into_proto())
             }
             Output::StakeOutput(output) => proto.set_stake_output(output.into_proto()),
+            Output::ChatMessageOutput(output) => proto.set_chat_output(output.into_proto()),
         }
         proto
     }
@@ -537,6 +630,10 @@ impl ProtoConvert for Output {
             Some(blockchain::Output_oneof_output::stake_output(ref output)) => {
                 let output = StakeOutput::from_proto(output)?;
                 Ok(Output::StakeOutput(output))
+            }
+            Some(blockchain::Output_oneof_output::chat_output(ref output)) => {
+                let output = chat::ChatMessageOutput::from_proto(output)?;
+                Ok(Output::ChatMessageOutput(output))
             }
             None => {
                 Err(ProtoError::MissingField("output".to_string(), "output".to_string()).into())

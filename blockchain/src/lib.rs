@@ -21,12 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod awards;
 mod block;
 mod blockchain;
+pub mod chat;
 mod config;
 pub mod election;
 mod error;
@@ -39,7 +40,7 @@ mod output;
 pub mod protos;
 mod slashing;
 pub mod test;
-mod timestamp;
+pub mod timestamp;
 mod transaction;
 mod validation;
 pub mod view_changes;
@@ -47,6 +48,7 @@ pub mod view_changes;
 pub use crate::awards::ValidatorAwardState;
 pub use crate::block::*;
 pub use crate::blockchain::*;
+pub use crate::chat::*;
 pub use crate::config::*;
 pub use crate::election::{mix, ElectionInfo, ElectionResult};
 pub use crate::error::*;

@@ -1118,7 +1118,7 @@ impl Hashable for EncryptedPayload {
     }
 }
 
-fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
+pub fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     // on input, key is 32B. AES128 only needs 16B for keying.
     // So take first 16B of key as keying,
     // and last 16B of key as CTR mode nonce

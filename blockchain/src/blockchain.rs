@@ -472,7 +472,11 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
         metrics::EMISSION.set(self.balance().block_reward);
         metrics::DIFFICULTY.set(self.difficulty as i64);
-        metrics::STAKERS_COUNT.set(self.escrow.escrow.len() as i64);
+        let stakes = self.escrow.get_stakers(self.epoch);
+        let sum = stakes.iter().map(|(_, v)| *v).sum();
+        let count = stakes.iter().count();
+        metrics::STAKERS_COUNT.set(count as i64);
+        metrics::TOTAL_STAKE_AMOUNT.set(sum);
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
@@ -1445,7 +1449,11 @@ impl Blockchain {
         metrics::UTXO_LEN.set(self.output_by_hash.len() as i64);
         metrics::EMISSION.set(self.balance().block_reward);
         metrics::DIFFICULTY.set(self.difficulty as i64);
-        metrics::STAKERS_COUNT.set(self.escrow.escrow.len() as i64);
+        let stakes = self.escrow.get_stakers(self.epoch);
+        let sum = stakes.iter().map(|(_, v)| *v).sum();
+        let count = stakes.iter().count();
+        metrics::STAKERS_COUNT.set(count as i64);
+        metrics::TOTAL_STAKE_AMOUNT.set(sum);
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)

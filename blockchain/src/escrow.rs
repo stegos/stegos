@@ -207,6 +207,22 @@ impl Escrow {
     }
 
     ///
+    /// Update prometheus metrics.
+    ///
+    pub(crate) fn get_stakers(&self, epoch: u64) -> BTreeMap<pbc::PublicKey, i64> {
+        let mut stakes: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
+        for (k, v) in self.escrow.iter() {
+            if v.active_until_epoch < epoch {
+                // Skip expired stakes.
+                continue;
+            }
+            let entry = stakes.entry(k.validator_pkey).or_insert(0);
+            *entry += v.amount;
+        }
+        stakes
+    }
+
+    ///
     /// Get all staked values of all validators.
     /// Filter out stakers with stake lower than min_stake_amount.
     ///

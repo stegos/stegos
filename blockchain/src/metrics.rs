@@ -38,6 +38,11 @@ lazy_static! {
         "Count of stakers above min_stake_amount"
     )
     .unwrap();
+    pub static ref TOTAL_STAKE_AMOUNT: IntGauge = register_int_gauge!(
+        "stegos_total_stake_amount",
+        "Amount of money staked totally on blockchain."
+    )
+    .unwrap();
     pub static ref EPOCH: IntGauge =
         register_int_gauge!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
     pub static ref OFFSET: IntGauge =

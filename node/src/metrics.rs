@@ -34,7 +34,16 @@ lazy_static! {
         register_gauge!("stegos_block_local_timestamp", "The local time at this node when the last block was registered.").unwrap();
     pub static ref BLOCK_IDLE: Gauge =
         register_gauge!("stegos_block_idle", "The elapsed time since the last block, i.e. it is the time difference between the local time at this node and the time when the last block was registered.").unwrap();
-
+    pub static ref NODE_STAKE_AMOUNT: IntGauge = register_int_gauge!(
+        "stegos_node_stake_amount",
+        "Amount of money staked by this node."
+    )
+    .unwrap();
+    pub static ref NODE_SLOTS_COUNT: IntGauge = register_int_gauge!(
+        "stegos_node_slots_count",
+        "Amount of slots node has in received macroblock."
+    )
+    .unwrap();
     //
     // Macro Blocks.
     //

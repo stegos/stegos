@@ -36,7 +36,10 @@ mod microblocks;
 
 use crate::*;
 use assert_matches::assert_matches;
-use log::Level;
+use log::*;
+use rand::{thread_rng, Rng};
+use rand_core::SeedableRng;
+use rand_isaac::IsaacRng;
 use std::time::Duration;
 pub use stegos_blockchain::test::*;
 use stegos_consensus::ConsensusMessageBody;
@@ -45,10 +48,6 @@ use stegos_crypto::pbc::{PublicKey, VRF};
 use stegos_network::Network;
 use tempdir::TempDir;
 use tokio_timer::Timer;
-
-use rand::{thread_rng, Rng};
-use rand_core::SeedableRng;
-use rand_isaac::IsaacRng;
 
 pub struct SandboxConfig {
     pub node: NodeConfig,

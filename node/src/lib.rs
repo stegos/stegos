@@ -49,6 +49,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
+use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
 use std::thread;
@@ -315,6 +316,9 @@ pub struct NodeService {
     /// Cheating detection.
     cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
 
+    /// Re-stake at this offset
+    restaking_offset: u32,
+
     /// Automatic re-staking status.
     is_restaking_enabled: bool,
 
@@ -367,9 +371,11 @@ impl NodeService {
             MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
+
+        let restaking_offset = 0; // will be updated on init().
         let is_restaking_enabled = true;
 
-        let on_node_notification = Vec::new();
+        let status_subscribers = Vec::new();
 
         let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -417,8 +423,8 @@ impl NodeService {
 
         let events = select_all(streams);
 
-        let check_sync = Interval::new_interval(cfg.sync_check_timeout);
-        let chain_disk_subscribers = Vec::new();
+        let check_sync = Interval::new_interval(cfg.sync_change_timeout);
+        let chain_readers = Vec::new();
         let chain_subscribers = Vec::new();
         let node = Node {
             outbox,
@@ -433,22 +439,6 @@ impl NodeService {
             replication_rx,
         );
 
-        let stake_amount = chain
-            .iter_validator_stakes(&network_pkey)
-            .map(|(_, amount, ..)| amount)
-            .sum();
-        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
-
-        let slots_count = chain
-            .election_result()
-            .validators
-            .iter()
-            .find(|(key, _)| key == &network_pkey)
-            .map(|(_, v)| *v)
-            .unwrap_or(0);
-
-        metrics::NODE_SLOTS_COUNT.set(slots_count);
-
         let service = NodeService {
             cfg,
             chain_name,
@@ -459,8 +449,9 @@ impl NodeService {
             validation,
             last_block_clock,
             cheating_proofs,
+            restaking_offset,
             is_restaking_enabled,
-            chain_readers: chain_disk_subscribers,
+            chain_readers,
             chain_subscribers,
             node: node.clone(),
             network: network.clone(),
@@ -468,8 +459,9 @@ impl NodeService {
             events,
             txpool_service,
             replication,
-            status_subscribers: on_node_notification,
+            status_subscribers,
         };
+        service.update_stake_balance();
 
         Ok((service, node))
     }
@@ -608,23 +600,54 @@ impl NodeService {
     }
 
     ///
+    /// Re-calculate node's stake balance.
+    ///
+    fn update_stake_balance(&self) {
+        let mut current_stake_balance = 0;
+        let mut available_stake_balance = 0;
+        for (_input_hash, amount, _account_pkey, active_until_epoch) in
+            self.chain.iter_validator_stakes(&self.network_pkey)
+        {
+            current_stake_balance += amount;
+            if active_until_epoch < self.chain.epoch() {
+                available_stake_balance += amount;
+            }
+        }
+        metrics::NODE_CURRENT_STAKE_BALANCE.set(current_stake_balance);
+        metrics::NODE_AVAILABLE_STAKE_BALANCE.set(available_stake_balance);
+
+        let slots_count = self
+            .chain
+            .election_result()
+            .validators
+            .iter()
+            .find(|(key, _)| key == &self.network_pkey)
+            .map(|(_, v)| *v)
+            .unwrap_or(0);
+        metrics::NODE_SLOTS_COUNT.set(slots_count);
+    }
+
+    ///
     /// Re-stake expiring stakes.
     ///
     fn restake_expiring_stakes(&mut self) -> Result<(), Error> {
-        if !self.is_synchronized() || !self.is_restaking_enabled {
+        if !self.is_restaking_enabled {
+            return Ok(());
+        }
+        if !self.is_synchronized() {
             // Don't re-stake during bootstrap, wait for the actual network state.
+            strace!(self, "Skipping restaking - Node is not synchronized");
             return Ok(());
         }
         assert_eq!(self.cfg.min_stake_fee, 0);
+        strace!(self, "Restaking expiring stakes");
         let mut inputs: Vec<Output> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
-        let mut stake_amount = 0;
         for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
-            stake_amount += amount;
-            // Re-stake in one epoch before expiration.
-            if active_until_epoch >= self.chain.epoch() + 1 {
+            // Re-stake in the last epoch.
+            if self.chain.epoch() < active_until_epoch {
                 sdebug!(
                     self,
                     "Skip restaking - stake is active: utxo={}, active_until_epoch={}",
@@ -666,7 +689,6 @@ impl NodeService {
             outputs.push(output);
         }
         assert_eq!(inputs.len(), outputs.len());
-        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
         if inputs.is_empty() {
             return Ok(()); // Nothing to re-stake.
         }
@@ -684,6 +706,21 @@ impl NodeService {
         );
 
         self.send_transaction(tx.into())?;
+
+        self.restaking_offset = if self.chain.cfg().micro_blocks_in_epoch > 1 {
+            // Restake in [0; blocks_in_epoch * 4/5) interval.
+            let mut rng = rand::thread_rng();
+            rng.gen_range(0, self.chain.cfg().micro_blocks_in_epoch * 4 / 5)
+        } else {
+            // Used for tests.
+            0
+        };
+        sdebug!(
+            self,
+            "Next restaking: epoch={}, offset={}",
+            self.chain.epoch() + 1,
+            self.restaking_offset
+        );
 
         Ok(())
     }
@@ -1103,18 +1140,9 @@ impl NodeService {
         notify_subscribers(&mut self.chain_subscribers, msg.into());
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
-        self.restake_expiring_stakes()?;
-
-        let slots_count = self
-            .chain
-            .election_result()
-            .validators
-            .iter()
-            .find(|(key, _)| key == &self.network_pkey)
-            .map(|(_, v)| *v)
-            .unwrap_or(0);
-
-        metrics::NODE_SLOTS_COUNT.set(slots_count);
+        if self.chain.offset() == self.restaking_offset {
+            self.restake_expiring_stakes()?;
+        }
 
         Ok(())
     }
@@ -1229,7 +1257,9 @@ impl NodeService {
             transaction_statuses,
         };
         notify_subscribers(&mut self.chain_subscribers, msg.into());
-
+        if self.chain.offset() == self.restaking_offset {
+            self.restake_expiring_stakes()?;
+        }
         Ok(())
     }
 
@@ -1256,6 +1286,7 @@ impl NodeService {
             metrics::MICRO_BLOCK_INTERVAL.set(interval);
             metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
         }
+        self.update_stake_balance();
         self.on_status_changed();
         self.update_validation_status();
     }
@@ -1684,11 +1715,7 @@ impl NodeService {
     fn is_synchronized(&self) -> bool {
         let timestamp = Timestamp::now();
         let block_timestamp = self.chain.last_block_timestamp();
-        if self.cfg.macro_block_timeout > self.cfg.micro_block_timeout {
-            block_timestamp + self.cfg.macro_block_timeout >= timestamp
-        } else {
-            block_timestamp + self.cfg.micro_block_timeout >= timestamp
-        }
+        block_timestamp + self.cfg.sync_timeout >= timestamp
     }
 
     /// Get a timestamp for the next block.

@@ -1114,35 +1114,19 @@ impl NodeService {
 
         assert_eq!(transaction_statuses.len(), transactions.len());
 
-        if !was_synchronized && self.is_synchronized() {
-            // Reset loader timer.
-            sinfo!(
-                self,
-                "Synchronized with the network: epoch={}, last_block={}",
-                epoch,
-                self.chain.last_block_hash()
-            );
-        }
         let epoch_info = self
             .chain
             .epoch_info(epoch)?
             .expect("Expect epoch info for last macroblock.")
             .clone();
-
-        self.on_block_added(block_timestamp, true);
-        self.replication
-            .on_block(block.clone().into(), self.chain.cfg().micro_blocks_in_epoch);
-        let msg = ExtendedMacroBlock {
+        let notification = ExtendedMacroBlock {
             block,
             epoch_info,
             transaction_statuses,
         };
-        notify_subscribers(&mut self.chain_subscribers, msg.into());
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
-        if self.chain.offset() == self.restaking_offset {
-            self.restake_expiring_stakes()?;
-        }
+        self.on_block_added(block_timestamp, notification.into(), was_synchronized);
 
         Ok(())
     }
@@ -1154,6 +1138,7 @@ impl NodeService {
         let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let offset = block.header.offset;
+        let was_synchronized = self.is_synchronized();
 
         // Check for the correct block order.
         match &self.validation {
@@ -1245,26 +1230,26 @@ impl NodeService {
             assert!(transaction_statuses.insert(tx_hash, status).is_none());
             assert!(transactions.insert(tx_hash, tx).is_none());
         }
-
         assert_eq!(transaction_statuses.len(), transactions.len());
         assert!(transactions.len() >= block_transactions.len());
-
-        self.on_block_added(block_timestamp, false);
-        self.replication
-            .on_block(block.clone().into(), self.chain.cfg().micro_blocks_in_epoch);
-        let msg = ExtendedMicroBlock {
+        let notification = ExtendedMicroBlock {
             block,
             transaction_statuses,
         };
-        notify_subscribers(&mut self.chain_subscribers, msg.into());
-        if self.chain.offset() == self.restaking_offset {
-            self.restake_expiring_stakes()?;
-        }
+        self.on_block_added(block_timestamp, notification.into(), was_synchronized);
         Ok(())
     }
 
-    /// update metrics and statuses on block processing.
-    fn on_block_added(&mut self, block_timestamp: Timestamp, mblock: bool) {
+    ///
+    /// Update all metrics and statuses after adding a new block.
+    ///
+    fn on_block_added(
+        &mut self,
+        block_timestamp: Timestamp,
+        notification: ChainNotification,
+        was_synchronized: bool,
+    ) {
+        // Update block metrics.
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
@@ -1275,20 +1260,54 @@ impl NodeService {
         let lag = local_timestamp - remote_timestamp; // can be negative.
         metrics::BLOCK_REMOTE_TIMESTAMP.set(remote_timestamp);
         metrics::BLOCK_LOCAL_TIMESTAMP.set(local_timestamp);
-        if mblock {
-            metrics::MACRO_BLOCK_LAG.set(lag);
-            metrics::MACRO_BLOCK_LAG_HG.observe(lag);
-        } else {
-            metrics::MICRO_BLOCK_LAG.set(lag);
-            metrics::MICRO_BLOCK_LAG_HG.observe(lag);
-            let interval = self.last_block_clock.duration_since(last_block_clock);
-            let interval = (interval.as_secs() as f64) + (interval.subsec_nanos() as f64) * 1e-9;
-            metrics::MICRO_BLOCK_INTERVAL.set(interval);
-            metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
-        }
+        let block: Block = match &notification {
+            ChainNotification::MacroBlockCommitted(notification) => {
+                metrics::MACRO_BLOCK_LAG.set(lag);
+                metrics::MACRO_BLOCK_LAG_HG.observe(lag);
+                notification.block.clone().into()
+            }
+            ChainNotification::MicroBlockPrepared(notification) => {
+                metrics::MICRO_BLOCK_LAG.set(lag);
+                metrics::MICRO_BLOCK_LAG_HG.observe(lag);
+                let interval = self.last_block_clock.duration_since(last_block_clock);
+                let interval =
+                    (interval.as_secs() as f64) + (interval.subsec_nanos() as f64) * 1e-9;
+                metrics::MICRO_BLOCK_INTERVAL.set(interval);
+                metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
+                notification.block.clone().into()
+            }
+            _ => unreachable!(),
+        };
+
+        // Update staking balance metrics.
         self.update_stake_balance();
-        self.on_status_changed();
+
+        // Update validation status.
         self.update_validation_status();
+
+        // Print "Synchronized" message.
+        if !was_synchronized && self.is_synchronized() {
+            sinfo!(self, "Synchronized with the network");
+        }
+
+        // Send StatusChanged.
+        self.on_status_changed();
+
+        // Send ChainNotification.
+        notify_subscribers(&mut self.chain_subscribers, notification);
+
+        // Send block to replication.
+        self.replication
+            .on_block(block, self.chain.cfg().micro_blocks_in_epoch);
+
+        // Re-stake expiring stakes.
+        if self.chain.offset() == self.restaking_offset
+            || !was_synchronized && self.is_synchronized()
+        {
+            if let Err(e) = self.restake_expiring_stakes() {
+                serror!(self, "Restake failed: {}", e);
+            }
+        }
     }
 
     fn status(&self) -> StatusInfo {
@@ -1382,6 +1401,14 @@ impl NodeService {
             })
             .collect();
         self.mempool.pop_micro_block(txs);
+
+        // Update validation status.
+        self.update_validation_status();
+
+        // Send StatusChanged.
+        self.on_status_changed();
+
+        // Send ChainNotification.
         let msg = RevertedMicroBlock {
             block,
             transaction_statuses,
@@ -1389,7 +1416,7 @@ impl NodeService {
             recovered_inputs,
         };
         notify_subscribers(&mut self.chain_subscribers, msg.into());
-        self.update_validation_status();
+
         Ok(())
     }
 

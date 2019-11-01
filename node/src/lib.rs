@@ -49,7 +49,7 @@ use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
-use log::*;
+use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::HashMap;
 use std::thread;
@@ -114,6 +114,35 @@ pub const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
 pub const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
+
+//
+// Logging utils.
+//
+macro_rules! strace {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Trace, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+    );
+}
+macro_rules! sdebug {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Debug, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+    );
+}
+macro_rules! sinfo {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Info, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+    );
+}
+macro_rules! swarn {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Warn, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+    );
+}
+macro_rules! serror {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Error, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+    );
+}
 
 #[derive(Debug)]
 pub enum NodeMessage {
@@ -249,7 +278,7 @@ fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) 
         match tx.start_send(msg.clone()) {
             Ok(AsyncSink::Ready) => {}
             Ok(AsyncSink::NotReady(_msg)) => {
-                warn!("Subscriber is slow, discarding messages");
+                log::warn!("Subscriber is slow, discarding messages");
             }
             Err(_e /* SendError<ChainNotification> */) => {
                 subscribers.swap_remove(i);
@@ -286,6 +315,9 @@ pub struct NodeService {
 
     /// Cheating detection.
     cheating_proofs: HashMap<pbc::PublicKey, SlashingProof>,
+
+    /// Re-stake at this offset
+    restaking_offset: u32,
 
     /// Automatic re-staking status.
     is_restaking_enabled: bool,
@@ -339,9 +371,11 @@ impl NodeService {
             MicroBlockAuditor
         };
         let cheating_proofs = HashMap::new();
+
+        let restaking_offset = 0; // will be updated on init().
         let is_restaking_enabled = true;
 
-        let on_node_notification = Vec::new();
+        let status_subscribers = Vec::new();
 
         let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
 
@@ -389,8 +423,8 @@ impl NodeService {
 
         let events = select_all(streams);
 
-        let check_sync = Interval::new_interval(cfg.sync_check_timeout);
-        let chain_disk_subscribers = Vec::new();
+        let check_sync = Interval::new_interval(cfg.sync_change_timeout);
+        let chain_readers = Vec::new();
         let chain_subscribers = Vec::new();
         let node = Node {
             outbox,
@@ -405,22 +439,6 @@ impl NodeService {
             replication_rx,
         );
 
-        let stake_amount = chain
-            .iter_validator_stakes(&network_pkey)
-            .map(|(_, amount, ..)| amount)
-            .sum();
-        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
-
-        let slots_count = chain
-            .election_result()
-            .validators
-            .iter()
-            .find(|(key, _)| key == &network_pkey)
-            .map(|(_, v)| *v)
-            .unwrap_or(0);
-
-        metrics::NODE_SLOTS_COUNT.set(slots_count);
-
         let service = NodeService {
             cfg,
             chain_name,
@@ -431,8 +449,9 @@ impl NodeService {
             validation,
             last_block_clock,
             cheating_proofs,
+            restaking_offset,
             is_restaking_enabled,
-            chain_readers: chain_disk_subscribers,
+            chain_readers,
             chain_subscribers,
             node: node.clone(),
             network: network.clone(),
@@ -440,8 +459,9 @@ impl NodeService {
             events,
             txpool_service,
             replication,
-            status_subscribers: on_node_notification,
+            status_subscribers,
         };
+        service.update_stake_balance();
 
         Ok((service, node))
     }
@@ -460,7 +480,8 @@ impl NodeService {
         let data = tx.into_buffer()?;
         let tx_hash = Hash::digest(&tx);
         self.network.publish(&TX_TOPIC, data.clone())?;
-        info!(
+        sinfo!(
+            self,
             "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
             &tx_hash,
             tx.txins()
@@ -481,7 +502,7 @@ impl NodeService {
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
         if !tx.is_restaking() && !self.is_synchronized() {
-            debug!(
+            sdebug!(self,
                 "Node is not synchronized - ignore transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
                 &tx_hash,
                 tx.txins(),
@@ -490,7 +511,8 @@ impl NodeService {
             );
             return Ok(());
         }
-        info!(
+        sinfo!(
+            self,
             "Received transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
             &tx_hash,
             tx.txins()
@@ -552,7 +574,8 @@ impl NodeService {
 
         match result {
             Err(ref e) if !self.is_synchronized() => {
-                debug!(
+                sdebug!(
+                    self,
                     "Error during transaction validating when not synchronized: {}",
                     e
                 );
@@ -563,7 +586,11 @@ impl NodeService {
         };
 
         // Queue to mempool.
-        info!("Transaction is valid, adding to mempool: tx={}", &tx_hash);
+        sinfo!(
+            self,
+            "Transaction is valid, adding to mempool: tx={}",
+            &tx_hash
+        );
         self.mempool.push_tx(tx_hash, tx);
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
@@ -573,36 +600,69 @@ impl NodeService {
     }
 
     ///
+    /// Re-calculate node's stake balance.
+    ///
+    fn update_stake_balance(&self) {
+        let mut current_stake_balance = 0;
+        let mut available_stake_balance = 0;
+        for (_input_hash, amount, _account_pkey, active_until_epoch) in
+            self.chain.iter_validator_stakes(&self.network_pkey)
+        {
+            current_stake_balance += amount;
+            if active_until_epoch < self.chain.epoch() {
+                available_stake_balance += amount;
+            }
+        }
+        metrics::NODE_CURRENT_STAKE_BALANCE.set(current_stake_balance);
+        metrics::NODE_AVAILABLE_STAKE_BALANCE.set(available_stake_balance);
+
+        let slots_count = self
+            .chain
+            .election_result()
+            .validators
+            .iter()
+            .find(|(key, _)| key == &self.network_pkey)
+            .map(|(_, v)| *v)
+            .unwrap_or(0);
+        metrics::NODE_SLOTS_COUNT.set(slots_count);
+    }
+
+    ///
     /// Re-stake expiring stakes.
     ///
     fn restake_expiring_stakes(&mut self) -> Result<(), Error> {
-        if !self.is_synchronized() || !self.is_restaking_enabled {
+        if !self.is_restaking_enabled {
+            return Ok(());
+        }
+        if !self.is_synchronized() {
             // Don't re-stake during bootstrap, wait for the actual network state.
+            strace!(self, "Skipping restaking - Node is not synchronized");
             return Ok(());
         }
         assert_eq!(self.cfg.min_stake_fee, 0);
+        strace!(self, "Restaking expiring stakes");
         let mut inputs: Vec<Output> = Vec::new();
         let mut outputs: Vec<Output> = Vec::new();
-        let mut stake_amount = 0;
         for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
-            stake_amount += amount;
-            // Re-stake in one epoch before expiration.
-            if active_until_epoch >= self.chain.epoch() + 1 {
-                debug!(
-                    "Skip restaking - stake is active: utxo={}, active_until_epoch={}, epoch={}",
+            // Re-stake in the last epoch.
+            if self.chain.epoch() < active_until_epoch {
+                sdebug!(
+                    self,
+                    "Skip restaking - stake is active: utxo={}, active_until_epoch={}",
                     input_hash,
-                    active_until_epoch,
-                    self.chain.epoch()
+                    active_until_epoch
                 );
                 continue;
             }
 
             if let Some(tx_hash) = self.mempool.get_tx_by_input(input_hash) {
-                debug!(
+                sdebug!(
+                    self,
                     "Skip re-staking - stake is used by tx: utxo={}, tx={}",
-                    input_hash, tx_hash
+                    input_hash,
+                    tx_hash
                 );
                 continue;
             }
@@ -612,30 +672,33 @@ impl NodeService {
                 .output_by_hash(input_hash)?
                 .expect("Stake exists");
 
-            trace!("Creating StakeUTXO...");
+            strace!(self, "Creating StakeUTXO...");
             let output =
                 Output::new_stake(account_pkey, &self.network_skey, &self.network_pkey, amount)?;
             let output_hash = Hash::digest(&output);
 
-            info!(
+            sinfo!(
+                self,
                 "Restake: old_utxo={}, new_utxo={}, amount={}",
-                input_hash, output_hash, amount
+                input_hash,
+                output_hash,
+                amount
             );
 
             inputs.push(input);
             outputs.push(output);
         }
         assert_eq!(inputs.len(), outputs.len());
-        metrics::NODE_STAKE_AMOUNT.set(stake_amount);
         if inputs.is_empty() {
             return Ok(()); // Nothing to re-stake.
         }
 
-        trace!("Signing transaction...");
+        strace!(self, "Signing transaction...");
         let tx =
             RestakeTransaction::new(&self.network_skey, &self.network_pkey, &inputs, &outputs)?;
         let tx_hash = Hash::digest(&tx);
-        info!(
+        sinfo!(
+            self,
             "Created a restaking transaction: hash={}, inputs={}, outputs={}",
             tx_hash,
             tx.txins.len(),
@@ -643,6 +706,21 @@ impl NodeService {
         );
 
         self.send_transaction(tx.into())?;
+
+        self.restaking_offset = if self.chain.cfg().micro_blocks_in_epoch > 1 {
+            // Restake in [0; blocks_in_epoch * 4/5) interval.
+            let mut rng = rand::thread_rng();
+            rng.gen_range(0, self.chain.cfg().micro_blocks_in_epoch * 4 / 5)
+        } else {
+            // Used for tests.
+            0
+        };
+        sdebug!(
+            self,
+            "Next restaking: epoch={}, offset={}",
+            self.chain.epoch() + 1,
+            self.restaking_offset
+        );
 
         Ok(())
     }
@@ -669,14 +747,16 @@ impl NodeService {
             let leader = remote.header.pkey;
 
             if remote_hash == local_hash {
-                debug!(
-                    "Skip a duplicate block with the same hash: epoch={}, offset={}, block={}, our_offset={}",
-                    epoch, offset, remote_hash, self.chain.offset(),
+                sdebug!(
+                    self,
+                    "Skip a duplicate block with the same hash: offset={}, block={}",
+                    offset,
+                    remote_hash
                 );
                 return Err(ForkError::Canceled);
             }
 
-            warn!("Two micro-blocks from the same leader detected: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, our_offset={}, last_block={}",
+            swarn!(self, "Two micro-blocks from the same leader detected: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local_hash,
@@ -684,21 +764,20 @@ impl NodeService {
                   local.header.previous,
                   remote.header.previous,
                   local.header.view_change,
-                  remote.header.view_change,
-                  self.chain.offset(),
-                  self.chain.last_block_hash());
+                  remote.header.view_change);
 
             metrics::MICRO_BLOCKS_CHEATS.inc();
 
             let proof = SlashingProof::new_unchecked(remote.clone(), local);
 
             if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
-                debug!("Cheater was already detected: cheater = {}", leader);
+                sdebug!(self, "Cheater was already detected: cheater={}", leader);
             }
 
             return Err(ForkError::Canceled);
         } else if remote.header.view_change < local.header.view_change {
-            debug!(
+            sdebug!(
+                self,
                 "Found a fork with lower view_change, sending blocks: pkey={}",
                 remote.header.pkey
             );
@@ -732,11 +811,7 @@ impl NodeService {
     fn try_rollback(&mut self, pkey: pbc::PublicKey, proof: SealedViewChangeProof) -> ForkResult {
         // Check epoch.
         if proof.chain.epoch < self.chain.epoch() {
-            debug!(
-                "Skip an outdated proof: epoch={}, our_epoch={}",
-                proof.chain.epoch,
-                self.chain.epoch()
-            );
+            sdebug!(self, "Skip an outdated proof: epoch={}", proof.chain.epoch);
             return Err(ForkError::Canceled);
         }
         let epoch = self.chain.epoch();
@@ -754,15 +829,15 @@ impl NodeService {
         } else if offset == self.chain.offset() {
             ChainInfo::from_blockchain(&self.chain)
         } else {
-            debug!("Received ViewChangeProof from the future, ignoring for now: epoch={}, remote_offset={}, local_offset={}",
-                   epoch, offset, self.chain.offset());
+            sdebug!(self, "Received ViewChangeProof from the future, ignoring for now: epoch={}, remote_offset={}",
+                   epoch, offset);
             return Err(ForkError::Canceled);
         };
 
         let local_view_change = local.view_change;
         let remote_view_change = proof.chain.view_change;
 
-        debug!("Started fork resolution: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, remote_proof={:?}",
+        sdebug!(self, "Started fork resolution: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, remote_proof={:?}",
                epoch,
                offset,
                local.last_block,
@@ -774,18 +849,18 @@ impl NodeService {
 
         // Check view_change.
         if remote_view_change < local_view_change {
-            warn!("View change proof with lesser or equal view_change: epoch={}, offset={}, local_view_change={}, remote_view_change={}",
+            swarn!(self, "View change proof with lesser or equal view_change: epoch={}, offset={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local_view_change,
-                  remote_view_change,
+                  remote_view_change
             );
             return Err(ForkError::Canceled);
         }
 
         // Check previous hash.
         if proof.chain.last_block != local.last_block {
-            warn!("Found a proof with invalid previous hash: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+            swarn!(self, "Found a proof with invalid previous hash: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local.last_block,
@@ -806,15 +881,14 @@ impl NodeService {
 
         metrics::MICRO_BLOCKS_FORKS.inc();
 
-        warn!(
-            "A fork detected: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}, current_offset={}",
+        swarn!(self,
+            "A fork detected: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
             epoch,
             offset,
             local.last_block,
             proof.chain.last_block,
             local_view_change,
-            remote_view_change,
-            self.chain.offset());
+            remote_view_change);
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
@@ -833,22 +907,22 @@ impl NodeService {
         if block.header.epoch < self.chain.epoch() {
             // Ignore outdated block.
             let block_hash = Hash::digest(&block);
-            debug!(
-                "Skip an outdated macro block: block={}, epoch={}, our_epoch={}",
+            sdebug!(
+                self,
+                "Skip an outdated macro block: block={}, epoch={}",
                 block_hash,
-                block.header.epoch,
-                self.chain.epoch(),
+                block.header.epoch
             );
             Ok(())
         } else if block.header.epoch == self.chain.epoch() {
             self.apply_macro_block(block)
         } else {
             let block_hash = Hash::digest(&block);
-            debug!(
-                "Skip a macro block from the future: block={}, epoch={}, our_epoch={}",
+            sdebug!(
+                self,
+                "Skip a macro block from the future: block={}, epoch={}",
                 block_hash,
-                block.header.epoch,
-                self.chain.epoch(),
+                block.header.epoch
             );
             Ok(())
         }
@@ -858,33 +932,25 @@ impl NodeService {
     fn handle_micro_block(&mut self, block: MicroBlock) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         if block.header.epoch < self.chain.epoch() {
-            debug!(
-                "Ignore an outdated micro block: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+            sdebug!(self,
+                "Ignore an outdated micro block: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
-                self.chain.epoch(),
                 block.header.offset,
-                self.chain.offset(),
                 block.header.view_change,
-                self.chain.view_change(),
-                block.header.previous,
-                self.chain.last_block_hash()
+                block.header.previous
             );
             return Ok(());
         } else if block.header.epoch > self.chain.epoch()
             || block.header.offset > self.chain.offset()
         {
-            debug!(
-                "Ignore a micro block from the future: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+            sdebug!(self,
+                "Ignore a micro block from the future: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
-                self.chain.epoch(),
                 block.header.offset,
-                self.chain.offset(),
                 block.header.view_change,
-                self.chain.view_change(),
-                block.header.previous,
-                self.chain.last_block_hash()
+                block.header.previous
             );
             return Ok(());
         }
@@ -894,17 +960,14 @@ impl NodeService {
         let epoch = self.chain.epoch();
         let offset = block.header.offset;
 
-        debug!(
-            "Process a micro block: block={}, epoch={}, our_epoch={}, offset={}, our_offset={}, view_change={}, our_view_change={}, previous={}, our_previous={}",
+        sdebug!(
+            self,
+            "Process a micro block: block={}, epoch={}, offset={}, view_change={}, previous={}",
             block_hash,
             block.header.epoch,
-            self.chain.epoch(),
             block.header.offset,
-            self.chain.offset(),
             block.header.view_change,
-            self.chain.view_change(),
-            block.header.previous,
-            self.chain.last_block_hash()
+            block.header.previous
         );
         // Check that block is created by legitimate validator.
         let election_result = self.chain.election_result_by_offset(offset)?;
@@ -921,7 +984,8 @@ impl NodeService {
             match self.resolve_fork(&block) {
                 //TODO: Notify sender about our blocks?
                 Ok(()) => {
-                    debug!(
+                    sdebug!(
+                        self,
                         "Fork resolution decide that remote chain is better: fork_offset={}",
                         offset
                     );
@@ -932,7 +996,8 @@ impl NodeService {
                     );
                 }
                 Err(ForkError::Canceled) => {
-                    debug!(
+                    sdebug!(
+                        self,
                         "Fork resolution decide that our chain is better: fork_offset={}",
                         offset
                     );
@@ -947,10 +1012,9 @@ impl NodeService {
         assert_eq!(block.header.offset, self.chain.offset());
         let view_change = block.header.view_change;
         if let Err(e) = self.apply_micro_block(block) {
-            error!(
-                "Failed to apply micro block: epoch={}, offset={}, block={}, error={}",
-                self.chain.epoch(),
-                self.chain.offset(),
+            serror!(
+                self,
+                "Failed to apply micro block: block={}, error={}",
                 block_hash,
                 e
             );
@@ -964,7 +1028,7 @@ impl NodeService {
                     assert!(self.chain.view_change() > 0);
                     assert!(view_change < self.chain.view_change());
                     let leader = self.chain.select_leader(view_change);
-                    warn!("Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
+                    swarn!(self, "Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
                           view_change, self.chain.view_change());
                     let chain_info = ChainInfo {
                         epoch: self.chain.epoch(),
@@ -978,9 +1042,11 @@ impl NodeService {
                         .view_change_proof()
                         .clone()
                         .expect("last view_change proof.");
-                    debug!(
+                    sdebug!(
+                        self,
                         "Sending view change proof to block sender: sender={}, proof={:?}",
-                        leader, proof
+                        leader,
+                        proof
                     );
                     let proof = SealedViewChangeProof {
                         chain: chain_info,
@@ -1050,7 +1116,8 @@ impl NodeService {
 
         if !was_synchronized && self.is_synchronized() {
             // Reset loader timer.
-            info!(
+            sinfo!(
+                self,
                 "Synchronized with the network: epoch={}, last_block={}",
                 epoch,
                 self.chain.last_block_hash()
@@ -1073,18 +1140,9 @@ impl NodeService {
         notify_subscribers(&mut self.chain_subscribers, msg.into());
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
-        self.restake_expiring_stakes()?;
-
-        let slots_count = self
-            .chain
-            .election_result()
-            .validators
-            .iter()
-            .find(|(key, _)| key == &self.network_pkey)
-            .map(|(_, v)| *v)
-            .unwrap_or(0);
-
-        metrics::NODE_SLOTS_COUNT.set(slots_count);
+        if self.chain.offset() == self.restaking_offset {
+            self.restake_expiring_stakes()?;
+        }
 
         Ok(())
     }
@@ -1109,9 +1167,9 @@ impl NodeService {
         let inputs_len: usize = block.transactions.iter().map(|tx| tx.txins().len()).sum();
         let outputs_len: usize = block.transactions.iter().map(|tx| tx.txouts().len()).sum();
         let txs_len = block.transactions.len();
-        debug!(
+        sdebug!(self,
             "Validating a micro block: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
-            epoch, offset, &hash, inputs_len, outputs_len, txs_len,
+            epoch, offset, &hash, inputs_len, outputs_len, txs_len
         );
         let start_clock = clock::now();
         let r = {
@@ -1147,13 +1205,13 @@ impl NodeService {
         metrics::MICRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
         match r {
             Ok(()) => {
-                debug!(
+                sdebug!(self,
                     "The micro block is valid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}",
                     epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration
                 );
             }
             Err(e) => {
-                error!(
+                serror!(self,
                     "The micro block is invalid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}, e={}",
                     epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration, e
                 );
@@ -1199,7 +1257,9 @@ impl NodeService {
             transaction_statuses,
         };
         notify_subscribers(&mut self.chain_subscribers, msg.into());
-
+        if self.chain.offset() == self.restaking_offset {
+            self.restake_expiring_stakes()?;
+        }
         Ok(())
     }
 
@@ -1226,6 +1286,7 @@ impl NodeService {
             metrics::MICRO_BLOCK_INTERVAL.set(interval);
             metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
         }
+        self.update_stake_balance();
         self.on_status_changed();
         self.update_validation_status();
     }
@@ -1266,11 +1327,7 @@ impl NodeService {
         offset: u32,
     ) -> Result<mpsc::Receiver<ChainNotification>, Error> {
         if epoch > self.chain.epoch() {
-            return Err(format_err!(
-                "Invalid epoch requested: epoch_requested={}, our_epoch={}",
-                epoch,
-                self.chain.epoch()
-            ));
+            return Err(format_err!("Invalid epoch requested: epoch={}", epoch));
         }
         // Set buffer size to fit entire epoch plus some extra blocks.
         let buffer = self.chain.cfg().micro_blocks_in_epoch as usize + 10;
@@ -1338,7 +1395,7 @@ impl NodeService {
 
     /// Handler for NodeMessage::RevertMicroBlock.
     fn handle_pop_micro_block(&mut self) -> Result<(), Error> {
-        warn!("Received a request to revert the latest block");
+        swarn!(self, "Received a request to revert the latest block");
         if self.chain.offset() == 0 {
             return Err(format_err!(
                 "Attempt to revert a macro block: epoch={}",
@@ -1356,15 +1413,22 @@ impl NodeService {
         self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
         match block {
             Block::MacroBlock(ref block) => {
-                info!(
+                sinfo!(
+                    self,
                     "Sent macro block to the network: epoch={}, block={}, previous={}",
-                    block.header.epoch, block_hash, block.header.previous
+                    block.header.epoch,
+                    block_hash,
+                    block.header.previous
                 );
             }
             Block::MicroBlock(ref block) => {
-                info!(
+                sinfo!(
+                    self,
                     "Sent micro block to the network: epoch={}, offset={}, block={}, previous={}",
-                    block.header.epoch, block.header.offset, block_hash, block.header.previous
+                    block.header.epoch,
+                    block.header.offset,
+                    block_hash,
+                    block.header.previous
                 );
             }
         }
@@ -1384,7 +1448,7 @@ impl NodeService {
 
         let leader = self.chain.leader();
         if leader == self.network_pkey {
-            info!(
+            sinfo!(self,
                 "I'm leader, collecting transactions for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
                 self.chain.epoch(),
                 self.chain.offset(),
@@ -1403,7 +1467,7 @@ impl NodeService {
             // Spawn a background thread to solve VDF puzzle.
             thread::spawn(solver);
         } else {
-            info!("I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
+            sinfo!(self, "I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
                   self.chain.offset(),
                   self.chain.view_change(),
@@ -1433,7 +1497,7 @@ impl NodeService {
         };
 
         if consensus.is_leader() {
-            info!(
+            sinfo!(self,
                 "I'm leader, proposing the next macro block: epoch={}, view_change={}, last_block={}",
                 self.chain.epoch(),
                 consensus.round(),
@@ -1449,12 +1513,12 @@ impl NodeService {
                 *block_timer = MacroBlockTimer::None;
             }
         } else {
-            info!(
+            sinfo!(self,
                 "I'm validator, waiting for the next macro block: epoch={}, view_change={}, last_block={}, leader={}",
                 self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash(),
-                consensus.leader(),
+                consensus.leader()
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
@@ -1470,12 +1534,12 @@ impl NodeService {
     fn on_facilitator_changed(&mut self) {
         let facilitator = self.chain.facilitator();
         if facilitator == &self.network_pkey {
-            info!("I am facilitator");
+            sinfo!(self, "I am facilitator");
             let txpool_service =
                 TransactionPoolService::new(self.network.clone(), self.node.clone());
             self.txpool_service = Some(txpool_service);
         } else {
-            info!("Facilitator is {}", facilitator);
+            sinfo!(self, "Facilitator is {}", facilitator);
             self.txpool_service = None;
         }
     }
@@ -1488,7 +1552,7 @@ impl NodeService {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroBlockAuditor);
             if !self.chain.is_validator(&self.network_pkey) {
-                info!("I'm auditor, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
+                sinfo!(self, "I'm auditor, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
                       self.chain.epoch(),
                       self.chain.offset(),
                       self.chain.view_change(),
@@ -1512,7 +1576,8 @@ impl NodeService {
             // Expected Macro Block.
             let prev = std::mem::replace(&mut self.validation, MacroBlockAuditor);
             if !self.chain.is_validator(&self.network_pkey) {
-                info!(
+                sinfo!(
+                    self,
                     "I'm auditor, waiting for the next macro block: epoch={}, last_block={}",
                     self.chain.epoch(),
                     self.chain.last_block_hash()
@@ -1538,7 +1603,7 @@ impl NodeService {
             {
                 for msg in future_consensus_messages {
                     if let Err(e) = consensus.feed_message(msg) {
-                        debug!("Error in future consensus message: {}", e);
+                        sdebug!(self, "Error in future consensus message: {}", e);
                     }
                 }
             }
@@ -1590,9 +1655,11 @@ impl NodeService {
         // We should create prevote before handling commit.
         if consensus.should_prevote() {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
-            debug!(
+            sdebug!(
+                self,
                 "Validating a macro block proposal: epoch={}, block={}",
-                epoch, &block_hash
+                epoch,
+                &block_hash
             );
             let start_clock = clock::now();
             let r = self.chain.validate_proposed_macro_block(
@@ -1607,14 +1674,17 @@ impl NodeService {
             metrics::MACRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
             match r {
                 Ok(macro_block) => {
-                    debug!(
+                    sdebug!(
+                        self,
                         "The macro block proposal is valid: epoch={}, block={}, duration={:.3}",
-                        epoch, &block_hash, duration
+                        epoch,
+                        &block_hash,
+                        duration
                     );
                     consensus.prevote(macro_block)
                 }
                 Err(e) => {
-                    error!(
+                    serror!(self,
                         "The macro block proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
                         epoch, &block_hash, duration, e
                     );
@@ -1645,11 +1715,7 @@ impl NodeService {
     fn is_synchronized(&self) -> bool {
         let timestamp = Timestamp::now();
         let block_timestamp = self.chain.last_block_timestamp();
-        if self.cfg.macro_block_timeout > self.cfg.micro_block_timeout {
-            block_timestamp + self.cfg.macro_block_timeout >= timestamp
-        } else {
-            block_timestamp + self.cfg.micro_block_timeout >= timestamp
-        }
+        block_timestamp + self.cfg.sync_timeout >= timestamp
     }
 
     /// Get a timestamp for the next block.
@@ -1686,10 +1752,11 @@ impl NodeService {
         );
         task::current().notify();
 
-        debug!(
+        sdebug!(
+            self,
             "Creating a new macro block proposal: epoch={}, view_change={}",
             self.chain.epoch(),
-            consensus.round(),
+            consensus.round()
         );
         let start_clock = clock::now();
 
@@ -1718,7 +1785,8 @@ impl NodeService {
         let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
         metrics::MACRO_BLOCK_CREATE_TIME.set(duration);
         metrics::MACRO_BLOCK_CREATE_TIME_HG.observe(duration);
-        info!(
+        sinfo!(
+            self,
             "Created a new macro block proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
             self.chain.epoch(),
             consensus.round(),
@@ -1743,7 +1811,7 @@ impl NodeService {
         };
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
-            warn!("Timed out while waiting for the committed block from the leader, applying automatically: epoch={}",
+            swarn!(self, "Timed out while waiting for the committed block from the leader, applying automatically: epoch={}",
                   self.chain.epoch()
             );
             metrics::MACRO_BLOCKS_AUTOCOMMITS.inc();
@@ -1752,7 +1820,7 @@ impl NodeService {
             return Ok(());
         }
 
-        warn!(
+        swarn!(self,
             "Timed out while waiting for a macro block, going to the next round: epoch={}, view_change={}",
             self.chain.epoch(), consensus.round() + 1
         );
@@ -1777,7 +1845,11 @@ impl NodeService {
         proof: SealedViewChangeProof,
         pkey: pbc::PublicKey,
     ) -> Result<(), Error> {
-        debug!("Received sealed view change proof: proof = {:?}", proof);
+        sdebug!(
+            self,
+            "Received sealed view change proof: proof = {:?}",
+            proof
+        );
         self.try_rollback(pkey, proof)?;
         return Ok(());
     }
@@ -1797,9 +1869,9 @@ impl NodeService {
 
         match view_change_collector.handle_message(&self.chain, msg) {
             Ok(Some(proof)) => {
-                debug!(
+                sdebug!(self,
                     "Received enough messages for change leader: epoch={}, view_change={}, last_block={}",
-                    self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash(),
+                    self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash()
                 );
                 // Perform view change.
                 self.chain
@@ -1814,7 +1886,7 @@ impl NodeService {
                     .chain
                     .validator_key_by_id(msg.validator_id as usize)
                     .expect("Invalid validator_id");
-                debug!(
+                sdebug!(self,
                     "Received an invalid view_change message: view_change={}, validator={}, error={}",
                     msg.chain.view_change, validator_pkey, e
                 );
@@ -1831,7 +1903,8 @@ impl NodeService {
         let elapsed = clock::now().duration_since(self.last_block_clock);
         assert!(elapsed >= self.cfg.micro_block_timeout);
         let leader = self.chain.leader();
-        warn!(
+        swarn!(
+            self,
             "Timed out while waiting for a micro block: epoch={}, leader={}, elapsed={:?}",
             self.chain.epoch(),
             leader,
@@ -1862,11 +1935,12 @@ impl NodeService {
         self.network
             .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
         metrics::MICRO_BLOCK_VIEW_CHANGES.inc();
-        debug!(
+        sdebug!(
+            self,
             "Sent a view change to the network: epoch={}, view_change={}, last_block={}",
             self.chain.epoch(),
             self.chain.view_change(),
-            self.chain.last_block_hash(),
+            self.chain.last_block_hash()
         );
         self.handle_view_change_message(msg)?;
 
@@ -1881,7 +1955,7 @@ impl NodeService {
                 last_block: self.chain.last_block_hash(),
             };
 
-            debug!("Broadcasting view change proof proof={:?}", proof);
+            sdebug!(self, "Broadcasting view change proof proof={:?}", proof);
             let view_change_proof = SealedViewChangeProof {
                 chain: chain_info,
                 proof: proof.clone(),
@@ -1915,9 +1989,13 @@ impl NodeService {
         let previous = self.chain.last_block_hash();
         let view_change = self.chain.view_change();
         let view_change_proof = self.chain.view_change_proof().clone();
-        debug!(
+        sdebug!(
+            self,
             "Creating a new micro block: epoch={}, offset={}, view_change={}, last_block={}",
-            epoch, offset, view_change, previous
+            epoch,
+            offset,
+            view_change,
+            previous
         );
         let start_clock = clock::now();
 
@@ -1965,14 +2043,14 @@ impl NodeService {
         let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
         metrics::MICRO_BLOCK_CREATE_TIME.set(duration);
         metrics::MICRO_BLOCK_CREATE_TIME_HG.observe(duration);
-        info!(
+        sinfo!(self,
             "Created a micro block: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
             epoch,
             offset,
             view_change,
             &block_hash,
             block.transactions.len(),
-            duration,
+            duration
         );
 
         let block2 = block.clone();
@@ -2086,7 +2164,7 @@ impl Future for NodeService {
             },
         };
         if let Err(e) = result {
-            error!("Error: {}", e);
+            serror!(self, "Error: {}", e);
         }
 
         loop {
@@ -2097,11 +2175,11 @@ impl Future for NodeService {
                     }
                 }
                 Ok(Async::Ready(None)) => {
-                    error!("Error during process sync status");
+                    serror!(self, "Error during process sync status");
                     return Ok(Async::Ready(()));
                 }
                 Err(e) => {
-                    error!("Error: {}", e);
+                    serror!(self, "Error: {}", e);
                     return Err(());
                 }
                 Ok(Async::NotReady) => {
@@ -2140,7 +2218,7 @@ impl Future for NodeService {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
                         NodeMessage::Request { request, tx } => {
-                            trace!("=> {:?}", request);
+                            strace!(self, "=> {:?}", request);
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {
                                     NodeResponse::ElectionInfo(self.chain.election_info())
@@ -2213,7 +2291,7 @@ impl Future for NodeService {
                                             error: format!("Re-staking is already enabled"),
                                         }
                                     } else {
-                                        info!("Re-staking enabled");
+                                        sinfo!(self, "Re-staking enabled");
                                         self.is_restaking_enabled = true;
                                         NodeResponse::RestakingEnabled
                                     }
@@ -2224,7 +2302,7 @@ impl Future for NodeService {
                                             error: format!("Re-staking is already disabled"),
                                         }
                                     } else {
-                                        info!("Re-staking disabled");
+                                        sinfo!(self, "Re-staking disabled");
                                         self.is_restaking_enabled = false;
                                         NodeResponse::RestakingDisabled
                                     }
@@ -2280,7 +2358,7 @@ impl Future for NodeService {
                                     }
                                 }
                             };
-                            trace!("<= {:?}", response);
+                            strace!(self, "<= {:?}", response);
                             tx.send(response).ok(); // ignore errors.
                             Ok(())
                         }
@@ -2308,7 +2386,7 @@ impl Future for NodeService {
                         }
                     };
                     if let Err(e) = result {
-                        error!("Error: {}", e);
+                        serror!(self, "Error: {}", e);
                     }
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
@@ -2321,7 +2399,7 @@ impl Future for NodeService {
                 Async::Ready(Some(blocks)) => {
                     for block in blocks {
                         if let Err(e) = self.handle_block(block) {
-                            error!("Invalid block received from replication: {}", e);
+                            serror!(self, "Invalid block received from replication: {}", e);
                         }
                     }
                 }

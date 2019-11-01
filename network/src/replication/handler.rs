@@ -297,7 +297,7 @@ where
         trace!("Connection failed: {}", e);
         match self.upstream {
             SubstreamState::Connecting => {}
-            _ => unreachable!("Expected Connecting state"),
+            _ => return, // Ignore this error.
         }
         let error = io::Error::new(io::ErrorKind::Other, e);
         self.upstream = SubstreamState::ConnectionFailed { error };

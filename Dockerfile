@@ -1,10 +1,10 @@
 # Use multi-stage build to reduce image size
-FROM stegos/rust:nightly-2019-08-05 AS source
+FROM quay.io/stegos/rust:nightly-2019-10-30 AS source
 LABEL maintainer="Stegos AG <info@stegos.com>"
 
-ADD . /usr/src/stegos
+COPY . /usr/src/stegos
 WORKDIR /usr/src/stegos
-RUN cargo install --bins --path . --root /usr/local
+RUN cargo install --bins --path /usr/src/stegos --root /usr/local
 
 FROM scratch
 LABEL maintainer="Stegos AG <info@stegos.com>"

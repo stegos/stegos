@@ -15,7 +15,7 @@ fast_checks:
     - cargo fmt --all -- --check
   tags:
     - linux
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
 
 .test:
   stage: test
@@ -23,7 +23,7 @@ fast_checks:
 
 test:linux_x64:
   extends: .test
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
   tags:
     - linux
 
@@ -41,7 +41,7 @@ test:windows_x64:
 
 code_coverage:
   stage: test
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
   script: ./ci-scripts/build.sh coverage_push
   tags:
     - linux
@@ -57,7 +57,7 @@ code_coverage:
 
 release:linux-x64:
   extends: .release
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
   script: ./ci-scripts/build.sh release linux-x64
   tags:
     - linux
@@ -76,14 +76,14 @@ release:windows-x64:
 
 release:android-x64:
   extends: .release
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
   script: ./ci-scripts/build.sh release android-x64
   tags:
     - linux
 
 release:android-aarch64:
   extends: .release
-  image: quay.io/stegos/rust:nightly-2019-10-24
+  image: quay.io/stegos/rust:nightly-2019-10-30
   script: ./ci-scripts/build.sh release android-aarch64
   tags:
     - linux

@@ -31,7 +31,6 @@ use crate::pbc::G1;
 use crate::pbc::G2;
 use crate::pbc::VRF;
 use crate::scc::{EncryptedKey, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
-use crate::CryptoError;
 use ristretto_bulletproofs::RangeProof;
 
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
@@ -216,6 +215,7 @@ impl ProtoConvert for VRF {
     }
 }
 
+#[cfg(feature = "flint")]
 impl ProtoConvert for crate::dicemix::ParticipantID {
     type Proto = crypto::DiceMixParticipantID;
     fn into_proto(&self) -> Self::Proto {
@@ -225,6 +225,7 @@ impl ProtoConvert for crate::dicemix::ParticipantID {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        use crate::CryptoError;
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let seed_slice = proto.get_seed();
         if seed_slice.len() != 32 {

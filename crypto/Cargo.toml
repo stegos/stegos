@@ -17,8 +17,8 @@ stegos_serialization = { version = "1.0.0", path = "../serialization" }
 bit-vec = "0.6"
 bech32 = "0.7"
 failure = "0.1"
-gmp-mpfr-sys = { version = "1.1", git = "https://github.com/stegos/gmp-mpfr-sys.git", branch = "stegos", default-features = false, features = ["cnotest", "mpfr"] }
-flint-sys = { version = "0.1", git = "https://github.com/stegos/flint-sys.git", branch = "stegos" }
+gmp-mpfr-sys = { version = "1.1", git = "https://github.com/stegos/gmp-mpfr-sys.git", branch = "stegos",optional=true, default-features = false, features = ["cnotest", "mpfr"] }
+flint-sys = { version = "0.1", git = "https://github.com/stegos/flint-sys.git", branch = "stegos", optional=true}
 hex = "0.3"
 lazy_static = "1.1"
 log = "0.4"
@@ -26,7 +26,7 @@ protobuf = "2.6"
 rand = "0.6"
 old_rand = { package = "rand", version = "0.4" }
 rayon = "1.0"
-rust-crypto = "0.2"
+aes-ctr = "0.3.0"
 sha3 = "0.8"
 clear_on_drop = "0.2"
 serde = "1.0"
@@ -38,7 +38,7 @@ merlin = "1"
 ristretto_bulletproofs = { package = "bulletproofs", version = "1" }
 vdf_field = { path = "stubs/vdf_field" }
 clap = "2.32"
-base58check = "0.0.1"
+base58check = {version="0.0.1", optional=true}
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -61,3 +61,8 @@ harness = false
 [[bench]]
 name = "pbc"
 harness = false
+
+[features]
+default = ["flint", "old_crypto"]
+flint= ["flint-sys", "gmp-mpfr-sys"]
+old_crypto= ["base58check"]

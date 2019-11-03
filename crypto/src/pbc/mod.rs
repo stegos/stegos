@@ -26,7 +26,6 @@
 
 mod internal;
 
-use crate::dicemix::ffi;
 use crate::hash::*;
 use crate::pbc::internal::*;
 use crate::utils::*;
@@ -84,8 +83,11 @@ impl Drop for SecretKey {
         rep.0[1] = 0;
         rep.0[2] = 0;
         rep.0[3] = 0;
+
+        //TODO: Move out dum_wau outside of flint
+        #[cfg(feature = "flint")]
         unsafe {
-            ffi::dum_wau(rep.0.as_ptr() as *mut _, 32);
+            crate::dicemix::ffi::dum_wau(rep.0.as_ptr() as *mut _, 32);
         }
     }
 }

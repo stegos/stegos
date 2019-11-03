@@ -26,8 +26,12 @@
 use crate::hash::*;
 use crate::utils::*;
 use crate::CryptoError;
+
+use aes_ctr::{
+    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
 use bech32::{FromBase32, ToBase32};
-use crypto::aes;
 use curve25519_dalek::ristretto::CompressedRistretto;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
@@ -1100,16 +1104,28 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(
 // Actual AES keying comes from Hash(s*alpha*G).
 // alpha is a random Fr value.
 
-use std::iter::repeat;
+impl fmt::Debug for EncryptedPayload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ag={:?} cmsg={}", self.ag, u8v_to_hexstr(&self.ctxt))
+    }
+}
+
+impl Hashable for EncryptedPayload {
+    fn hash(&self, state: &mut Hasher) {
+        "Encr".hash(state);
+        self.ag.hash(state);
+        self.ctxt[..].hash(state);
+    }
+}
 
 fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     // on input, key is 32B. AES128 only needs 16B for keying.
     // So take first 16B of key as keying,
     // and last 16B of key as CTR mode nonce
-    let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, &key[..16], &key[16..]);
-    let mut ctxt: Vec<u8> = repeat(0).take(msg.len()).collect();
-    aes_enc.process(msg, &mut ctxt);
-    ctxt
+    let mut msg = msg.to_vec();
+    let mut aes_enc = Aes128Ctr::new_var(&key[..16], &key[16..]).unwrap();
+    aes_enc.apply_keystream(&mut msg);
+    msg
 }
 
 pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(Pt, Vec<u8>, Fr), CryptoError> {

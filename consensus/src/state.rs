@@ -295,6 +295,8 @@ impl Consensus {
         let block_hash = Hash::digest(&block);
         assert_eq!(&block_hash, self.block_hash.as_ref().unwrap());
 
+        // PREVOTE SHOULD ALWAYS SAVE BLOCK, EVEN IF WE LOCKED ON OTHER
+        self.block = Some(block);
         // If propose was different from our locked, don't send it
         if let Some(locked_round) = &self.locked_round {
             let locked_block_hash = Hash::digest(&locked_round.block);
@@ -320,7 +322,6 @@ impl Consensus {
             self.round,
             block_hash,
         );
-        self.block = Some(block);
         let body = ConsensusMessageBody::Prevote;
         let msg = ConsensusMessage::new(
             self.epoch, self.round, block_hash, &self.skey, &self.pkey, body,

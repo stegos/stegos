@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
-    create_multi_signature, mix, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
-    PaymentPayloadData, StakeOutput, Timestamp,
+    create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
+    PaymentPayloadData, StakeOutput, StakersGroup, Timestamp,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -188,6 +188,7 @@ fn main() {
     stegos_crypto::set_network_prefix(stegos::chain_to_prefix(chain))
         .expect("Network prefix not initialised.");
 
+    let mut stakers: StakersGroup = Vec::with_capacity(keys as usize);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(
         scc::SecretKey,
@@ -265,6 +266,7 @@ fn main() {
         assert!(payout >= stake);
         payout -= stake;
         outputs.push(output.into());
+        stakers.push((network_pkey, stake));
     }
 
     // Create an initial payment.
@@ -289,6 +291,8 @@ fn main() {
     let random = pbc::make_VRF(&keychains[0].2, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
     let timestamp = Timestamp::now();
+    let validators =
+        election::select_validators_slots(stakers, random, cfg.max_slot_count).validators;
 
     // Create a block.
     let mut block = MacroBlock::new(
@@ -300,8 +304,9 @@ fn main() {
         difficulty,
         timestamp,
         coins,
-        activity_map,
         -outputs_gamma,
+        activity_map,
+        validators,
         Vec::new(),
         outputs,
     );

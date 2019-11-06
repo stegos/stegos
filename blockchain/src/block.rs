@@ -209,6 +209,9 @@ impl Hashable for MicroBlock {
 // Macro Blocks.
 //--------------------------------------------------------------------------------------------------
 
+/// Group of validators, should be ordered and unique by pbc::PublicKey.
+pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
+
 /// Macro Block Header.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MacroBlockHeader {
@@ -239,13 +242,18 @@ pub struct MacroBlockHeader {
     /// The block reward.
     pub block_reward: i64,
 
+    /// The sum of all gamma adjustments.
+    pub gamma: Fr,
+
     /// Bitmap of active validators in epoch.
     #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub activity_map: BitVec,
 
-    /// The sum of all gamma adjustments.
-    pub gamma: Fr,
+    /// Merklish root of validators for the next epoch (pkey, slots).
+    pub validators_range_hash: Hash,
+    /// The number of entries in validators_range_hash.
+    pub validators_len: u32,
 
     /// Merklish root of all input hashes.
     pub inputs_range_hash: Hash,
@@ -270,16 +278,17 @@ impl Hashable for MacroBlockHeader {
         self.difficulty.hash(state);
         self.timestamp.hash(state);
         self.block_reward.hash(state);
-        for (validator_id, val) in self.activity_map.iter().enumerate() {
-            if val {
-                (validator_id as u32).hash(state);
-            }
-        }
         self.gamma.hash(state);
-        self.inputs_len.hash(state);
+        (self.activity_map.len() as u32).hash(state);
+        for val in self.activity_map.iter() {
+            val.hash(state);
+        }
+        self.validators_range_hash.hash(state);
+        self.validators_len.hash(state);
         self.inputs_range_hash.hash(state);
-        self.outputs_len.hash(state);
+        self.inputs_len.hash(state);
         self.outputs_range_hash.hash(state);
+        self.outputs_len.hash(state);
     }
 }
 
@@ -315,6 +324,7 @@ impl MacroBlock {
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVec,
+        validators: StakersGroup,
     ) -> MacroBlock {
         let gamma = Fr::zero();
         let inputs: Vec<Hash> = Vec::new();
@@ -328,8 +338,9 @@ impl MacroBlock {
             difficulty,
             timestamp,
             block_reward,
-            activity_map,
             gamma,
+            activity_map,
+            validators,
             inputs,
             outputs,
         )
@@ -348,6 +359,7 @@ impl MacroBlock {
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVec,
+        validators: StakersGroup,
         transactions: &[Transaction],
     ) -> Result<MacroBlock, TransactionError> {
         //
@@ -394,8 +406,9 @@ impl MacroBlock {
             difficulty,
             timestamp,
             block_reward,
-            activity_map,
             gamma,
+            activity_map,
+            validators,
             inputs,
             outputs,
         );
@@ -411,11 +424,18 @@ impl MacroBlock {
         difficulty: u64,
         timestamp: Timestamp,
         block_reward: i64,
-        activity_map: BitVec,
         gamma: Fr,
+        activity_map: BitVec,
+        validators: StakersGroup,
         mut inputs: Vec<Hash>,
         mut outputs: Vec<Output>,
     ) -> MacroBlock {
+        // Validators are already sorted.
+        assert!(validators.len() < std::u32::MAX as usize);
+        let validators_len = validators.len() as u32;
+        // Calculate validators_range_hash.
+        let validators_range_hash = Merkle::root_hash_from_array(&validators);
+
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
         // Since Hash is random, it has the same effect as shuffling.
@@ -424,7 +444,7 @@ impl MacroBlock {
         inputs.sort();
 
         // Calculate input_range_hash.
-        let inputs_range_hash = Self::calculate_range_hash(&inputs);
+        let inputs_range_hash = Merkle::root_hash_from_array(&inputs);
 
         // Re-order all outputs to blur transaction boundaries.
         assert!(outputs.len() <= std::u32::MAX as usize);
@@ -433,7 +453,7 @@ impl MacroBlock {
 
         // Calculate outputs_range_hash.
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
-        let outputs_range_hash = Self::calculate_range_hash(&output_hashes);
+        let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
 
         // Create header
         let header = MacroBlockHeader {
@@ -446,12 +466,14 @@ impl MacroBlock {
             difficulty,
             timestamp,
             block_reward,
-            activity_map,
             gamma,
-            inputs_len,
+            activity_map,
+            validators_range_hash,
+            validators_len,
             inputs_range_hash,
-            outputs_len,
+            inputs_len,
             outputs_range_hash,
+            outputs_len,
         };
 
         // Create the block.
@@ -464,11 +486,6 @@ impl MacroBlock {
             inputs,
             outputs,
         }
-    }
-
-    pub(crate) fn calculate_range_hash(hashes: &[Hash]) -> Hash {
-        let tree = Merkle::from_array(hashes);
-        tree.roothash().clone()
     }
 }
 

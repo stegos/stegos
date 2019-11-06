@@ -21,6 +21,7 @@ fn generate_chain(
     let (keychains, genesis) = test::fake_genesis(
         cfg.min_stake_amount,
         (num_nodes as i64) * cfg.min_stake_amount + 100,
+        cfg.max_slot_count,
         num_nodes,
         timestamp,
         None,

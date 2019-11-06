@@ -191,6 +191,15 @@ impl<T: Hashable + fmt::Debug> Merkle<T> {
         heights.push(height + 1);
     }
 
+    /// Create a Merkle Tree and return the root hash.
+    pub fn root_hash_from_array(src: &[T]) -> Hash
+    where
+        T: Clone,
+    {
+        let tree = Self::from_array(src);
+        tree.roothash().clone()
+    }
+
     /// Create a Merkle Tree from an array.
     ///
     /// Returns the new tree.

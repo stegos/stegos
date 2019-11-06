@@ -114,6 +114,7 @@ impl<'timer> Sandbox<'timer> {
             let (keychains, genesis) = fake_genesis(
                 config.chain.min_stake_amount,
                 1000 * config.chain.min_stake_amount,
+                config.chain.max_slot_count,
                 num_nodes,
                 timestamp,
                 Some(&mut prng),

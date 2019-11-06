@@ -90,15 +90,17 @@ message MacroBlockHeader {
     uint32 view_change = 4;
     stegos.crypto.SecurePublicKey pkey = 5;
     stegos.crypto.VRF random = 6;
-    uint64 difficulty = 15;
-    uint64 timestamp = 7;
-    int64 block_reward = 8;
-    repeated bool activity_map = 9;
+    uint64 difficulty = 7;
+    uint64 timestamp = 8;
+    int64 block_reward = 9;
     stegos.crypto.Fr gamma = 10;
-    stegos.crypto.Hash inputs_range_hash = 11;
-    uint32 inputs_len = 12;
-    stegos.crypto.Hash outputs_range_hash = 13;
-    uint32 outputs_len = 14;
+    repeated bool activity_map = 11;
+    stegos.crypto.Hash validators_range_hash = 12;
+    uint32 validators_len = 13;
+    stegos.crypto.Hash inputs_range_hash = 14;
+    uint32 inputs_len = 15;
+    stegos.crypto.Hash outputs_range_hash = 16;
+    uint32 outputs_len = 17;
 }
 
 message MacroBlock {

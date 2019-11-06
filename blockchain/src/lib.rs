@@ -48,7 +48,7 @@ pub use crate::awards::ValidatorAwardState;
 pub use crate::block::*;
 pub use crate::blockchain::*;
 pub use crate::config::*;
-pub use crate::election::{mix, ElectionInfo, ElectionResult, StakersGroup};
+pub use crate::election::{mix, ElectionInfo, ElectionResult};
 pub use crate::error::*;
 pub use crate::escrow::*;
 pub use crate::merkle::*;

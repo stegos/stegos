@@ -765,6 +765,7 @@ fn out_of_order_keyblock_proposal() {
             let leader = leader_node.node_service.network_pkey;
             let block_reward = 0;
             let activity_map = BitVec::new();
+            let validators = vec![];
             let block = MacroBlock::empty(
                 previous,
                 epoch,
@@ -775,6 +776,7 @@ fn out_of_order_keyblock_proposal() {
                 timestamp,
                 block_reward,
                 activity_map,
+                validators,
             );
             let block_hash = Hash::digest(&block);
             let body = ConsensusMessageBody::Proposal(MacroBlockProposal {

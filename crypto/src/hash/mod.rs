@@ -342,6 +342,13 @@ impl<T: Hashable> Hashable for Option<T> {
     }
 }
 
+impl<T1: Hashable, T2: Hashable> Hashable for (T1, T2) {
+    fn hash(&self, state: &mut Hasher) {
+        self.0.hash(state);
+        self.1.hash(state);
+    }
+}
+
 impl Hashable for () {
     fn hash(&self, state: &mut Hasher) {
         "none".hash(state);

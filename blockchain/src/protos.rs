@@ -887,10 +887,12 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_block_reward(self.block_reward);
         proto.set_gamma(self.gamma.into_proto());
         proto.activity_map.extend(self.activity_map.iter());
-        proto.set_inputs_len(self.inputs_len);
+        proto.set_validators_range_hash(self.validators_range_hash.into_proto());
+        proto.set_validators_len(self.validators_len);
         proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
-        proto.set_outputs_len(self.outputs_len);
+        proto.set_inputs_len(self.inputs_len);
         proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto.set_outputs_len(self.outputs_len);
         proto
     }
 
@@ -904,13 +906,14 @@ impl ProtoConvert for MacroBlockHeader {
         let difficulty = proto.get_difficulty();
         let timestamp = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
-        let mut activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
-        stegos_crypto::utils::trim_bitvec(&mut activity_map);
         let gamma = Fr::from_proto(proto.get_gamma())?;
-        let inputs_len = proto.get_inputs_len();
+        let activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
+        let validators_range_hash = Hash::from_proto(proto.get_validators_range_hash())?;
+        let validators_len = proto.get_validators_len();
         let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
-        let outputs_len = proto.get_outputs_len();
+        let inputs_len = proto.get_inputs_len();
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        let outputs_len = proto.get_outputs_len();
         Ok(MacroBlockHeader {
             version,
             previous,
@@ -921,12 +924,14 @@ impl ProtoConvert for MacroBlockHeader {
             difficulty,
             timestamp,
             block_reward,
-            activity_map,
             gamma,
-            inputs_len,
+            activity_map,
+            validators_range_hash,
+            validators_len,
             inputs_range_hash,
-            outputs_len,
+            inputs_len,
             outputs_range_hash,
+            outputs_len,
         })
     }
 }
@@ -954,8 +959,7 @@ impl ProtoConvert for MacroBlock {
         } else {
             pbc::Signature::zero()
         };
-        let mut multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
-        stegos_crypto::utils::trim_bitvec(&mut multisigmap);
+        let multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
 
         let mut inputs = Vec::<Hash>::with_capacity(proto.inputs.len());
         for input in proto.inputs.iter() {
@@ -1048,8 +1052,7 @@ impl ProtoConvert for ViewChangeProof {
         } else {
             pbc::Signature::zero()
         };
-        let mut multimap = BitVec::from_iter(proto.multimap.iter().map(|x| *x));
-        stegos_crypto::utils::trim_bitvec(&mut multimap);
+        let multimap = BitVec::from_iter(proto.multimap.iter().map(|x| *x));
         Ok(ViewChangeProof { multisig, multimap })
     }
 }
@@ -1258,6 +1261,7 @@ mod tests {
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
         let difficulty = 100500u64;
+        let validators = vec![(pkeypbc.clone(), 100500i64)];
 
         let block = MacroBlock::new(
             previous,
@@ -1268,8 +1272,9 @@ mod tests {
             difficulty,
             timestamp,
             block_reward,
-            activity_map,
             gamma,
+            activity_map,
+            validators,
             inputs1,
             outputs1,
         );

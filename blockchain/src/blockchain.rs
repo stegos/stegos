@@ -65,8 +65,8 @@ pub struct ValidatorKeyInfo {
 /// Information about service award payout.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PayoutInfo {
-    pub(crate) recipient: scc::PublicKey,
-    pub(crate) amount: i64,
+    pub recipient: scc::PublicKey,
+    pub amount: i64,
 }
 /// Full information about service award state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -1046,11 +1046,16 @@ impl Blockchain {
         if activity_map.len() > validators.len() {
             return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
         };
-        for ((validator, _slots), activity) in validators.iter().zip(activity_map.iter()) {
-            let validator_account = self
-                .escrow
-                .account_by_network_key(validator)
-                .expect("Validator with account key");
+        for (id, (validator, _slots)) in validators.iter().enumerate() {
+            // Set failed if no activity was set.
+            let activity = activity_map.get(id).unwrap_or(false);
+            let validator_account =
+                if let Some(validator_account) = self.escrow.account_by_network_key(validator) {
+                    validator_account
+                } else {
+                    continue;
+                };
+
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {

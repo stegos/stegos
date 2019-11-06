@@ -266,6 +266,7 @@ fn finalized_slashing_with_service_award() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
+        let budget = s.config.chain.service_award_per_epoch;
         precondition_n_different_block_leaders(&mut s, 2);
         // next leader should be from different partition.
 
@@ -300,6 +301,7 @@ fn finalized_slashing_with_service_award() {
         }
 
         let offset = r.parts.1.first().node_service.chain.offset();
+        let epoch = r.parts.1.first().node_service.chain.epoch();
 
         // ignore microblocks for auditor
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
@@ -311,7 +313,48 @@ fn finalized_slashing_with_service_award() {
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+        let mut output = None;
+        for node in r.parts.1.iter_mut() {
+            //award was executed
+            assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+            assert_eq!(
+                node.node_service.chain.last_block_hash(),
+                node.node_service.chain.last_macro_block_hash()
+            );
+            let block_hash = node.node_service.chain.last_block_hash();
+            let block = node.node_service.chain.macro_block(epoch).unwrap();
+            assert_eq!(Hash::digest(&block), block_hash);
+            let mut outputs = Vec::new();
+            for output in block.outputs {
+                match output {
+                    Output::PublicPaymentOutput(p) => outputs.push(p),
+                    _ => {}
+                }
+            }
+            assert_eq!(outputs.len(), 4); // 3 slashing + award
+            outputs.sort_by_key(|p| p.amount);
+            trace!("outputs = {:?}", outputs);
+            assert_eq!(outputs[0].amount, budget);
+            if let Some(ref output) = output {
+                assert_eq!(output, &outputs[0])
+            } else {
+                output = Some(outputs[0].clone());
+            }
+        }
         r.parts.1.assert_synchronized();
+
+        let output = output.unwrap();
+        let node = r.parts.1.first_mut();
+        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        node.poll();
+        let notification = receive.poll().unwrap();
+        let i = match notification {
+            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
+            e => panic!("Expected macroblock info, got ={:?}", e),
+        };
+        let p = i.epoch_info.awards.payout.unwrap();
+        assert_eq!(output.recipient, p.recipient);
+        assert_eq!(output.amount, p.amount);
     });
 }
 
@@ -337,6 +380,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
         precondition_n_different_block_leaders(&mut s, 2);
         // next leader should be from different partition.
 
+        let budget = s.config.chain.service_award_per_epoch;
         let cheater = s.nodes[0].node_service.chain.leader();
         let cheater_wallet = s.nodes[0]
             .node_service
@@ -379,6 +423,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
         }
 
         let offset = r.parts.1.first().node_service.chain.offset();
+        let epoch = r.parts.1.first().node_service.chain.epoch();
 
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
@@ -390,8 +435,62 @@ fn finalized_slashing_with_service_award_for_auditor() {
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
+
+        let mut output = None;
+        for node in r.parts.1.iter_mut() {
+            //award was executed
+            assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+            assert_eq!(
+                node.node_service.chain.last_block_hash(),
+                node.node_service.chain.last_macro_block_hash()
+            );
+            let block_hash = node.node_service.chain.last_block_hash();
+            let block = node.node_service.chain.macro_block(epoch).unwrap();
+            assert_eq!(Hash::digest(&block), block_hash);
+            let mut outputs = Vec::new();
+            for output in block.outputs {
+                match output {
+                    Output::PublicPaymentOutput(p) => outputs.push(p),
+                    _ => {}
+                }
+            }
+
+            assert_eq!(outputs.len(), 4); // 3 slashing + award
+            outputs.sort_by_key(|p| p.amount);
+            trace!("outputs = {:?}", outputs);
+            assert_eq!(outputs[0].amount, budget);
+            if let Some(ref output) = output {
+                assert_eq!(output, &outputs[0])
+            } else {
+                output = Some(outputs[0].clone());
+            }
+        }
         r.parts.1.assert_synchronized();
 
+        let output = output.unwrap();
+        let node = r.parts.1.first_mut();
+        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        node.poll();
+        let notification = receive.poll().unwrap();
+        let i = match notification {
+            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
+            e => panic!("Expected macroblock info, got ={:?}", e),
+        };
+        let p = i.epoch_info.awards.payout.unwrap();
+        assert_eq!(output.recipient, p.recipient);
+        assert_eq!(output.amount, p.amount);
+
+        let node = r.parts.1.auditor.as_mut().unwrap();
+        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        node.poll();
+        let notification = receive.poll().unwrap();
+        let i = match notification {
+            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
+            e => panic!("Expected macroblock info, got ={:?}", e),
+        };
+        let p = i.epoch_info.awards.payout.unwrap();
+        assert_eq!(output.recipient, p.recipient);
+        assert_eq!(output.amount, p.amount);
         // assert that award state is same for node and auditor
         let award = r
             .parts
@@ -425,6 +524,7 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
     }
 
     s.skip_macro_block();
+    let mut output = None;
     for node in s.iter_mut() {
         //award was executed
         assert_eq!(node.node_service.chain.service_awards().budget(), 0);
@@ -445,9 +545,26 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
 
         assert_eq!(outputs.len(), 1);
         assert_eq!(outputs[0].amount, service_award_budget);
+        if let Some(ref output) = output {
+            assert_eq!(output, &outputs[0])
+        } else {
+            output = Some(outputs[0].clone());
+        }
     }
-
     s.assert_synchronized();
+
+    let output = output.unwrap();
+    let node = s.first_mut();
+    let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+    node.poll();
+    let notification = receive.poll().unwrap();
+    let i = match notification {
+        Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
+        e => panic!("Expected macroblock info, got ={:?}", e),
+    };
+    let p = i.epoch_info.awards.payout.unwrap();
+    assert_eq!(output.recipient, p.recipient);
+    assert_eq!(output.amount, p.amount);
 }
 
 fn service_award_round_without_participants(s: &mut Sandbox) {
@@ -591,7 +708,7 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
 }
 
 // CASE service award with 0 difficulty.
-// Assert that we have one winner.
+// Assert that we have one winner, and this winner is the same as notification said.
 #[test]
 fn service_award_state() {
     let mut cfg: ChainConfig = Default::default();

@@ -188,6 +188,8 @@ enum Validation {
         consensus: Consensus,
         /// Propose or View Change timer
         block_timer: MacroBlockTimer,
+        /// Count of autocommits retries during current commit
+        autocommit_counter: usize,
     },
 }
 
@@ -1514,14 +1516,18 @@ impl NodeService {
 
     /// Called when a leader for the next macro block has changed.
     fn on_macro_block_leader_changed(&mut self) {
-        let (block_timer, consensus) = match &mut self.validation {
+        let (block_timer, consensus, autocommit_counter) = match &mut self.validation {
             MacroBlockValidator {
                 block_timer,
                 consensus,
+                autocommit_counter,
                 ..
-            } => (block_timer, consensus),
+            } => (block_timer, consensus, autocommit_counter),
             _ => panic!("Expected MacroBlockValidator State"),
         };
+
+        // No autocommits with this leader.
+        *autocommit_counter = 0;
 
         if consensus.is_leader() {
             sinfo!(self,
@@ -1639,6 +1645,7 @@ impl NodeService {
             self.validation = MacroBlockValidator {
                 consensus,
                 block_timer: MacroBlockTimer::None,
+                autocommit_counter: 0,
             };
 
             self.on_macro_block_leader_changed();
@@ -1832,16 +1839,44 @@ impl NodeService {
         assert!(clock::now().duration_since(self.last_block_clock) >= self.cfg.macro_block_timeout);
 
         // Check that a block has been committed but haven't send by the leader.
-        let consensus = match &mut self.validation {
-            MacroBlockValidator { consensus, .. } => consensus,
+        let (consensus, block_timer, autocommit) = match &mut self.validation {
+            MacroBlockValidator {
+                consensus,
+                block_timer,
+                autocommit_counter,
+                ..
+            } => (consensus, block_timer, autocommit_counter),
             _ => panic!("Expected MacroValidator state"),
         };
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
-            swarn!(self, "Timed out while waiting for the committed block from the leader, applying automatically: epoch={}",
-                  self.chain.epoch()
+            // a more simpler round robin across nodes.
+            let leader = self
+                .chain
+                .election_result()
+                .validators
+                .get(*autocommit)
+                .expect("to find our node in consensus group before overflow counter.");
+
+            let is_relay = leader.0 == self.network_pkey;
+
+            swarn!(self, "Timed out while waiting for the committed block from the leader, trying to apply automatically: epoch={}, is_leader={}",
+                  self.chain.epoch(), is_relay
             );
+
             metrics::MACRO_BLOCKS_AUTOCOMMITS.inc();
+            if !is_relay {
+                *autocommit += 1;
+                strace!(self,
+                    "It's not my time to send macro block, wait for next autocommit timer, current_leader={}",
+                    leader.0
+                );
+                let relevant_round = 1 + consensus.round();
+                let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
+                *block_timer = MacroBlockTimer::ViewChange(Delay::new(deadline));
+                return Ok(());
+            }
+
             // Auto-commit proposed block and send it to the network.
             self.commit_proposed_block();
             return Ok(());

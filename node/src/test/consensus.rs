@@ -118,43 +118,45 @@ fn autocommit() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash = Hash::digest(&block);
 
-        // Send this sealed block to all other nodes expect the first not leader.
-        for node in s.iter_except(&[leader_pk]).skip(1) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            node.poll();
-        }
+        info!("Starting checking of autocommit.");
+        // dont send this block to any node, wait for autocommits.
+        let mut nodes_pk: Vec<_> = s.iter().map(|n| n.node_service.network_pkey).collect();
+        nodes_pk.sort();
 
-        // Check state of (0..NUM_NODES - 1) nodes.
-        for node in s.iter_except(&[leader_pk]).skip(1) {
+        for pk in nodes_pk {
+            s.poll();
+            // Wait for macro block timeout.
+            s.wait(s.config.node.macro_block_timeout);
+
+            info!("Checking autocommit of node {}.", pk);
+            if pk == leader_pk {
+                continue;
+            }
+
+            let node = s.node(&pk).unwrap();
+
+            // The last node hasn't received sealed block.
+            assert_eq!(node.node_service.chain.epoch(), epoch);
+            assert_eq!(node.node_service.chain.last_block_hash(), last_block_hash);
+
+            // poll to update node after macroblock_timeout waits
+            node.poll();
+            // Check that the last node has auto-committed the block.
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
             assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+
+            // Check that the auto-committed block has been sent to the network.
+            let block2: Block = node
+                .network_service
+                .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+            let block_hash2 = Hash::digest(&block2);
+            assert_eq!(block_hash, block_hash2);
         }
-
-        let skip_leader = [leader_pk];
-        let last_node = s.iter_except(&skip_leader).next().unwrap();
-        // The last node hasn't received sealed block.
-        assert_eq!(last_node.node_service.chain.epoch(), epoch);
-        assert_eq!(
-            last_node.node_service.chain.last_block_hash(),
-            last_block_hash
-        );
-
-        // Wait for macro block timeout.
+        // wait more time, to check if counter will not overflow.
         s.wait(s.config.node.macro_block_timeout);
-        let last_node = s.iter_except(&skip_leader).next().unwrap();
-        last_node.poll();
 
-        // Check that the last node has auto-committed the block.
-        assert_eq!(last_node.node_service.chain.epoch(), epoch + 1);
-        assert_eq!(last_node.node_service.chain.last_block_hash(), block_hash);
-
-        // Check that the auto-committed block has been sent to the network.
-        let block2: Block = last_node
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let block_hash2 = Hash::digest(&block2);
-        assert_eq!(block_hash, block_hash2);
+        s.poll();
+        s.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
     });
 }
 

@@ -26,7 +26,6 @@ use futures::prelude::*;
 use futures::sync::mpsc;
 use libp2p;
 pub use libp2p_core::multiaddr::Multiaddr;
-use libp2p_core::upgrade::{InboundUpgradeExt, OutboundUpgradeExt};
 pub use libp2p_core::PeerId;
 use libp2p_core::{identity, identity::ed25519, transport::TransportError, Transport};
 use libp2p_core_derive::NetworkBehaviour;
@@ -768,19 +767,13 @@ pub fn build_tcp_ws_secio_yamux(
 > + Clone {
     let mut mplex_config = libp2p_mplex::MplexConfig::new();
     mplex_config.max_buffer_len_behaviour(libp2p_mplex::MaxBufferBehaviour::Block);
+
     CommonTransport::new()
-        .with_upgrade(secio::SecioConfig::new(keypair))
-        .and_then(move |output, endpoint| {
-            let peer_id = output.remote_key.into_peer_id();
-            let peer_id2 = peer_id.clone();
-            let upgrade = mplex_config
-                // TODO: use a single `.map` instead of two maps
-                .map_inbound(move |muxer| (peer_id, muxer))
-                .map_outbound(move |muxer| (peer_id2, muxer));
-            libp2p_core::upgrade::apply(output.stream, upgrade, endpoint)
-                .map(|(id, muxer)| (id, libp2p_core::muxing::StreamMuxerBox::new(muxer)))
-        })
-        .with_timeout(Duration::from_secs(20))
+        .upgrade(libp2p_core::upgrade::Version::V1)
+        .authenticate(secio::SecioConfig::new(keypair))
+        .multiplex(mplex_config)
+        .map(|(peer, muxer), _| (peer, libp2p_core::muxing::StreamMuxerBox::new(muxer)))
+        .timeout(Duration::from_secs(20))
 }
 
 /// Implementation of `Transport` that supports the most common protocols.

@@ -450,9 +450,11 @@ impl Blockchain {
                 .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
                 // assert thats we have no macroblocks out of snapshot.
                 .inspect(|b| match b {
-                    Block::MacroBlock(b) => {
-                        panic!("Should be no new macroblocks epoch={}", b.header.epoch)
-                    }
+                    Block::MacroBlock(b) => panic!(
+                        "Should be no new macroblocks epoch={}, try load stegosd using \
+                         --recover flag.",
+                        b.header.epoch
+                    ),
                     _ => {}
                 });
 
@@ -543,8 +545,12 @@ impl Blockchain {
         timestamp: Timestamp,
         force_check: ConsistencyCheck,
     ) -> Result<(), BlockchainError> {
-        if force_check != ConsistencyCheck::Full && self.try_recover_fast(timestamp)? {
-            return Ok(());
+        if force_check != ConsistencyCheck::Full && force_check != ConsistencyCheck::LoadChain {
+            if self.try_recover_fast(timestamp)? {
+                return Ok(());
+            } else {
+                debug!("Failed to recover faster, try recover from blocks.");
+            }
         }
 
         let genesis_hash = Hash::digest(&genesis);

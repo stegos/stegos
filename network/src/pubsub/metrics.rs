@@ -46,4 +46,11 @@ lazy_static! {
         &["topic"]
     )
     .unwrap();
+    pub static ref CONNECTED_PEERS: IntGauge = register_int_gauge!(
+        "stegos_pubsub_connected_peers",
+        "Total count of connected peers"
+    )
+    .unwrap();
+    pub static ref UNLOCKED_PEERS: IntGauge =
+        register_int_gauge!("stegos_pubsub_unlocked_peers", "Count of unlocked peers").unwrap();
 }

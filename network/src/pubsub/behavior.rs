@@ -172,6 +172,7 @@ impl<TSubstream> Floodsub<TSubstream> {
             self.unlocked_remotes
                 .insert(peer_id.clone(), SmallVec::new());
         }
+        super::metrics::UNLOCKED_PEERS.set(self.unlocked_remotes.len() as i64);
 
         if !self.allowed_remotes.contains(peer_id) {
             debug!(target: "stegos_network::pubsub", "autoenabling receive: peer_id={}", peer_id);
@@ -234,6 +235,7 @@ where
     fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
         debug!(target: "stegos_network::pubsub", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
+        super::metrics::CONNECTED_PEERS.set(self.connected_peers.len() as i64);
     }
 
     fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
@@ -242,6 +244,8 @@ where
         debug_assert!(was_in);
         self.allowed_remotes.remove(id);
         self.unlocked_remotes.remove(id);
+        super::metrics::CONNECTED_PEERS.set(self.connected_peers.len() as i64);
+        super::metrics::UNLOCKED_PEERS.set(self.unlocked_remotes.len() as i64);
     }
 
     fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {

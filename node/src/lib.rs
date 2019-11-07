@@ -644,7 +644,7 @@ impl NodeService {
         assert_eq!(self.cfg.min_stake_fee, 0);
         strace!(self, "Restaking expiring stakes");
         let mut inputs: Vec<Output> = Vec::new();
-        let mut outputs: Vec<Output> = Vec::new();
+        let mut output_info = None;
         for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
@@ -674,30 +674,44 @@ impl NodeService {
                 .output_by_hash(input_hash)?
                 .expect("Stake exists");
 
-            strace!(self, "Creating StakeUTXO...");
-            let output =
-                Output::new_stake(account_pkey, &self.network_skey, &self.network_pkey, amount)?;
-            let output_hash = Hash::digest(&output);
-
-            sinfo!(
+            sdebug!(
                 self,
-                "Restake: old_utxo={}, new_utxo={}, amount={}",
-                input_hash,
-                output_hash,
-                amount
+                "Adding output info to accumulator: amount={}, key={}",
+                amount,
+                account_pkey
             );
+            match &mut output_info {
+                None => {
+                    output_info = Some((*account_pkey, amount));
+                }
+                Some(o) => {
+                    assert_eq!(&o.0, account_pkey, "account key should be same");
+                    o.1 += amount
+                }
+            }
 
+            sinfo!(self, "Restake: old_utxo={}, amount={}", input_hash, amount);
             inputs.push(input);
-            outputs.push(output);
         }
-        assert_eq!(inputs.len(), outputs.len());
         if inputs.is_empty() {
             return Ok(()); // Nothing to re-stake.
         }
 
+        let (account_pkey, amount) = output_info.expect("some output info");
+
+        strace!(self, "Creating StakeUTXO ...");
+        let output = Output::new_stake(
+            &account_pkey,
+            &self.network_skey,
+            &self.network_pkey,
+            amount,
+        )?;
+        let output_hash = Hash::digest(&output);
+        sinfo!(self, "Restake: new_utxo={}, amount={}", output_hash, amount);
+
         strace!(self, "Signing transaction...");
         let tx =
-            RestakeTransaction::new(&self.network_skey, &self.network_pkey, &inputs, &outputs)?;
+            RestakeTransaction::new(&self.network_skey, &self.network_pkey, &inputs, &[output])?;
         let tx_hash = Hash::digest(&tx);
         sinfo!(
             self,

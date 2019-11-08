@@ -45,7 +45,7 @@ pub enum NodeRequest {
     #[serde(skip)]
     AddTransaction(Transaction),
     ValidateCertificate {
-        utxo: Hash,
+        output_hash: Hash,
         spender: scc::PublicKey,
         recipient: scc::PublicKey,
         rvalue: scc::Fr,

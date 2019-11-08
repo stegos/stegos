@@ -2310,16 +2310,19 @@ impl Future for NodeService {
                                     }
                                 }
                                 NodeRequest::ValidateCertificate {
-                                    utxo,
+                                    output_hash,
                                     spender,
                                     recipient,
                                     rvalue,
-                                } => match self.chain.historic_output_by_hash_with_proof(&utxo) {
+                                } => match self
+                                    .chain
+                                    .historic_output_by_hash_with_proof(&output_hash)
+                                {
                                     Err(e) => NodeResponse::Error {
                                         error: format!("{}", e),
                                     },
                                     Ok(None) => NodeResponse::Error {
-                                        error: format!("Missing UTXO: {}", utxo),
+                                        error: format!("Missing UTXO: {}", output_hash),
                                     },
                                     Ok(Some(OutputRecovery {
                                         output: Output::PaymentOutput(output),
@@ -2344,7 +2347,7 @@ impl Future for NodeService {
                                         }
                                     }
                                     Ok(Some(_)) => NodeResponse::Error {
-                                        error: format!("Invalid UTXO type: {}", utxo),
+                                        error: format!("Invalid UTXO type: {}", output_hash),
                                     },
                                 },
                                 NodeRequest::EnableRestaking {} => {

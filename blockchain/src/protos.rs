@@ -28,7 +28,7 @@ use failure::{Error, Fail};
 use stegos_crypto::bulletproofs::BulletProof;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
-use stegos_crypto::scc::{EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig};
+use stegos_crypto::scc::{Fr, Pt, PublicKey, SchnorrSig};
 use stegos_serialization::traits::*;
 
 #[derive(Debug, Fail)]
@@ -440,32 +440,32 @@ impl ProtoConvert for PaymentOutput {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::PaymentOutput::new();
         proto.set_recipient(self.recipient.into_proto());
-        proto.set_cloaking_hint(self.cloaking_hint.into_proto());
         proto.set_proof(self.proof.into_proto());
-        proto.set_payload(self.payload.into_proto());
         let timestamp: u64 = if let Some(locked_timestamp) = self.locked_timestamp {
             locked_timestamp.into()
         } else {
             0u64
         };
         proto.set_locked_timestamp(timestamp);
+        proto.set_ag(self.ag.into_proto());
+        proto.set_payload(self.payload.clone());
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
-        let cloaking_hint = Pt::from_proto(proto.get_cloaking_hint())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
-        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
         let locked_timestamp: Option<Timestamp> = match proto.get_locked_timestamp() {
             0 => None,
             n => Some(n.into()),
         };
+        let ag = Pt::from_proto(proto.get_ag())?;
+        let payload = proto.get_payload().to_vec();
         Ok(PaymentOutput {
             recipient,
-            cloaking_hint,
             proof,
             locked_timestamp,
+            ag,
             payload,
         })
     }

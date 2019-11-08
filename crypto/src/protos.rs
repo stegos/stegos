@@ -30,7 +30,7 @@ use crate::pbc;
 use crate::pbc::G1;
 use crate::pbc::G2;
 use crate::pbc::VRF;
-use crate::scc::{EncryptedKey, EncryptedPayload, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
+use crate::scc::{EncryptedKey, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 use crate::CryptoError;
 use ristretto_bulletproofs::RangeProof;
 
@@ -166,33 +166,23 @@ impl ProtoConvert for pbc::Signature {
     }
 }
 
-impl ProtoConvert for EncryptedPayload {
-    type Proto = crypto::EncryptedPayload;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = crypto::EncryptedPayload::new();
-        proto.set_ag(self.ag.into_proto());
-        proto.set_ctxt(self.ctxt.clone());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let ag = Pt::from_proto(proto.get_ag())?;
-        let ctxt = proto.get_ctxt().to_vec();
-        Ok(EncryptedPayload { ag, ctxt })
-    }
-}
-
 impl ProtoConvert for EncryptedKey {
     type Proto = crypto::EncryptedKey;
     fn into_proto(&self) -> Self::Proto {
         let mut proto = crypto::EncryptedKey::new();
-        proto.set_payload(self.payload.into_proto());
+        let mut payload_proto = crypto::EncryptedKey_Payload::new();
+        payload_proto.set_ag(self.ag.into_proto());
+        payload_proto.set_ctxt(self.payload.clone());
+        proto.set_payload(payload_proto);
         proto.set_sig(self.sig.into_proto());
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let payload = EncryptedPayload::from_proto(proto.get_payload())?;
+        let payload_proto = proto.get_payload();
+        let ag = Pt::from_proto(payload_proto.get_ag())?;
+        let payload = payload_proto.get_ctxt().to_vec();
         let sig = SchnorrSig::from_proto(proto.get_sig())?;
-        Ok(EncryptedKey { payload, sig })
+        Ok(EncryptedKey { ag, payload, sig })
     }
 }
 

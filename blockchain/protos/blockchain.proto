@@ -13,10 +13,10 @@ message PaymentPayloadData {
 
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
-    stegos.crypto.Pt cloaking_hint = 2;
-    stegos.crypto.BulletProof proof = 3;
-    stegos.crypto.EncryptedPayload payload = 4;
-    uint64 locked_timestamp = 5;
+    stegos.crypto.BulletProof proof = 2;
+    uint64 locked_timestamp = 3;
+    stegos.crypto.Pt ag = 4;
+    bytes payload = 5;
 }
 
 message PublicPaymentOutput {

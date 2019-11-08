@@ -274,8 +274,15 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         cfg.general.data_dir = PathBuf::from(data_dir);
     }
 
-    // Override global.force_check via command-line.
+    // Override global.consistency_check via command-line.
+    if args.is_present("recover") {
+        cfg.general.consistency_check = ConsistencyCheck::LoadChain;
+    }
+    // Override global.consistency_check via command-line.
     if args.is_present("force-check") {
+        if args.is_present("recover") {
+            error!("--force-check is set, ignoring --recover")
+        }
         cfg.general.consistency_check = ConsistencyCheck::Full;
     }
 
@@ -524,6 +531,11 @@ fn run() -> Result<(), Error> {
             Arg::with_name("force-check")
                 .help("Force BP, BLS, VRF validation during recovery")
                 .long("force-check"),
+        )
+        .arg(
+            Arg::with_name("recover")
+                .help("Force recovery using blocks saved on disk, rather than Snapshot.")
+                .long("recover"),
         )
         .get_matches();
 

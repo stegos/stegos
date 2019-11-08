@@ -521,16 +521,21 @@ fn roundtrip_bitvec() {
         #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
         v: BitVec,
     }
+    let data = vec![
+        0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64, 7, 102, 132, 314, 231, 23, 24, 26, 27, 70, 71,
+        77, 72, 73, 74, 75, 76, 81, 82, 83, 84, 85, 86, 87, 91, 92, 93, 94,
+    ];
 
-    let mut v = BitVec::from_elem(65, false);
-    for i in vec![0, 1, 2, 10, 15, 18, 25, 31, 40, 42, 60, 64] {
+    let mut v = BitVec::from_elem(315, false);
+    for i in data {
         v.set(i, true);
     }
 
     let rt = RT { v };
 
     let json = serde_json::to_string(&rt).unwrap();
-
-    let rt_recovered: RT = serde_json::from_str(&json).unwrap();
+    let mut rt_recovered: RT = serde_json::from_str(&json).unwrap();
+    assert_eq!(rt, rt_recovered);
+    stegos_crypto::utils::trim_bitvec(&mut rt_recovered.v);
     assert_eq!(rt, rt_recovered)
 }

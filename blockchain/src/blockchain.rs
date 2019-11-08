@@ -65,8 +65,8 @@ pub struct ValidatorKeyInfo {
 /// Information about service award payout.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PayoutInfo {
-    pub(crate) recipient: scc::PublicKey,
-    pub(crate) amount: i64,
+    pub recipient: scc::PublicKey,
+    pub amount: i64,
 }
 /// Full information about service award state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -450,9 +450,11 @@ impl Blockchain {
                 .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
                 // assert thats we have no macroblocks out of snapshot.
                 .inspect(|b| match b {
-                    Block::MacroBlock(b) => {
-                        panic!("Should be no new macroblocks epoch={}", b.header.epoch)
-                    }
+                    Block::MacroBlock(b) => panic!(
+                        "Should be no new macroblocks epoch={}, try load stegosd using \
+                         --recover flag.",
+                        b.header.epoch
+                    ),
                     _ => {}
                 });
 
@@ -543,8 +545,12 @@ impl Blockchain {
         timestamp: Timestamp,
         force_check: ConsistencyCheck,
     ) -> Result<(), BlockchainError> {
-        if force_check != ConsistencyCheck::Full && self.try_recover_fast(timestamp)? {
-            return Ok(());
+        if force_check != ConsistencyCheck::Full && force_check != ConsistencyCheck::LoadChain {
+            if self.try_recover_fast(timestamp)? {
+                return Ok(());
+            } else {
+                debug!("Failed to recover faster, try recover from blocks.");
+            }
         }
 
         let genesis_hash = Hash::digest(&genesis);
@@ -1046,11 +1052,16 @@ impl Blockchain {
         if activity_map.len() > validators.len() {
             return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
         };
-        for ((validator, _slots), activity) in validators.iter().zip(activity_map.iter()) {
-            let validator_account = self
-                .escrow
-                .account_by_network_key(validator)
-                .expect("Validator with account key");
+        for (id, (validator, _slots)) in validators.iter().enumerate() {
+            // Set failed if no activity was set.
+            let activity = activity_map.get(id).unwrap_or(false);
+            let validator_account =
+                if let Some(validator_account) = self.escrow.account_by_network_key(validator) {
+                    validator_account
+                } else {
+                    continue;
+                };
+
             let activity = if activity {
                 ValidatorAwardState::Active
             } else {

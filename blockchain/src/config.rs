@@ -29,9 +29,11 @@ use std::time::Duration;
 pub enum ConsistencyCheck {
     /// Don't check anything in macroblock. Only block multisig.
     None,
+    /// Load chain by blocks, rather than fast load from snapshot.
+    LoadChain,
     /// Check all incoming blocks consistency.
     Incoming,
-    /// Check even persistence state.
+    /// Check and validate persistence state.
     Full,
 }
 

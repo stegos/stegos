@@ -462,17 +462,42 @@ pub trait Api<'p> {
     /// Checks if all sandbox nodes synchronized.
     fn assert_synchronized(&self) {
         let epoch = self.first().node_service.chain.epoch();
+        let awards = self
+            .first()
+            .node_service
+            .chain
+            .epoch_info(epoch - 1)
+            .unwrap()
+            .unwrap();
         let offset = self.first().node_service.chain.offset();
         let last_block = self.first().node_service.chain.last_block_hash();
         for node in self.iter() {
             trace!("Checking node = {:?}", node.validator_id());
+
             assert_eq!(node.node_service.chain.epoch(), epoch);
+            assert_eq!(
+                node.node_service
+                    .chain
+                    .epoch_info(epoch - 1)
+                    .unwrap()
+                    .unwrap(),
+                awards
+            );
             assert_eq!(node.node_service.chain.offset(), offset);
             assert_eq!(node.node_service.chain.last_block_hash(), last_block);
         }
 
         if let Some(auditor) = self.auditor() {
             assert_eq!(auditor.node_service.chain.epoch(), epoch);
+            assert_eq!(
+                auditor
+                    .node_service
+                    .chain
+                    .epoch_info(epoch - 1)
+                    .unwrap()
+                    .unwrap(),
+                awards
+            );
             assert_eq!(auditor.node_service.chain.offset(), offset);
             assert_eq!(auditor.node_service.chain.last_block_hash(), last_block);
         }

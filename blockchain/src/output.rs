@@ -31,8 +31,8 @@ use stegos_crypto::bulletproofs::{fee_a, make_range_proof, validate_range_proof,
 use stegos_crypto::hash::{Hash, Hashable, Hasher, HASH_SIZE};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{
-    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, EncryptedPayload,
-    Fr, Pt, PublicKey, SchnorrSig, SecretKey,
+    aes_decrypt, aes_decrypt_with_rvalue, aes_encrypt, sign_hash, validate_sig, Fr, Pt, PublicKey,
+    SchnorrSig, SecretKey,
 };
 use stegos_crypto::CryptoError;
 
@@ -88,6 +88,7 @@ impl From<CryptoError> for OutputError {
         OutputError::CryptoError(error)
     }
 }
+
 impl From<std::str::Utf8Error> for OutputError {
     fn from(error: std::str::Utf8Error) -> Self {
         OutputError::UtfError(error)
@@ -100,26 +101,20 @@ pub struct PaymentOutput {
     /// Cloaked public key of recipient.
     pub recipient: PublicKey,
 
-    /// Cloaking hint for recipient, to speed up UTXO search.
-    pub cloaking_hint: Pt,
-
     /// Bulletproof on range on amount x.
     /// Contains Pedersen commitment.
     /// Size is approx. 1 KB (very structured data type).
     pub proof: BulletProof,
 
-    /// Encrypted payload.
-    ///
-    /// E_M(x, γ, δ)
-    /// Represents an encrypted packet contain the information about x, γ, δ
-    /// that only receiver can red
-    /// Size is approx 137 Bytes =
-    ///     (R-val 65B, crypto-text 72B = (amount 8B, gamma 32B, delta 32B))
-    pub payload: EncryptedPayload,
-
     /// Timelock for output.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,
+
+    /// AES keying hint needed to decrypt payload.
+    pub ag: Pt,
+
+    /// Encrypted payload.
+    pub payload: Vec<u8>,
 }
 
 /// PublicPayment UTXO.
@@ -252,7 +247,7 @@ pub struct PaymentPayload {
 }
 
 impl PaymentPayload {
-    pub fn new(delta: Fr, gamma: Fr, amount: i64, data: PaymentPayloadData) -> PaymentPayload {
+    fn new(delta: Fr, gamma: Fr, amount: i64, data: PaymentPayloadData) -> PaymentPayload {
         let signature = SchnorrSig::new();
         PaymentPayload {
             delta,
@@ -263,7 +258,7 @@ impl PaymentPayload {
         }
     }
 
-    pub fn new_with_signature(
+    fn new_with_signature(
         sender_key: &SecretKey,
         delta: Fr,
         gamma: Fr,
@@ -278,7 +273,7 @@ impl PaymentPayload {
     }
 
     /// Serialize and encrypt payload.
-    fn encrypt(&self, pkey: &PublicKey) -> Result<(EncryptedPayload, Fr), BlockchainError> {
+    fn encrypt(&self, pkey: &PublicKey) -> Result<(Pt, Vec<u8>, Fr), BlockchainError> {
         let mut payload: [u8; PAYMENT_PAYLOAD_LEN] = [0u8; PAYMENT_PAYLOAD_LEN];
         let mut pos: usize = 0;
 
@@ -331,24 +326,23 @@ impl PaymentPayload {
         assert!(pos <= PAYMENT_PAYLOAD_LEN);
 
         // Encrypt payload.
-        let (payload, rvalue) = aes_encrypt(&payload, &pkey)?;
-        Ok((payload, rvalue))
+        Ok(aes_encrypt(&payload, &pkey)?)
     }
 
     /// Decrypt and deserialize payload.
+    /// This version is used to verify payment, knowing the
+    /// secret r-value of the encrypted payload keying
     fn decrypt_with_rvalue(
         output_hash: Hash,
-        payload: &EncryptedPayload,
+        payload: &[u8],
         rvalue: &Fr,
         recipient_pkey: &PublicKey, // uncloaked recipient pkey
     ) -> Result<Self, Error> {
-        // this version is used to verify payment, knowing the
-        // secret r-value of the encrypted payload keying
-        if payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+        if payload.len() != PAYMENT_PAYLOAD_LEN {
             return Err(OutputError::InvalidPayloadLength(
                 output_hash,
                 PAYMENT_PAYLOAD_LEN,
-                payload.ctxt.len(),
+                payload.len(),
             )
             .into());
         }
@@ -358,20 +352,19 @@ impl PaymentPayload {
 
     fn decrypt(
         output_hash: Hash,
-        payload: &EncryptedPayload,
+        ag: Pt,
+        payload: &[u8],
         skey: &SecretKey,
     ) -> Result<Self, BlockchainError> {
-        // This version is used by recipients, who know the secret key
-        // needed to unlock the encrypted payload
-        if payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+        if payload.len() != PAYMENT_PAYLOAD_LEN {
             return Err(OutputError::InvalidPayloadLength(
                 output_hash,
                 PAYMENT_PAYLOAD_LEN,
-                payload.ctxt.len(),
+                payload.len(),
             )
             .into());
         }
-        let mut payload: Vec<u8> = aes_decrypt(payload, skey)?;
+        let mut payload: Vec<u8> = aes_decrypt(ag, payload, skey)?;
         Ok(Self::extract_decrypted_info(output_hash, &mut payload)?)
     }
 
@@ -504,16 +497,13 @@ impl PaymentOutput {
             PaymentPayload::new(delta.clone(), gamma.clone(), amount, data)
         };
         // NOTE: real public key should be used to encrypt payload
-        let (payload, rvalue) = payload.encrypt(recipient_pkey)?;
-
-        // Key cloaking hint for recipient = gamma * delta * Pkey
-        let hint = Pt::from(*recipient_pkey) * gamma * delta;
+        let (ag, payload, rvalue) = payload.encrypt(recipient_pkey)?;
 
         let output = PaymentOutput {
             recipient: cloaked_pkey,
-            cloaking_hint: hint,
             proof,
             locked_timestamp,
+            ag,
             payload,
         };
 
@@ -542,7 +532,7 @@ impl PaymentOutput {
     /// Decrypt payload.
     pub fn decrypt_payload(&self, skey: &SecretKey) -> Result<PaymentPayload, BlockchainError> {
         let output_hash = Hash::digest(&self);
-        PaymentPayload::decrypt(output_hash, &self.payload, skey)
+        PaymentPayload::decrypt(output_hash, self.ag, &self.payload, skey)
     }
 
     /// Validates UTXO structure and keying.
@@ -554,12 +544,12 @@ impl PaymentOutput {
         };
 
         // Validate payload.
-        if self.payload.ctxt.len() != PAYMENT_PAYLOAD_LEN {
+        if self.payload.len() != PAYMENT_PAYLOAD_LEN {
             let h = Hash::digest(self);
             return Err(OutputError::InvalidPayloadLength(
                 h,
                 PAYMENT_PAYLOAD_LEN,
-                self.payload.ctxt.len(),
+                self.payload.len(),
             )
             .into());
         }
@@ -756,10 +746,10 @@ impl Hashable for PaymentOutput {
     fn hash(&self, state: &mut Hasher) {
         "Payment".hash(state);
         self.recipient.hash(state);
-        self.cloaking_hint.hash(state);
         self.proof.hash(state);
-        self.payload.hash(state);
         self.locked_timestamp.hash(state);
+        self.ag.hash(state);
+        self.payload.hash(state);
     }
 }
 
@@ -825,9 +815,9 @@ pub mod tests {
 
         fn rt(payload: &PaymentPayload, skey: &SecretKey, pkey: &PublicKey) {
             let output_hash = Hash::digest("test");
-            let (encrypted, _rvalue) = payload.encrypt(&pkey).expect("keys are valid");
-            let payload2 =
-                PaymentPayload::decrypt(output_hash, &encrypted, &skey).expect("keys are valid");
+            let (ag, encrypted, _rvalue) = payload.encrypt(&pkey).expect("keys are valid");
+            let payload2 = PaymentPayload::decrypt(output_hash, ag, &encrypted, &skey)
+                .expect("keys are valid");
             assert_eq!(payload, &payload2);
         }
 
@@ -884,14 +874,14 @@ pub mod tests {
         let amount: i64 = 100500;
         let data = PaymentPayloadData::ContentHash(Hash::digest(&100500u64));
         let payload = PaymentPayload::new(delta, gamma, amount, data);
-        let (encrypted, _rvalue) = payload.encrypt(&pkey).expect("keys are valid");
-        let raw = aes_decrypt(&encrypted, &skey).expect("keys are valid");
+        let (ag, encrypted, _rvalue) = payload.encrypt(&pkey).expect("keys are valid");
+        let raw = aes_decrypt(ag, &encrypted, &skey).expect("keys are valid");
 
         // Invalid length.
         let mut invalid = raw.clone();
         invalid.push(0);
-        let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
+        let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
             BlockchainError::OutputError(OutputError::InvalidPayloadLength(
                 _output_hash,
@@ -907,8 +897,8 @@ pub mod tests {
         // Invalid magic.
         let mut invalid = raw.clone();
         invalid[3] = 5;
-        let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
+        let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
             BlockchainError::OutputError(OutputError::PayloadDecryptionError(_output_hash)) => {}
             _ => unreachable!(),
@@ -919,8 +909,8 @@ pub mod tests {
         let amount: i64 = -100500;
         let amount_bytes: [u8; 8] = unsafe { transmute(amount.to_le()) };
         invalid[68..68 + amount_bytes.len()].copy_from_slice(&amount_bytes);
-        let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
+        let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
             BlockchainError::OutputError(OutputError::NegativeAmount(_output_hash, amount2)) => {
                 assert_eq!(amount, amount2)
@@ -932,8 +922,8 @@ pub mod tests {
         let mut invalid = raw.clone();
         let code: u8 = 10;
         invalid[PAYMENT_PAYLOAD_LEN - PAYMENT_DATA_LEN] = code;
-        let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
+        let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
             BlockchainError::OutputError(OutputError::UnsupportedDataType(_output_hash, code2)) => {
                 assert_eq!(code, code2)
@@ -944,8 +934,8 @@ pub mod tests {
         // Trailing garbage.
         let mut invalid = raw.clone();
         invalid[PAYMENT_PAYLOAD_LEN - PAYMENT_DATA_LEN + HASH_SIZE + 1] = 1;
-        let (invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
-        let e = PaymentPayload::decrypt(output_hash, &invalid, &skey).unwrap_err();
+        let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
+        let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
             BlockchainError::OutputError(OutputError::TrailingGarbage(_output_hash)) => {}
             _ => unreachable!(),

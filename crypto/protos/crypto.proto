@@ -42,13 +42,13 @@ message SecureSignature {
     G1 point = 1;
 }
 
-message EncryptedPayload {
-    Pt ag = 1;
-    bytes ctxt = 2;
-}
-
 message EncryptedKey {
-    EncryptedPayload payload = 1;
+    // Inner structure is for backward-compatibility.
+    message Payload {
+        Pt ag = 1;
+        bytes ctxt = 2;
+    }
+    Payload payload = 1;
     SchnorrSig sig = 2;
 }
 

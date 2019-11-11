@@ -1,13 +1,13 @@
 [general]
 chain = "dev"
-prometheus_endpoint = "127.0.0.1:9897"
-api_endpoint = "127.0.0.1:3151"
-data_dir = "testing/node07"
+prometheus_endpoint = "127.0.0.1:9896"
+api_endpoint = "127.0.0.1:3150"
+data_dir = "dev/node06"
 consistency_check = "full"
 
 [network]
-endpoint = "127.0.0.1:10061"
-advertised_endpoint = "127.0.0.1:10061"
+endpoint = "127.0.0.1:10060"
+advertised_endpoint = "127.0.0.1:10060"
 handshake_puzzle_difficulty = 100
 seed_nodes = [
     "127.0.0.1:10055",
@@ -15,5 +15,5 @@ seed_nodes = [
     "127.0.0.1:10057",
     "127.0.0.1:10058",
     "127.0.0.1:10059",
-    "127.0.0.1:10060",
+    "127.0.0.1:10061",
 ]

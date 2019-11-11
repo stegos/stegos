@@ -1371,12 +1371,20 @@ pub mod tests {
         let fee: i64 = 1;
 
         //
+        // Canaries.
+        //
+        let output = StakeOutput::new(&pkey1, &nskey, &npkey, amount).unwrap();
+        assert!(output.canary().is_my(&pkey1));
+        let (_skey2, pkey2) = scc::make_random_keys();
+        assert!(!output.canary().is_my(&pkey2));
+
+        //
         // Invalid amount.
         //
         let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
         output.amount = 0; // mutate amount.
         match output.validate().unwrap_err() {
-            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+            BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
             e => panic!("{:?}", e),
         };
 
@@ -1458,6 +1466,32 @@ pub mod tests {
             }
             e => panic!("{:?}", e),
         }
+    }
+
+    ///
+    /// Tests validation of PublicPaymentOutput
+    #[test]
+    fn public_payment() {
+        let (_skey, pkey) = scc::make_random_keys();
+        let amount = 100;
+
+        //
+        // Canaries.
+        //
+        let output = PublicPaymentOutput::new(&pkey, amount);
+        assert!(output.canary().is_my(&pkey));
+        let (_skey2, pkey2) = scc::make_random_keys();
+        assert!(!output.canary().is_my(&pkey2));
+
+        //
+        // Invalid amount.
+        //
+        let mut output = PublicPaymentOutput::new(&pkey, amount);
+        output.amount = 0; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
+            e => panic!("{:?}", e),
+        };
     }
 
     #[test]
@@ -1763,7 +1797,7 @@ pub mod tests {
                 outputs,
             );
             match block.validate_balance(&inputs).unwrap_err() {
-                BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+                BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
                 e => panic!("{}", e),
             };
         }

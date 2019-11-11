@@ -3,11 +3,17 @@ stages:
   - test
   - release
 
+cache:
+  key: ${CI_JOB_NAME}
+  paths:
+    - target
+
 # Running fast-checks to notice an author that his pull-request fails our standards.
 # This checks should not produce any artifacts
 fast_checks:
   stage: fast_checks
   allow_failure: true
+  cache: {}
   before_script:
     - ./ci-scripts/build.sh builddep
   script:

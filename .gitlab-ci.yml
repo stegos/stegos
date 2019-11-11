@@ -29,6 +29,8 @@ fast_checks:
 
 test:linux_x64:
   extends: .test
+  variables:
+    RUSTC_WRAPPPER: /root/.cargo/bin/sccache
   image: quay.io/stegos/rust:nightly-2019-10-30
   tags:
     - linux
@@ -63,6 +65,8 @@ code_coverage:
 
 release:linux-x64:
   extends: .release
+  variables:
+    RUSTC_WRAPPPER: /root/.cargo/bin/sccache
   image: quay.io/stegos/rust:nightly-2019-10-30
   script: ./ci-scripts/build.sh release linux-x64
   tags:

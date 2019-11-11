@@ -805,7 +805,13 @@ impl ProtoConvert for MicroBlockHeader {
         proto.set_solution(self.solution.clone());
         let timestamp: u64 = self.timestamp.into();
         proto.set_timestamp(timestamp);
+        proto.set_transactions_len(self.transactions_len);
         proto.set_transactions_range_hash(self.transactions_range_hash.into_proto());
+        proto.set_inputs_len(self.inputs_len);
+        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
+        proto.set_outputs_len(self.outputs_len);
+        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto.set_canaries_range_hash(self.canaries_range_hash.into_proto());
         proto
     }
 
@@ -824,7 +830,13 @@ impl ProtoConvert for MicroBlockHeader {
         let random = pbc::VRF::from_proto(proto.get_random())?;
         let solution = proto.get_solution().to_vec();
         let timestamp: Timestamp = proto.get_timestamp().into();
+        let transactions_len = proto.get_transactions_len();
         let transactions_range_hash = Hash::from_proto(proto.get_transactions_range_hash())?;
+        let inputs_len = proto.get_inputs_len();
+        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
+        let outputs_len = proto.get_outputs_len();
+        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        let canaries_range_hash = Hash::from_proto(proto.get_canaries_range_hash())?;
         Ok(MicroBlockHeader {
             version,
             previous,
@@ -836,7 +848,13 @@ impl ProtoConvert for MicroBlockHeader {
             random,
             solution,
             timestamp,
+            transactions_len,
             transactions_range_hash,
+            inputs_len,
+            inputs_range_hash,
+            outputs_len,
+            outputs_range_hash,
+            canaries_range_hash,
         })
     }
 }
@@ -887,12 +905,13 @@ impl ProtoConvert for MacroBlockHeader {
         proto.set_block_reward(self.block_reward);
         proto.set_gamma(self.gamma.into_proto());
         proto.activity_map.extend(self.activity_map.iter());
-        proto.set_validators_range_hash(self.validators_range_hash.into_proto());
         proto.set_validators_len(self.validators_len);
-        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
+        proto.set_validators_range_hash(self.validators_range_hash.into_proto());
         proto.set_inputs_len(self.inputs_len);
-        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto.set_inputs_range_hash(self.inputs_range_hash.into_proto());
         proto.set_outputs_len(self.outputs_len);
+        proto.set_outputs_range_hash(self.outputs_range_hash.into_proto());
+        proto.set_canaries_range_hash(self.canaries_range_hash.into_proto());
         proto
     }
 
@@ -908,12 +927,13 @@ impl ProtoConvert for MacroBlockHeader {
         let block_reward = proto.get_block_reward();
         let gamma = Fr::from_proto(proto.get_gamma())?;
         let activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
-        let validators_range_hash = Hash::from_proto(proto.get_validators_range_hash())?;
         let validators_len = proto.get_validators_len();
-        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
+        let validators_range_hash = Hash::from_proto(proto.get_validators_range_hash())?;
         let inputs_len = proto.get_inputs_len();
-        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        let inputs_range_hash = Hash::from_proto(proto.get_inputs_range_hash())?;
         let outputs_len = proto.get_outputs_len();
+        let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
+        let canaries_range_hash = Hash::from_proto(proto.get_canaries_range_hash())?;
         Ok(MacroBlockHeader {
             version,
             previous,
@@ -926,12 +946,13 @@ impl ProtoConvert for MacroBlockHeader {
             block_reward,
             gamma,
             activity_map,
-            validators_range_hash,
             validators_len,
-            inputs_range_hash,
+            validators_range_hash,
             inputs_len,
-            outputs_range_hash,
+            inputs_range_hash,
             outputs_len,
+            outputs_range_hash,
+            canaries_range_hash,
         })
     }
 }

@@ -95,12 +95,13 @@ message MacroBlockHeader {
     int64 block_reward = 9;
     stegos.crypto.Fr gamma = 10;
     repeated bool activity_map = 11;
-    stegos.crypto.Hash validators_range_hash = 12;
-    uint32 validators_len = 13;
-    stegos.crypto.Hash inputs_range_hash = 14;
-    uint32 inputs_len = 15;
-    stegos.crypto.Hash outputs_range_hash = 16;
-    uint32 outputs_len = 17;
+    uint32 validators_len = 12;
+    stegos.crypto.Hash validators_range_hash = 13;
+    uint32 inputs_len = 14;
+    stegos.crypto.Hash inputs_range_hash = 15;
+    uint32 outputs_len = 16;
+    stegos.crypto.Hash outputs_range_hash = 17;
+    stegos.crypto.Hash canaries_range_hash = 18;
 }
 
 message MacroBlock {
@@ -120,9 +121,15 @@ message MicroBlockHeader {
     ViewChangeProof view_change_proof = 6;
     stegos.crypto.SecurePublicKey pkey = 7;
     stegos.crypto.VRF random = 8;
-    bytes solution = 11;
-    uint64 timestamp = 9;
-    stegos.crypto.Hash transactions_range_hash = 10;
+    bytes solution = 9;
+    uint64 timestamp = 10;
+    uint32 transactions_len = 11;
+    stegos.crypto.Hash transactions_range_hash = 12;
+    uint32 inputs_len = 13;
+    stegos.crypto.Hash inputs_range_hash = 14;
+    uint32 outputs_len = 15;
+    stegos.crypto.Hash outputs_range_hash = 16;
+    stegos.crypto.Hash canaries_range_hash = 17;
 }
 
 message MicroBlock {

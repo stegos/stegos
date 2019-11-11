@@ -787,7 +787,7 @@ impl PaymentValue {
     pub fn to_info(&self, pending: Option<&PendingOutput>) -> PaymentInfo {
         let pending_timestamp = pending_timestamp(pending);
         PaymentInfo {
-            utxo: Hash::digest(&self.output),
+            output_hash: Hash::digest(&self.output),
             amount: self.amount,
             data: self.data.clone(),
             locked_timestamp: self.output.locked_timestamp,
@@ -803,7 +803,7 @@ impl PublicPaymentValue {
     pub fn to_info(&self, pending: Option<&PendingOutput>) -> PublicPaymentInfo {
         let pending_timestamp = pending_timestamp(pending);
         PublicPaymentInfo {
-            utxo: Hash::digest(&self.output),
+            output_hash: Hash::digest(&self.output),
             amount: self.output.amount,
             locked_timestamp: self.output.locked_timestamp,
             pending_timestamp,
@@ -820,7 +820,7 @@ impl StakeValue {
             .map(|active_until_epoch| active_until_epoch >= epoch);
         StakeInfo {
             account_pkey: self.output.recipient,
-            utxo: Hash::digest(&self.output),
+            output_hash: Hash::digest(&self.output),
             amount: self.output.amount,
             active_until_epoch: self.active_until_epoch,
             is_active,

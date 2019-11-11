@@ -474,7 +474,7 @@ impl UnsealedAccountService {
                     let mut output_info = output_value.to_info(self.epoch);
                     // Update information about change.
                     if let OutputInfo::Payment(ref mut p) = output_info {
-                        p.is_change = self.database.is_known_changes(p.utxo);
+                        p.is_change = self.database.is_known_changes(p.output_hash);
                     }
 
                     LogEntryInfo::Incoming {

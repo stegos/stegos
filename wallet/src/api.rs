@@ -60,7 +60,7 @@ pub enum OutputInfo {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
-    pub utxo: Hash,
+    pub output_hash: Hash,
     pub amount: i64,
     #[serde(flatten)]
     pub data: PaymentPayloadData,
@@ -76,7 +76,7 @@ pub struct PaymentInfo {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PublicPaymentInfo {
-    pub utxo: Hash,
+    pub output_hash: Hash,
     pub amount: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_timestamp: Option<Timestamp>,

@@ -663,7 +663,7 @@ impl ConsoleService {
             };
 
             let utxo = caps.name("utxo").unwrap().as_str();
-            let utxo = match Hash::try_from_hex(utxo) {
+            let output_hash = match Hash::try_from_hex(utxo) {
                 Ok(r) => r,
                 Err(e) => {
                     eprintln!("Invalid UTXO hash '{}': {}", utxo, e);
@@ -701,7 +701,7 @@ impl ConsoleService {
             };
 
             let request = NodeRequest::ValidateCertificate {
-                utxo,
+                output_hash,
                 spender,
                 recipient,
                 rvalue,

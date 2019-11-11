@@ -71,7 +71,7 @@ pub struct ValidatorInfo {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct StakeInfo {
-    pub utxo: Hash,
+    pub output_hash: Hash,
     pub account_pkey: scc::PublicKey,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_until_epoch: Option<u64>,
@@ -327,7 +327,7 @@ impl Escrow {
                 });
             let is_active = v.active_until_epoch >= epoch;
             let stake = StakeInfo {
-                utxo: k.output_hash,
+                output_hash: k.output_hash,
                 account_pkey: v.account_pkey,
                 active_until_epoch: v.active_until_epoch.into(),
                 is_active: is_active.into(),

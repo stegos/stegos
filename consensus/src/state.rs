@@ -27,7 +27,9 @@ use crate::metrics;
 use log::*;
 use std::collections::BTreeMap;
 use std::mem;
-use stegos_blockchain::{check_supermajority, create_multi_signature, ElectionResult, MacroBlock};
+use stegos_blockchain::{
+    check_supermajority, create_multi_signature, ElectionResult, MacroBlock, Timestamp,
+};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 
@@ -116,6 +118,9 @@ pub struct Consensus {
     /// Collected Precommits.
     precommits: BTreeMap<pbc::PublicKey, pbc::Signature>,
 
+    /// Consensus start time (used for metrics).
+    start_time: Timestamp,
+
     //
     // External events
     //
@@ -158,6 +163,9 @@ impl Consensus {
         let round = 0;
         let inbox: Vec<ConsensusMessage> = Vec::new();
         let outbox: Vec<ConsensusMessage> = Vec::new();
+        let start_time = Timestamp::now();
+        metrics::PRECOMMITS_AMOUNT.set(0);
+        metrics::PREVOTES_AMOUNT.set(0);
         Consensus {
             skey,
             pkey,
@@ -175,6 +183,7 @@ impl Consensus {
             precommits,
             inbox,
             outbox,
+            start_time,
         }
     }
 
@@ -597,7 +606,10 @@ impl Consensus {
 
         // Check if supermajority of votes is reached.
         if self.state == ConsensusState::Prevote {
-            if !self.check_supermajority(&self.prevotes) {
+            let (super_majority, stake) = self.check_supermajority(&self.prevotes);
+            metrics::PRECOMMITS_AMOUNT.set(stake);
+            metrics::PREVOTES_AMOUNT.set(0);
+            if !super_majority {
                 // No supermajority, skip transition.
                 return Ok(());
             }
@@ -626,7 +638,9 @@ impl Consensus {
                 );
             }
         } else if self.state == ConsensusState::Precommit {
-            if self.check_supermajority(&self.precommits) {
+            let (super_majority, stake) = self.check_supermajority(&self.precommits);
+            metrics::PRECOMMITS_AMOUNT.set(stake);
+            if super_majority {
                 // Move to Commit.
                 debug!(
                     "{}({}:{}) => {}({}:{})",
@@ -736,7 +750,10 @@ impl Consensus {
     ///
     /// Checks that supermajority of votes has been collected.
     ///
-    fn check_supermajority(&self, accepts: &BTreeMap<pbc::PublicKey, pbc::Signature>) -> bool {
+    fn check_supermajority(
+        &self,
+        accepts: &BTreeMap<pbc::PublicKey, pbc::Signature>,
+    ) -> (bool, i64) {
         trace!(
             "{}({}:{}): check for supermajority: accepts={:?}, total={:?}",
             self.state.name(),
@@ -749,12 +766,16 @@ impl Consensus {
         for (pk, _sign) in accepts {
             stake += self.validators.get(pk).expect("vote from validator");
         }
-        check_supermajority(stake, self.total_slots)
+        (check_supermajority(stake, self.total_slots), stake)
     }
 }
 
 impl Drop for Consensus {
     fn drop(&mut self) {
+        let work_time = Timestamp::now()
+            .duration_since(self.start_time)
+            .as_secs_f64();
+        metrics::CONSENSUS_WORK_TIME.set(work_time);
         metrics::CONSENSUS_STATE.set(metrics::ConsensusState::NotInConsensus as i64);
     }
 }

@@ -43,6 +43,16 @@ lazy_static! {
         "Amount of money staked totally on blockchain."
     )
     .unwrap();
+    pub static ref AWARD_VALIDATORS_COUNT: IntGauge = register_int_gauge!(
+        "stegos_award_validators_count",
+        "Count of validators in service award."
+    )
+    .unwrap();
+    pub static ref AWARD_FAILED_COUNT: IntGauge = register_int_gauge!(
+        "stegos_award_failed_count",
+        "Count of failed validators in service award."
+    )
+    .unwrap();
     pub static ref EPOCH: IntGauge =
         register_int_gauge!("stegos_blockchain_epoch", "Current blockchain epoch").unwrap();
     pub static ref OFFSET: IntGauge =

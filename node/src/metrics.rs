@@ -63,6 +63,13 @@ lazy_static! {
         "The number of forced view_changes for the macro blocks."
     )
     .unwrap();
+
+    pub static ref MACRO_BLOCK_APPLY_TIME: Gauge = register_gauge!(
+        "stegos_macro_block_apply_time",
+        "Macro block applying time."
+    )
+    .unwrap();
+
     pub static ref MACRO_BLOCK_CREATE_TIME: Gauge = register_gauge!(
         "stegos_macro_block_create_time",
         "Macro block create time."

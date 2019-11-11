@@ -46,6 +46,24 @@ lazy_static! {
     )
     .unwrap();
 
+    pub static ref PREVOTES_AMOUNT: IntGauge = register_int_gauge!(
+        "stegos_consensus_prevotes",
+        "Amount of prevotes collected by node."
+    )
+    .unwrap();
+
+    pub static ref PRECOMMITS_AMOUNT: IntGauge = register_int_gauge!(
+        "stegos_consensus_precommits",
+        "Amount of precommits collected by node."
+    )
+    .unwrap();
+
+    pub static ref CONSENSUS_WORK_TIME: Gauge = register_gauge!(
+        "stegos_consensus_work_time",
+        "Time in seconds when consensus was active."
+    )
+    .unwrap();
+
     pub static ref CONSENSUS_STATE: IntGauge = register_int_gauge!(
         "stegos_consensus_state",
         "Current node consensus state (0 = Not in consensus, 1 = Proposing, 2 = Prevote, 3 = Propose, 4 = Commit)."

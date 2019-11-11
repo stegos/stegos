@@ -32,6 +32,7 @@ use crate::timestamp::Timestamp;
 use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
+use crate::Merkle;
 use log::*;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -513,6 +514,9 @@ impl Blockchain {
             return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
         }
 
+        // Sic: this function doesn't validate header.validators_range_hash
+        // because it can't be validated without processing the block itself.
+
         // Check the number of inputs.
         if header.inputs_len > std::u32::MAX {
             return Err(BlockError::TooManyInputs(
@@ -615,7 +619,7 @@ impl Blockchain {
             .into());
         }
         let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
-        let outputs_range_hash = MacroBlock::calculate_range_hash(&output_hashes);
+        let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
         if block.header.outputs_range_hash != outputs_range_hash {
             return Err(BlockError::InvalidBlockInputsHash(
                 epoch,
@@ -639,7 +643,7 @@ impl Blockchain {
             )
             .into());
         }
-        let inputs_range_hash = MacroBlock::calculate_range_hash(&block.inputs);
+        let inputs_range_hash = Merkle::root_hash_from_array(&block.inputs);
         if block.header.inputs_range_hash != inputs_range_hash {
             return Err(BlockError::InvalidBlockInputsHash(
                 epoch,
@@ -720,7 +724,7 @@ impl Blockchain {
         }
 
         let validators_at_start = self.validators_at_epoch_start();
-        if header.activity_map.len() > validators_at_start.len() {
+        if header.activity_map.len() != validators_at_start.len() {
             return Err(BlockError::TooBigActivitymap(
                 header.activity_map.len(),
                 validators_at_start.len(),
@@ -829,6 +833,9 @@ impl Blockchain {
             transactions.extend(block.transactions);
         }
 
+        // Select validators.
+        let validators = self.next_election_result(header.random).validators;
+
         // Re-create original block.
         let block = MacroBlock::from_transactions(
             header.previous,
@@ -840,6 +847,7 @@ impl Blockchain {
             header.timestamp,
             full_reward,
             activity_map,
+            validators,
             &transactions,
         )?;
 
@@ -1575,8 +1583,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 inputs1,
                 outputs1,
             );
@@ -1601,8 +1610,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 inputs1,
                 outputs1,
             );
@@ -1648,8 +1658,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 input_hashes,
                 outputs,
             );
@@ -1677,8 +1688,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 input_hashes,
                 outputs,
             );
@@ -1708,8 +1720,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 input_hashes,
                 outputs,
             );
@@ -1743,8 +1756,9 @@ pub mod tests {
                 complexity,
                 timestamp,
                 0,
-                BitVec::new(),
                 gamma,
+                BitVec::new(),
+                Vec::new(),
                 input_hashes,
                 outputs,
             );
@@ -1787,8 +1801,9 @@ pub mod tests {
             complexity,
             timestamp,
             block_reward,
-            BitVec::new(),
             gamma,
+            BitVec::new(),
+            Vec::new(),
             input_hashes,
             outputs,
         );

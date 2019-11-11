@@ -33,6 +33,7 @@ use super::timestamp::Timestamp;
 use super::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
 };
+use crate::election;
 use bit_vec::BitVec;
 use log::*;
 use rand::{thread_rng, Rng};
@@ -197,10 +198,12 @@ fn recover_account(
 pub fn fake_genesis(
     stake: i64,
     coins: i64,
+    max_slot_count: i64,
     num_nodes: usize,
     timestamp: Timestamp,
     prng: Option<&mut dyn RngCore>,
 ) -> (Vec<KeyChain>, MacroBlock) {
+    let mut stakers = Vec::with_capacity(num_nodes);
     let mut keychains = Vec::with_capacity(num_nodes);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
     let mut payout = coins;
@@ -222,6 +225,7 @@ pub fn fake_genesis(
         payout -= stake;
         outputs.push(output.into());
 
+        stakers.push((keychain.network_pkey, stake));
         keychains.push(keychain);
     }
 
@@ -242,6 +246,8 @@ pub fn fake_genesis(
     let difficulty = 1;
     let activity_map = BitVec::from_elem(keychains.len(), true);
 
+    let validators = election::select_validators_slots(stakers, random, max_slot_count).validators;
+
     // Create a block.
     let genesis = MacroBlock::new(
         previous,
@@ -252,8 +258,9 @@ pub fn fake_genesis(
         difficulty,
         timestamp,
         coins,
-        activity_map,
         -outputs_gamma,
+        activity_map,
+        validators,
         Vec::new(),
         outputs,
     );

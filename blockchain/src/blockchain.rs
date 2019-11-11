@@ -29,6 +29,7 @@ use crate::election::ElectionInfo;
 use crate::election::{self, ElectionResult};
 use crate::error::*;
 use crate::escrow::*;
+use crate::merkle::Merkle;
 use crate::metrics;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
@@ -231,7 +232,7 @@ pub struct Blockchain {
     /// Global monetary balance.
     balance: BalanceMap,
     /// In-memory storage of stakes.
-    escrow: Escrow,
+    pub(crate) escrow: Escrow,
     /// VDF state.
     pub(crate) vdf: VDF,
     /// VDF difficulty,
@@ -824,6 +825,16 @@ impl Blockchain {
         self.election_result.get(&()).unwrap()
     }
 
+    /// Returns election result for the next epoch.
+    pub(crate) fn next_election_result(&self, random: pbc::VRF) -> ElectionResult {
+        election::select_validators_slots(
+            self.escrow
+                .get_stakers_majority(self.epoch + 1, self.cfg.min_stake_amount),
+            random,
+            self.cfg.max_slot_count,
+        )
+    }
+
     /// Returns leader public key for specific view_change number.
     pub fn select_leader(&self, view_change: ViewCounter) -> pbc::PublicKey {
         self.election_result().select_leader(view_change)
@@ -848,13 +859,13 @@ impl Blockchain {
 
     /// Returns the current epoch validators with their stakes.
     #[inline]
-    pub fn validators(&self) -> &Vec<(pbc::PublicKey, i64)> {
+    pub fn validators(&self) -> &StakersGroup {
         &self.election_result().validators
     }
 
     /// Returns the validators list, at begining of the epoch
     #[inline]
-    pub fn validators_at_epoch_start(&self) -> Vec<(pbc::PublicKey, i64)> {
+    pub fn validators_at_epoch_start(&self) -> StakersGroup {
         let epoch_info = self.election_result_by_offset(0).unwrap();
         epoch_info.validators
     }
@@ -1267,6 +1278,8 @@ impl Blockchain {
             transactions.extend(block.transactions);
         }
 
+        let validators = self.next_election_result(random).validators;
+
         let block = MacroBlock::from_transactions(
             previous,
             epoch,
@@ -1277,6 +1290,7 @@ impl Blockchain {
             timestamp,
             full_reward,
             activity_map,
+            validators,
             &transactions,
         )
         .expect("Transactions are valid");
@@ -1426,6 +1440,25 @@ impl Blockchain {
         );
 
         //
+        // Check validators.
+        //
+        let election_result = self.next_election_result(block.header.random);
+        let validators_len = election_result.validators.len() as u32;
+        if block.header.validators_len != validators_len {
+            panic!(
+                "Invalid validators_len: expected={}, got={}",
+                validators_len, block.header.validators_len,
+            );
+        }
+        let validators_range_hash = Merkle::root_hash_from_array(&election_result.validators);
+        if block.header.validators_range_hash != validators_range_hash {
+            panic!(
+                "Invalid validators_range_hash: expected={}, got={}",
+                validators_range_hash, block.header.validators_range_hash
+            );
+        }
+
+        //
         // Update metadata.
         //
         self.epoch += 1;
@@ -1435,16 +1468,7 @@ impl Blockchain {
         self.last_macro_block_timestamp = block.header.timestamp;
         self.last_macro_block_random = block.header.random.rand;
         self.last_macro_block_hash = block_hash;
-        self.election_result.insert(
-            lsn,
-            (),
-            election::select_validators_slots(
-                self.escrow
-                    .get_stakers_majority(self.epoch, self.cfg.min_stake_amount),
-                block.header.random,
-                self.cfg.max_slot_count,
-            ),
-        );
+        self.election_result.insert(lsn, (), election_result);
         self.difficulty = block.header.difficulty;
         debug!("Set difficulty to to {}", self.difficulty);
 
@@ -2103,6 +2127,7 @@ pub mod tests {
         let (keychains, block1) = test::fake_genesis(
             cfg.min_stake_amount,
             10 * cfg.min_stake_amount,
+            cfg.max_slot_count,
             3,
             timestamp,
             None,
@@ -2178,6 +2203,7 @@ pub mod tests {
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
             (NUM_NODES as i64) * cfg.min_stake_amount + 100,
+            cfg.max_slot_count,
             NUM_NODES,
             timestamp,
             None,
@@ -2290,6 +2316,7 @@ pub mod tests {
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
             10 * cfg.min_stake_amount,
+            cfg.max_slot_count,
             1,
             block_timestamp0,
             None,
@@ -2493,8 +2520,14 @@ pub mod tests {
         let mut cfg: ChainConfig = Default::default();
         cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;
-        let (keychains, blocks) =
-            test::fake_genesis(stake, 10 * cfg.min_stake_amount, 1, timestamp, None);
+        let (keychains, blocks) = test::fake_genesis(
+            stake,
+            10 * cfg.min_stake_amount,
+            cfg.max_slot_count,
+            1,
+            timestamp,
+            None,
+        );
         let chain_dir = TempDir::new("test").unwrap();
         let mut blockchain = Blockchain::new(
             cfg,
@@ -2560,6 +2593,7 @@ pub mod tests {
         let (keychains, genesis) = test::fake_genesis(
             cfg.min_stake_amount,
             cfg.min_stake_amount + 100,
+            cfg.max_slot_count,
             1,
             timestamp,
             None,

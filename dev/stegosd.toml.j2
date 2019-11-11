@@ -1,0 +1,19 @@
+[general]
+chain = "dev"
+prometheus_endpoint = "127.0.0.1:{{ NODE_ID|int + 9890 }}"
+api_endpoint = "127.0.0.1:{{ NODE_ID|int + 3144 }}"
+data_dir = "dev/node{{NODE_ID}}"
+consistency_check = "full"
+
+[network]
+endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
+advertised_endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
+handshake_puzzle_difficulty = 100
+readiness_threshold = 0
+seed_nodes = [
+{%- for k in range(NUM_KEYS|int) %}
+{%- if 1+k|int != NODE_ID|int %}
+    "127.0.0.1:{{10055 + k|int}}",
+{%- endif -%}
+{%- endfor %}
+]

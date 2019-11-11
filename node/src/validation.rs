@@ -144,7 +144,14 @@ mod test {
         let stake_epochs = 1;
         cfg.stake_epochs = stake_epochs;
         let mut timestamp = Timestamp::now();
-        let (mut keychains, genesis) = fake_genesis(stake, amount + stake, 1, timestamp, None);
+        let (mut keychains, genesis) = fake_genesis(
+            stake,
+            amount + stake,
+            cfg.max_slot_count,
+            1,
+            timestamp,
+            None,
+        );
         let keychain = keychains.pop().unwrap();
         let (account_skey, account_pkey) = (keychain.account_skey, keychain.account_pkey);
         let (network_skey, network_pkey) = (keychain.network_skey, keychain.network_pkey);

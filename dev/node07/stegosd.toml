@@ -1,0 +1,20 @@
+[general]
+chain = "dev"
+prometheus_endpoint = "127.0.0.1:9897"
+api_endpoint = "127.0.0.1:3151"
+data_dir = "dev/node07"
+consistency_check = "full"
+
+[network]
+endpoint = "127.0.0.1:10061"
+advertised_endpoint = "127.0.0.1:10061"
+handshake_puzzle_difficulty = 100
+readiness_threshold = 0
+seed_nodes = [
+    "127.0.0.1:10055",
+    "127.0.0.1:10056",
+    "127.0.0.1:10057",
+    "127.0.0.1:10058",
+    "127.0.0.1:10059",
+    "127.0.0.1:10060",
+]

@@ -21,14 +21,12 @@
 
 //! Leader election and group formation algorithms and tests.
 
+use crate::block::StakersGroup;
 use log::error;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
-
-/// Group of validators, should be ordered and unique by pbc::PublicKey.
-pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 
 /// User-friendly printable representation of state.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -131,12 +129,15 @@ where
 /// Where PublicKey is unique among array network identifier of validators,
 /// slots_count is a count of slots owned by specific validator.
 pub fn select_validators_slots(
-    stakers: StakersGroup,
+    mut stakers: StakersGroup,
     random: pbc::VRF,
     slot_count: i64,
 ) -> ElectionResult {
     assert!(!stakers.is_empty(), "Have stakes");
     assert!(slot_count > 0);
+    // Sort the source list to get predictable result.
+    // Does nothing if stakers were derived from Escrow.
+    stakers.sort();
     // Using BTreeMap to keep order.
     let mut validators = BTreeMap::new();
 

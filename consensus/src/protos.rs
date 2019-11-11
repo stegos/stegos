@@ -248,6 +248,7 @@ mod tests {
         let difficulty = 100500;
         let block_reward = 0;
         let activity_map = BitVec::new();
+        let validators = vec![(npkey.clone(), 100500i64)];
         let block = MacroBlock::empty(
             previous,
             epoch,
@@ -258,6 +259,7 @@ mod tests {
             timestamp,
             block_reward,
             activity_map,
+            validators,
         );
         // Transactions.
         let (tx, _inputs, _outputs) =

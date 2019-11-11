@@ -49,8 +49,6 @@ pub const PAYMENT_DATA_LEN: usize = PAYMENT_PAYLOAD_LEN - 4 - 32 - 32 - 8 - 64; 
 /// UTXO errors.
 #[derive(Debug, Fail)]
 pub enum OutputError {
-    #[fail(display = "Invalid stake: utxo={}", _0)]
-    InvalidStake(Hash),
     #[fail(display = "Invalid bulletproof: utxo={}", _0)]
     InvalidBulletProof(Hash),
     #[fail(
@@ -66,8 +64,8 @@ pub enum OutputError {
     UnsupportedDataType(Hash, u8),
     #[fail(display = "Trailing garbage in payload: utxo={}", _0)]
     TrailingGarbage(Hash),
-    #[fail(display = "Negative amount: utxo={}, amount={}", _0, _1)]
-    NegativeAmount(Hash, i64),
+    #[fail(display = "Invalid amount: utxo={}, amount={}", _0, _1)]
+    InvalidAmount(Hash, i64),
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
     #[fail(
@@ -161,6 +159,33 @@ pub enum Output {
     PaymentOutput(PaymentOutput),
     PublicPaymentOutput(PublicPaymentOutput),
     StakeOutput(StakeOutput),
+}
+
+/// PaymentOutput canary for the light nodes.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PaymentCanary {
+    pub ag: Pt,
+    pub canary: [u8; PAYMENT_PAYLOAD_MAGIC.len()],
+}
+
+/// PublicPaymentOutput canary for the light nodes.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PublicPaymentCanary {
+    pub recipient: PublicKey,
+}
+
+/// StakeOutput canary  canary for the light nodes..
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct StakeCanary {
+    pub recipient: PublicKey,
+}
+
+/// Output canary for light nodes.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub enum Canary {
+    PaymentCanary(PaymentCanary),
+    PublicPaymentCanary(PublicPaymentCanary),
+    StakeCanary(StakeCanary),
 }
 
 /// Cloak recipient's public key.
@@ -278,7 +303,7 @@ impl PaymentPayload {
         let mut pos: usize = 0;
 
         // Magic.
-        payload[pos..pos + 4].copy_from_slice(&PAYMENT_PAYLOAD_MAGIC);
+        payload[pos..pos + PAYMENT_PAYLOAD_MAGIC.len()].copy_from_slice(&PAYMENT_PAYLOAD_MAGIC);
         pos += PAYMENT_PAYLOAD_MAGIC.len();
 
         // Gamma.
@@ -376,9 +401,9 @@ impl PaymentPayload {
         let mut pos: usize = 0;
 
         // Magic.
-        let mut magic: [u8; 4] = [0u8; 4];
-        magic.copy_from_slice(&payload[pos..pos + 4]);
-        pos += 4;
+        let mut magic = [0u8; PAYMENT_PAYLOAD_MAGIC.len()];
+        magic.copy_from_slice(&payload[pos..pos + PAYMENT_PAYLOAD_MAGIC.len()]);
+        pos += PAYMENT_PAYLOAD_MAGIC.len();
         if magic != PAYMENT_PAYLOAD_MAGIC {
             // Invalid payload or invalid secret key supplied.
             return Err(OutputError::PayloadDecryptionError(output_hash).into());
@@ -402,7 +427,7 @@ impl PaymentPayload {
         pos += amount_bytes.len();
         let amount: i64 = i64::from_le(unsafe { transmute(amount_bytes) });
         if amount < 0 {
-            return Err(OutputError::NegativeAmount(output_hash, amount).into());
+            return Err(OutputError::InvalidAmount(output_hash, amount).into());
         }
 
         // Sender signature
@@ -580,6 +605,16 @@ impl PaymentOutput {
 
         Ok(payload.amount)
     }
+
+    /// Returns canary for the light nodes.
+    pub fn canary(&self) -> PaymentCanary {
+        let mut canary = [0u8; PAYMENT_PAYLOAD_MAGIC.len()];
+        canary.copy_from_slice(&self.payload[0..PAYMENT_PAYLOAD_MAGIC.len()]);
+        PaymentCanary {
+            ag: self.ag,
+            canary,
+        }
+    }
 }
 
 impl PublicPaymentOutput {
@@ -611,7 +646,7 @@ impl PublicPaymentOutput {
     pub fn validate(&self) -> Result<(), BlockchainError> {
         if self.amount <= 0 {
             let h = Hash::digest(self);
-            return Err(OutputError::InvalidStake(h).into());
+            return Err(OutputError::InvalidAmount(h, self.amount).into());
         }
         Ok(())
     }
@@ -619,6 +654,13 @@ impl PublicPaymentOutput {
     /// Returns Pedersen commitment.
     pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
+    }
+
+    /// Returns canary for the light nodes.
+    pub fn canary(&self) -> PublicPaymentCanary {
+        PublicPaymentCanary {
+            recipient: self.recipient,
+        }
     }
 }
 
@@ -653,7 +695,7 @@ impl StakeOutput {
     pub fn validate(&self) -> Result<(), BlockchainError> {
         let output_hash = Hash::digest(self);
         if self.amount <= 0 {
-            return Err(OutputError::InvalidStake(output_hash).into());
+            return Err(OutputError::InvalidAmount(output_hash, self.amount).into());
         }
 
         // Validate BLS signature of validator_pkey
@@ -666,6 +708,13 @@ impl StakeOutput {
     /// Returns Pedersen commitment.
     pub fn pedersen_commitment(&self) -> Result<Pt, CryptoError> {
         Ok(fee_a(self.amount))
+    }
+
+    /// Returns canary for the light nodes.
+    pub fn canary(&self) -> PublicPaymentCanary {
+        PublicPaymentCanary {
+            recipient: self.recipient,
+        }
     }
 }
 
@@ -720,6 +769,15 @@ impl Output {
             Output::PaymentOutput(o) => o.locked_timestamp.clone(),
             Output::PublicPaymentOutput(o) => o.locked_timestamp.clone(),
             Output::StakeOutput(_) => None,
+        }
+    }
+
+    /// Returns canary for the light nodes.
+    pub fn canary(&self) -> Canary {
+        match self {
+            Output::PaymentOutput(o) => o.canary().into(),
+            Output::PublicPaymentOutput(o) => o.canary().into(),
+            Output::StakeOutput(o) => o.canary().into(),
         }
     }
 }
@@ -787,6 +845,82 @@ impl Hashable for Box<Output> {
     fn hash(&self, state: &mut Hasher) {
         let output = self.as_ref();
         output.hash(state)
+    }
+}
+
+impl PaymentCanary {
+    pub fn is_my(&self, skey: &SecretKey) -> bool {
+        let canary: Vec<u8> =
+            match aes_decrypt(self.ag, &self.canary[0..PAYMENT_PAYLOAD_MAGIC.len()], skey) {
+                Ok(canary) => canary,
+                Err(_err) => return false,
+            };
+        assert_eq!(canary.len(), self.canary.len());
+        let mut magic = [0u8; PAYMENT_PAYLOAD_MAGIC.len()];
+        magic.copy_from_slice(&canary[0..PAYMENT_PAYLOAD_MAGIC.len()]);
+        (magic == PAYMENT_PAYLOAD_MAGIC)
+    }
+}
+
+impl PublicPaymentCanary {
+    pub fn is_my(&self, pkey: &PublicKey) -> bool {
+        &self.recipient == pkey
+    }
+}
+
+impl StakeCanary {
+    pub fn is_my(&self, pkey: &PublicKey) -> bool {
+        &self.recipient == pkey
+    }
+}
+
+impl From<PaymentCanary> for Canary {
+    fn from(canary: PaymentCanary) -> Canary {
+        Canary::PaymentCanary(canary)
+    }
+}
+
+impl From<StakeCanary> for Canary {
+    fn from(canary: StakeCanary) -> Canary {
+        Canary::StakeCanary(canary)
+    }
+}
+
+impl From<PublicPaymentCanary> for Canary {
+    fn from(canary: PublicPaymentCanary) -> Canary {
+        Canary::PublicPaymentCanary(canary)
+    }
+}
+
+impl Hashable for PaymentCanary {
+    fn hash(&self, state: &mut Hasher) {
+        "Payment".hash(state);
+        self.ag.hash(state);
+        self.canary.hash(state);
+    }
+}
+
+impl Hashable for PublicPaymentCanary {
+    fn hash(&self, state: &mut Hasher) {
+        "PublicPayment".hash(state);
+        self.recipient.hash(state);
+    }
+}
+
+impl Hashable for StakeCanary {
+    fn hash(&self, state: &mut Hasher) {
+        "Stake".hash(state);
+        self.recipient.hash(state);
+    }
+}
+
+impl Hashable for Canary {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            Canary::PaymentCanary(payment) => payment.hash(state),
+            Canary::PublicPaymentCanary(payment) => payment.hash(state),
+            Canary::StakeCanary(stake) => stake.hash(state),
+        }
     }
 }
 
@@ -912,7 +1046,7 @@ pub mod tests {
         let (ag, invalid, _rvalue) = aes_encrypt(&invalid, &pkey).expect("keys are valid");
         let e = PaymentPayload::decrypt(output_hash, ag, &invalid, &skey).unwrap_err();
         match e {
-            BlockchainError::OutputError(OutputError::NegativeAmount(_output_hash, amount2)) => {
+            BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, amount2)) => {
                 assert_eq!(amount, amount2)
             }
             _ => unreachable!(),
@@ -951,8 +1085,10 @@ pub mod tests {
         let (skey2, pkey2) = make_random_keys();
 
         let amount: i64 = 100500;
-
-        let (output, gamma) = PaymentOutput::new(&pkey2, amount).expect("encryption successful");
+        let data = PaymentPayloadData::Comment("hello".to_string());
+        let (output, gamma, _rvalue) =
+            PaymentOutput::with_payload(None, &pkey2, amount, data, None)
+                .expect("encryption successful");
         let payload = output
             .decrypt_payload(&skey2)
             .expect("decryption successful");
@@ -965,6 +1101,9 @@ pub mod tests {
             BlockchainError::OutputError(OutputError::PayloadDecryptionError(_output_hash)) => (),
             _ => panic!(),
         };
+
+        assert!(output.canary().is_my(&skey2));
+        assert!(!output.canary().is_my(&skey1));
     }
 
     ///

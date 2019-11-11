@@ -388,7 +388,7 @@ mod test {
             )
             .expect_err("transaction is not valid");
             match e.downcast::<BlockchainError>().expect("proper error") {
-                BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+                BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
                 _ => panic!(),
             }
         }

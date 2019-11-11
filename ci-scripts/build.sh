@@ -219,6 +219,12 @@ install_toolchain() {
         rustup component add rustfmt || true
     fi
 
+    # install sccache for Linux
+    if uname -s | grep -q Linux && ! sccache --version >/dev/null; then
+        echo "Installing sccache"
+        cargo install sccache
+    fi
+
     if uname -s | grep -q Linux && ! cargo-audit --help >/dev/null; then
         echo "Installing cargo-audit"
         cargo install cargo-audit
@@ -365,7 +371,7 @@ do_coverage_push() {
 do_docker_base() {
     if ! docker inspect --type=image stegos/rust:${RUST_TOOLCHAIN} 2>/dev/null 1>/dev/null; then
         echo "Building quay.io/stegos/rust:${RUST_TOOLCHAIN} Docker image"
-        docker build -t quay.io/stegos/rust:${RUST_TOOLCHAIN} $SCRIPT_DIR
+        docker build -t quay.io/stegos/rust:${RUST_TOOLCHAIN} --squash $SCRIPT_DIR
     fi
 }
 

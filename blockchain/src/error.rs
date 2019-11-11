@@ -234,28 +234,78 @@ pub enum BlockError {
     #[fail(display = "Invalid block monetary balance: epoch={}, block={}", _0, _1)]
     InvalidBlockBalance(u64, Hash),
     #[fail(
-        display = "Invalid block input hash: epoch={}, block={}, expected={}, got={}",
+        display = "Invalid inputs_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidBlockInputsHash(u64, Hash, Hash, Hash),
+    InvalidMacroBlockInputsHash(u64, Hash, Hash, Hash),
     #[fail(
-        display = "Invalid block output hash: epoch={}, block={}, expected={}, got={}",
+        display = "Invalid outputs_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidBlockOutputsHash(u64, Hash, Hash, Hash),
+    InvalidMacroBlockOutputsHash(u64, Hash, Hash, Hash),
     #[fail(
-        display = "Invalid block output hash: epoch={}, offset={}, block={}, expected={}, got={}",
+        display = "Invalid canaries_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidMacroBlockCanariesHash(u64, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid inputs_len in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidMacroBlockInputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Invalid outputs_len in a macro block: epoch={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3
+    )]
+    InvalidMacroBlockOutputsLen(u64, Hash, usize, usize),
+    #[fail(
+        display = "Invalid transactions_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidTransactionsRangeHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroBlockTransactionsHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid inputs_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockInputsHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid outputs_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockOutputsHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid canaries_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockCanariesHash(u64, u32, Hash, Hash, Hash),
+    #[fail(
+        display = "Invalid transactions_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockTransactionsLen(u64, u32, Hash, usize, usize),
+    #[fail(
+        display = "Invalid inputs_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockInputsLen(u64, u32, Hash, usize, usize),
+    #[fail(
+        display = "Invalid outputs_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockOutputsLen(u64, u32, Hash, usize, usize),
+    #[fail(
+        display = "Invalid canaries_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
+        _0, _1, _2, _3, _4
+    )]
+    InvalidMicroBlockCanariesLen(u64, u32, Hash, usize, usize),
     #[fail(
         display = "Missing block input: epoch={}, block={}, utxo={}",
-        _0, _1, _1
+        _0, _1, _2
     )]
     MissingBlockInput(u64, Hash, Hash),
     #[fail(
         display = "Duplicate block input: epoch={}, block={}, utxo={}",
-        _0, _1, _1
+        _0, _1, _2
     )]
     DuplicateBlockInput(u64, Hash, Hash),
     #[fail(
@@ -373,26 +423,6 @@ pub enum BlockError {
         _0, _1, _2, _3
     )]
     OutOfSyncViewChange(u64, Hash, u32, u32),
-    #[fail(
-        display = "Invalid number of inputs in a macro block: epoch={}, block={}, expected={}, got={}",
-        _0, _1, _2, _3
-    )]
-    InvalidInputsLen(u64, Hash, usize, usize),
-    #[fail(
-        display = "Invalid number of outputs in a macro block: epoch={}, block={}, expected={}, got={}",
-        _0, _1, _2, _3
-    )]
-    InvalidOutputsLen(u64, Hash, usize, usize),
-    #[fail(
-        display = "Macro block is too large: epoch={}, block={}, got_inputs={}, max_inputs={}",
-        _0, _1, _2, _3
-    )]
-    TooManyInputs(u64, Hash, usize, usize),
-    #[fail(
-        display = "Macro block is too large: epoch={}, block={}, got_outputs={}, max_outputs={}",
-        _0, _1, _2, _3
-    )]
-    TooManyOutputs(u64, Hash, usize, usize),
 }
 
 #[derive(Debug, Fail)]

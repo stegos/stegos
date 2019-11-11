@@ -1144,6 +1144,9 @@ impl NodeService {
         self.on_facilitator_changed();
         self.on_block_added(block_timestamp, notification.into(), was_synchronized);
 
+        let apply_time = Timestamp::now().duration_since(timestamp).as_secs_f64();
+        metrics::MACRO_BLOCK_APPLY_TIME.set(apply_time);
+
         Ok(())
     }
 

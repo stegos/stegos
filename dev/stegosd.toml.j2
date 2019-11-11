@@ -9,6 +9,7 @@ consistency_check = "full"
 endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
 advertised_endpoint = "127.0.0.1:{{ NODE_ID|int + 10054 }}"
 handshake_puzzle_difficulty = 100
+readiness_threshold = 0
 seed_nodes = [
 {%- for k in range(NUM_KEYS|int) %}
 {%- if 1+k|int != NODE_ID|int %}

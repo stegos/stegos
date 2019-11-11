@@ -1,34 +1,21 @@
 #!/bin/sh
 
+TOTAL_NODES=7
+CONSENSUS_NODES=4
+
 set -e
-export NUM_KEYS=${1:-4}
 
-export CHAIN_NAME=$2
-[[ -z $CHAIN_NAME ]] && export CHAIN_NAME="dev"
-
-# Remove old files
-rm -f stegos*.pkey stegos*.skey password*.txt genesis*.bin
-
-# Write passphrase
-for i in $(seq -f "%02g" 1 $NUM_KEYS); do
-    echo "dev$i" > password$i.txt
+mkdir -p dev/
+mkdir -p chains/
+for i in $(seq -f "%02g" 1 $TOTAL_NODES); do
+    data_dir=dev/node$i
+    account_dir1=$data_dir/accounts/1
+    mkdir -p $account_dir1
+    echo "dev$i" > $account_dir1/password.txt
+    NODE_ID=$i NUM_KEYS=$TOTAL_NODES j2 --format=env dev/stegosd.toml.j2 >$data_dir/stegosd.toml
 done
 
-# Generate account keys
-cargo run --bin bootstrap -- --keys $NUM_KEYS -n $CHAIN_NAME --difficulty 200
-
-mkdir -p dev
-for i in $(seq -f "%02g" 1 $NUM_KEYS); do
-    data_dir="dev/node$i"
-    mkdir -p ${data_dir}/accounts/1
-    mv -f account$i.pkey ${data_dir}/accounts/1/account.pkey
-    mv -f account$i.skey ${data_dir}/accounts/1/account.skey
-    mv -f network$i.pkey ${data_dir}/network.pkey
-    mv -f network$i.skey ${data_dir}/network.skey
-    rm password$i.txt
-    NODE_ID=$i j2 --format=env dev/stegosd.toml.j2 >dev/node$i/stegosd.toml
-done
-
-# Genesis block
-mkdir -p chains/dev/
-mv genesis.bin chains/dev/
+# Generate keys for $TOTAL_NODES nodes, but only $CONSENSUS_NODES in genesis.
+cargo run --bin bootstrap -- --keys $TOTAL_NODES -n dev --difficulty 200 --reuse
+# Overwrite $CONSENSUS_NODES
+cargo run --bin bootstrap -- --keys $CONSENSUS_NODES -n dev --difficulty 200 --reuse

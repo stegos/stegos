@@ -25,7 +25,7 @@ use log::*;
 use simple_logger;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
@@ -114,6 +114,11 @@ fn main() {
                 .help("Difficulty of VDF")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("reuse")
+                .long("reuse")
+                .help("Re-use existing keys"),
+        )
         .get_matches();
 
     let keys = if let Some(keys) = args.value_of("keys") {
@@ -176,6 +181,7 @@ fn main() {
     let difficulty = args.value_of("difficulty").unwrap().parse::<u64>().unwrap();
 
     let chain = args.value_of("chain").unwrap_or("dev");
+    let reuse = args.is_present("reuse");
 
     info!("Generating genesis for chain: {} ...", chain);
 
@@ -191,33 +197,59 @@ fn main() {
     )>::new();
     let mut payout: i64 = coins;
     for i in 0..keys {
-        let password_file = format!("password{:02}.txt", i + 1);
-        let account_skey_file = format!("account{:02}.skey", i + 1);
-        let account_pkey_file = format!("account{:02}.pkey", i + 1);
-        let network_skey_file = format!("network{:02}.skey", i + 1);
-        let network_pkey_file = format!("network{:02}.pkey", i + 1);
+        let data_dir = PathBuf::from(chain).join(format!("node{:02}", i + 1));
+        let network_skey_file = data_dir.join("network.skey");
+        let network_pkey_file = data_dir.join("network.pkey");
+        let account_dir1 = data_dir.join("accounts").join("1");
+        let password_file = account_dir1.join("password.txt");
+        let account_skey_file = account_dir1.join("account.skey");
+        let account_pkey_file = account_dir1.join("account.pkey");
 
-        let password =
-            read_password_from_file(Path::new(&password_file)).expect("failed to read password");
+        let password = read_password_from_file(&password_file).expect("failed to read password");
 
-        // Generate keys.
-        let (account_skey, account_pkey) = scc::make_random_keys();
-        let (network_skey, network_pkey) = pbc::make_random_keys();
+        let (account_skey, account_pkey) =
+            if reuse && account_skey_file.exists() && account_pkey_file.exists() {
+                // Load existing keys.
+                info!("Reusing account.skey/account.skey for node{:02}", i);
+                keychain::keyfile::load_account_keypair(
+                    &account_skey_file,
+                    &account_pkey_file,
+                    &password,
+                )
+                .expect("failed to read account keys")
+            } else {
+                // Generate new keys.
+                info!("Generating new account.skey/account.skey for node{:02}", i);
+                let (account_skey, account_pkey) = scc::make_random_keys();
 
-        // Write keys.
-        info!("New account key: {}", String::from(&account_pkey));
-        keychain::keyfile::write_account_pkey(Path::new(&account_pkey_file), &account_pkey)
-            .expect("failed to write account pkey");
-        keychain::keyfile::write_account_skey(
-            Path::new(&account_skey_file),
-            &account_skey,
-            &password,
-        )
-        .expect("failed to write account skey");
-        keychain::keyfile::write_network_pkey(Path::new(&network_pkey_file), &network_pkey)
-            .expect("failed to write network pkey");
-        keychain::keyfile::write_network_skey(Path::new(&network_skey_file), &network_skey)
-            .expect("failed to write account skey");
+                // Write keys.
+                info!("New account key: {}", String::from(&account_pkey));
+                keychain::keyfile::write_account_pkey(&account_pkey_file, &account_pkey)
+                    .expect("failed to write account pkey");
+                keychain::keyfile::write_account_skey(&account_skey_file, &account_skey, &password)
+                    .expect("failed to write account skey");
+                (account_skey, account_pkey)
+            };
+
+        let (network_skey, network_pkey) =
+            if reuse && network_skey_file.exists() && network_pkey_file.exists() {
+                // Load existing keys.
+                info!("Reusing network.skey/network.skey for node{:02}", i);
+                keychain::keyfile::load_network_keypair(&network_skey_file, &network_pkey_file)
+                    .expect("failed to read network keys")
+            } else {
+                // Generate new keys.
+                info!("Generating new network.skey/network.skey for node{:02}", i);
+                let (network_skey, network_pkey) = pbc::make_random_keys();
+
+                // Write keys.
+                info!("New network key: {}", &network_pkey);
+                keychain::keyfile::write_network_pkey(&network_pkey_file, &network_pkey)
+                    .expect("failed to write network pkey");
+                keychain::keyfile::write_network_skey(&network_skey_file, &network_skey)
+                    .expect("failed to write network skey");
+                (network_skey, network_pkey)
+            };
 
         keychains.push((
             account_skey,
@@ -296,7 +328,9 @@ fn main() {
 
     // Write the block to the disk.
     let block_data = Block::MacroBlock(block).into_buffer().unwrap();
-    fs::write("genesis.bin", &block_data).expect("failed to write genesis block");
+    let genesis_path = PathBuf::from("chains").join(chain).join("genesis.bin");
+    fs::write(&genesis_path, &block_data).expect("failed to write genesis block");
+    info!("Wrote {:?}", &genesis_path);
 
     info!("Done");
 }

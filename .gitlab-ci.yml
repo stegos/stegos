@@ -40,6 +40,12 @@ test:linux_x64:
 
 test:macos_x64:
   extends: .test
+  variables:
+    RUSTC_WRAPPER: /Users/vagrant/.cargo/bin/sccache
+    SCCACHE_BUCKET: sccache-mac
+  script:
+    - env
+    - ./ci-scripts/build.sh test
   tags:
     - macos
 
@@ -78,6 +84,9 @@ release:linux-x64:
 release:macos-x64:
   extends: .release
   script: ./ci-scripts/build.sh release macos-x64
+  variables:
+    RUSTC_WRAPPER: /Users/vagrant/.cargo/bin/sccache
+    SCCACHE_BUCKET: sccache-mac
   tags:
     - macos
 

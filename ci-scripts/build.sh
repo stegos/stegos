@@ -136,7 +136,7 @@ install_packages_mingw() {
         mingw-w64-x86_64-snappy \
         mingw-w64-x86_64-gcc \
         mingw-w64-x86_64-cmake \
-        m4 make diffutils curl patch tar
+        m4 make diffutils curl patch tar zip
 
     #downgrade clang to specific versions for bindgen
     pacman -U --noconfirm $MINGW_URL-clang-$URL_VER $MINGW_URL-llvm-$URL_VER
@@ -310,6 +310,7 @@ do_release() {
     for bin in stegos stegosd bootstrap; do
         mv target/$target/release/$bin$extension release/$bin-$1.debug$extension
         $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension
+        zip $bin-$1 release/$bin-$1$extension
     done
 
     if test $1 = "win-x64"; then
@@ -317,7 +318,17 @@ do_release() {
             cp /mingw64/bin/lib$lib.dll ./release/
         done
         $strip -S ./release/librocksdb-shared.dll
+
+        for bin in stegos stegosd; do
+            pushd release
+            zip $bin-$1 $bin-$1$extension
+            for lib in gcc_s_seh-1 rocksdb-shared stdc++-6 winpthread-1; do
+                zip $bin-$1 lib$lib.dll
+            done
+            popd
+        done
     fi
+
     ls -lah release
 }
 

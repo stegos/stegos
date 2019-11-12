@@ -222,12 +222,14 @@ install_toolchain() {
     # install sccache for Linux
     if uname -s | grep -q Linux && ! sccache --version >/dev/null; then
         echo "Installing sccache"
+        unset RUSTC_WRAPPER
         cargo install sccache
     fi
 
     # install sccache for MacOS
     if uname -s | grep -q Darwin && ! sccache --version >/dev/null; then
         echo "Installing sccache"
+        unset RUSTC_WRAPPER
         cargo install sccache
     fi
 

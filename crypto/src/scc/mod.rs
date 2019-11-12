@@ -119,7 +119,8 @@ pub struct EncryptedPayload {
 
 #[derive(Debug, Clone)]
 pub struct EncryptedKey {
-    pub payload: EncryptedPayload,
+    pub ag: Pt,
+    pub payload: Vec<u8>,
     pub sig: SchnorrSig,
 }
 
@@ -1101,20 +1102,6 @@ pub fn validate_sig(hmsg: &Hash, sig: &SchnorrSig, pkey: &PublicKey) -> Result<(
 
 use std::iter::repeat;
 
-impl fmt::Debug for EncryptedPayload {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ag={:?} cmsg={}", self.ag, u8v_to_hexstr(&self.ctxt))
-    }
-}
-
-impl Hashable for EncryptedPayload {
-    fn hash(&self, state: &mut Hasher) {
-        "Encr".hash(state);
-        self.ag.hash(state);
-        self.ctxt[..].hash(state);
-    }
-}
-
 fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     // on input, key is 32B. AES128 only needs 16B for keying.
     // So take first 16B of key as keying,
@@ -1125,70 +1112,45 @@ fn aes_encrypt_with_key(msg: &[u8], key: &[u8; 32]) -> Vec<u8> {
     ctxt
 }
 
-pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(EncryptedPayload, Fr), CryptoError> {
-    if *pkey == PublicKey::zero() {
-        // construct an unencrypted payload that anyone can read.
-        Ok((
-            EncryptedPayload {
-                ag: Pt::from(RistrettoPoint::identity()),
-                ctxt: msg.to_vec(),
-            },
-            Fr::zero(),
-        ))
-    } else {
-        // normal encrytion with keying hint
-        let h = Hash::from_vector(msg);
-        let mut state = Hasher::new();
-        "encr_alpha".hash(&mut state);
-        pkey.hash(&mut state);
-        h.hash(&mut state);
-        let hh = state.result();
-        let alpha = Scalar::from_bytes_mod_order(hh.bits());
-        let ppt = RistrettoPoint::from(*pkey);
-        let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
-        let ag = alpha * RistrettoPoint::from(Pt::one());
-        let key = Hash::digest(&Pt::from(ap)).bits();
-        let ctxt = aes_encrypt_with_key(msg, &key);
-        Ok((
-            EncryptedPayload {
-                ag: Pt::from(ag),
-                ctxt,
-            },
-            Fr::from(alpha),
-        ))
-    }
+pub fn aes_encrypt(msg: &[u8], pkey: &PublicKey) -> Result<(Pt, Vec<u8>, Fr), CryptoError> {
+    // normal encrytion with keying hint
+    let h = Hash::from_vector(msg);
+    let mut state = Hasher::new();
+    "encr_alpha".hash(&mut state);
+    pkey.hash(&mut state);
+    h.hash(&mut state);
+    let hh = state.result();
+    let alpha = Scalar::from_bytes_mod_order(hh.bits());
+    let ppt = RistrettoPoint::from(*pkey);
+    let ap = alpha * ppt; // generate key (alpha*s*G = alpha*P), and hint ag = alpha*G
+    let ag = alpha * RistrettoPoint::from(Pt::one());
+    let key = Hash::digest(&Pt::from(ap)).bits();
+    let ag = Pt::from(ag);
+    let payload = aes_encrypt_with_key(msg, &key);
+    let rvalue = Fr::from(alpha);
+    Ok((ag, payload, rvalue))
 }
 
-pub fn aes_decrypt(payload: &EncryptedPayload, skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
-    if payload.ag.is_identity() {
-        // universal unencrypted payload
-        Ok(payload.ctxt.clone())
-    } else {
-        // normal encryption, key = skey * AG
-        let zr = Scalar::from(*skey);
-        let ag = RistrettoPoint::from(payload.ag);
-        let asg = zr * ag; // compute the actual key seed = s*alpha*G
-        let key = Hash::digest(&Pt::from(asg)).bits();
-        let ans = aes_encrypt_with_key(&payload.ctxt, &key);
-        Ok(ans)
-    }
+pub fn aes_decrypt(ag: Pt, payload: &[u8], skey: &SecretKey) -> Result<Vec<u8>, CryptoError> {
+    // normal encryption, key = skey * AG
+    let zr = Scalar::from(*skey);
+    let ag = RistrettoPoint::from(ag);
+    let asg = zr * ag; // compute the actual key seed = s*alpha*G
+    let key = Hash::digest(&Pt::from(asg)).bits();
+    let ans = aes_encrypt_with_key(payload, &key);
+    Ok(ans)
 }
 
 pub fn aes_decrypt_with_rvalue(
-    payload: &EncryptedPayload,
+    payload: &[u8],
     rvalue: &Fr,
     pkey: &PublicKey,
 ) -> Result<Vec<u8>, CryptoError> {
-    if payload.ag.is_identity() {
-        // universal unencrypted payload
-        Ok(payload.ctxt.clone())
-    } else {
-        // normal encryption, key = r * P
-        let asg = Scalar::from(*rvalue) * RistrettoPoint::from(*pkey);
-        let key = Hash::digest(&Pt::from(asg)).bits();
-        let ans = aes_encrypt_with_key(&payload.ctxt, &key);
-        Ok(ans)
-    }
+    // normal encryption, key = r * P
+    let asg = Scalar::from(*rvalue) * RistrettoPoint::from(*pkey);
+    let key = Hash::digest(&Pt::from(asg)).bits();
+    let ans = aes_encrypt_with_key(payload, &key);
+    Ok(ans)
 }
 
 // -----------------------------------------------------------
@@ -1207,6 +1169,8 @@ fn make_securing_keys(seed: &str) -> (SecretKey, PublicKey) {
 
 impl Hashable for EncryptedKey {
     fn hash(&self, state: &mut Hasher) {
+        "Encr".hash(state);
+        self.ag.hash(state);
         self.payload.hash(state);
         self.sig.hash(state);
     }
@@ -1217,12 +1181,14 @@ pub fn encrypt_key(seed: &str, key_to_encrypt: &[u8]) -> EncryptedKey {
     // Returns an AES encrypted key, along with a SchnorrSig on
     // the encrytped key.
     let (skey, pkey) = make_securing_keys(seed);
-    let (payload, _r_value) = aes_encrypt(key_to_encrypt, &pkey).expect("Valid Pubkey");
+    let (ag, payload, _rvalue) = aes_encrypt(key_to_encrypt, &pkey).expect("Valid Pubkey");
     let mut state = Hasher::new();
+    "Encr".hash(&mut state);
+    ag.hash(&mut state);
     payload.hash(&mut state);
     let h = state.result();
     let sig = sign_hash(&h, &skey);
-    EncryptedKey { payload, sig }
+    EncryptedKey { ag, payload, sig }
 }
 
 pub fn decrypt_key(seed: &str, encr_key: &EncryptedKey) -> Result<Vec<u8>, CryptoError> {
@@ -1234,10 +1200,12 @@ pub fn decrypt_key(seed: &str, encr_key: &EncryptedKey) -> Result<Vec<u8>, Crypt
     // signature fails to validate the hash of the encrypted payload.
     let (skey, pkey) = make_securing_keys(seed);
     let mut state = Hasher::new();
+    "Encr".hash(&mut state);
+    encr_key.ag.hash(&mut state);
     encr_key.payload.hash(&mut state);
     let h = state.result();
     validate_sig(&h, &encr_key.sig, &pkey)?;
-    aes_decrypt(&encr_key.payload, &skey)
+    aes_decrypt(encr_key.ag, &encr_key.payload, &skey)
 }
 
 #[cfg(test)]
@@ -1250,7 +1218,7 @@ pub mod tests {
         let (skey, _) = make_deterministic_keys(b"testing");
         let my_cloaking_seed = "diddly";
         let encr_key = encrypt_key(my_cloaking_seed, &skey.to_bytes());
-        assert!(encr_key.payload.ctxt != skey.to_bytes());
+        assert!(encr_key.payload != skey.to_bytes());
         let recovered_skey =
             decrypt_key(my_cloaking_seed, &encr_key).expect("Key couldn't be decrypted");
         assert!(recovered_skey == skey.to_bytes());
@@ -1302,10 +1270,14 @@ pub mod tests {
             "6d9abfe5e75733731b4428422e6a625a0dc7759938b2dbaa0ae9517a0a573bc7"
         );
 
-        let (payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
+        let (ag, payload, _rvalue) = aes_encrypt(b"test", &pkey).unwrap();
+        assert_eq!(
+            Hash::digest(&ag).to_hex(),
+            "a9b723fd9e5f05e88fd08b43e3667ba90aa5281e51b7e29249dbb9105522ed35"
+        );
         assert_eq!(
             Hash::digest(&payload).to_hex(),
-            "ceeb3b8b0868da0af648d459c78cb6eaa8d62848bc2da5b432a5dfc9ed6b0a96"
+            "dbff4d0fac6f8c5e932f2bd04607a6effc55232a24de3467770b97ca5ddf3d6b"
         );
 
         let encrypted_key = encrypt_key("seed", b"key");

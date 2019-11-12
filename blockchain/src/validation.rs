@@ -451,9 +451,9 @@ impl Blockchain {
     }
 
     ///
-    /// Validate base block header.
+    /// A common part of validate_macro_block() and validate_proposed_macro_block().
     ///
-    pub(crate) fn validate_macro_block_header(
+    fn validate_macro_block_basic(
         &self,
         block_hash: &Hash,
         header: &MacroBlockHeader,
@@ -514,31 +514,6 @@ impl Blockchain {
             return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
         }
 
-        // Sic: this function doesn't validate header.validators_range_hash
-        // because it can't be validated without processing the block itself.
-
-        // Check the number of inputs.
-        if header.inputs_len > std::u32::MAX {
-            return Err(BlockError::TooManyInputs(
-                epoch,
-                *block_hash,
-                header.inputs_len as usize,
-                std::u32::MAX as usize,
-            )
-            .into());
-        }
-
-        // Check the number of outputs.
-        if header.outputs_len > std::u32::MAX {
-            return Err(BlockError::TooManyOutputs(
-                epoch,
-                *block_hash,
-                header.outputs_len as usize,
-                std::u32::MAX as usize,
-            )
-            .into());
-        }
-
         Ok(())
     }
 
@@ -576,9 +551,9 @@ impl Blockchain {
         }
 
         //
-        // Validate header.
+        // Basic validation.
         //
-        self.validate_macro_block_header(&block_hash, &block.header, timestamp)?;
+        self.validate_macro_block_basic(&block_hash, &block.header, timestamp)?;
 
         //
         // Validate Awards.
@@ -609,8 +584,8 @@ impl Blockchain {
         //
         // Validate outputs.
         //
-        if block.header.outputs_len != block.outputs.len() as u32 {
-            return Err(BlockError::InvalidInputsLen(
+        if block.header.outputs_len as usize != block.outputs.len() {
+            return Err(BlockError::InvalidMacroBlockInputsLen(
                 epoch,
                 block_hash,
                 block.header.outputs_len as usize,
@@ -621,11 +596,26 @@ impl Blockchain {
         let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
         let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
         if block.header.outputs_range_hash != outputs_range_hash {
-            return Err(BlockError::InvalidBlockInputsHash(
+            return Err(BlockError::InvalidMacroBlockOutputsHash(
                 epoch,
                 block_hash,
                 outputs_range_hash,
                 block.header.outputs_range_hash,
+            )
+            .into());
+        }
+        let canary_hashes: Vec<Hash> = block
+            .outputs
+            .iter()
+            .map(|o| Hash::digest(&o.canary()))
+            .collect();
+        let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
+        if block.header.canaries_range_hash != canaries_range_hash {
+            return Err(BlockError::InvalidMacroBlockCanariesHash(
+                epoch,
+                block_hash,
+                canaries_range_hash,
+                block.header.canaries_range_hash,
             )
             .into());
         }
@@ -634,8 +624,8 @@ impl Blockchain {
         //
         // Validate inputs.
         //
-        if block.header.inputs_len != block.inputs.len() as u32 {
-            return Err(BlockError::InvalidInputsLen(
+        if block.header.inputs_len as usize != block.inputs.len() {
+            return Err(BlockError::InvalidMacroBlockInputsLen(
                 epoch,
                 block_hash,
                 block.header.inputs_len as usize,
@@ -645,7 +635,7 @@ impl Blockchain {
         }
         let inputs_range_hash = Merkle::root_hash_from_array(&block.inputs);
         if block.header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidBlockInputsHash(
+            return Err(BlockError::InvalidMacroBlockInputsHash(
                 epoch,
                 block_hash,
                 inputs_range_hash,
@@ -693,6 +683,14 @@ impl Blockchain {
         //
         block.validate_balance(&inputs)?;
 
+        //
+        // Sic: the following fields can't be validated properly
+        // without processing the block itself:
+        // - validators_len
+        // - validators_range_hash
+        // We blindly rely on consensus here.
+        //
+
         Ok(())
     }
 
@@ -736,7 +734,7 @@ impl Blockchain {
         // Validate base header.
         //
         let current_timestamp = Timestamp::now();
-        self.validate_macro_block_header(block_hash, &header, current_timestamp)?;
+        self.validate_macro_block_basic(block_hash, &header, current_timestamp)?;
 
         // validate award.
         let (activity_map, winner) = self.awards_from_active_epoch(&header.random);
@@ -1083,17 +1081,97 @@ impl Blockchain {
             .verify(&challenge, self.difficulty(), &block.header.solution)
             .map_err(|_| BlockError::InvalidVDFProof(epoch, block_hash))?;
 
-        //
-        // Validate transactions_hash.
-        let transactions_range_hash =
-            MicroBlock::calculate_transactions_range_hash(&block.transactions);
+        // Validate transactions_len.
+        if block.header.transactions_len as usize != block.transactions.len() {
+            return Err(BlockError::InvalidMicroBlockTransactionsLen(
+                epoch,
+                offset,
+                block_hash,
+                block.header.transactions_len as usize,
+                block.transactions.len(),
+            )
+            .into());
+        }
+
+        let (
+            transactions_range_hash,
+            inputs_range_hash,
+            outputs_range_hash,
+            canaries_range_hash,
+            _transaction_hashes,
+            input_hashes,
+            output_hashes,
+            _canary_hashes,
+        ) = MicroBlock::calculate_range_hashes(&block.transactions);
+
+        // Validate transactions_range_hash.
         if block.header.transactions_range_hash != transactions_range_hash {
-            return Err(BlockError::InvalidTransactionsRangeHash(
+            return Err(BlockError::InvalidMicroBlockTransactionsHash(
                 epoch,
                 offset,
                 block_hash,
                 transactions_range_hash,
                 block.header.transactions_range_hash,
+            )
+            .into());
+        }
+
+        // Validate inputs_len.
+        if block.header.inputs_len as usize != input_hashes.len() {
+            return Err(BlockError::InvalidMicroBlockInputsLen(
+                epoch,
+                offset,
+                block_hash,
+                block.header.inputs_len as usize,
+                input_hashes.len(),
+            )
+            .into());
+        }
+
+        // Validate inputs_range_hash.
+        if block.header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidMicroBlockInputsHash(
+                epoch,
+                offset,
+                block_hash,
+                inputs_range_hash,
+                block.header.inputs_range_hash,
+            )
+            .into());
+        }
+
+        // Validate outputs_len.
+        if block.header.outputs_len as usize != output_hashes.len() {
+            return Err(BlockError::InvalidMicroBlockOutputsLen(
+                epoch,
+                offset,
+                block_hash,
+                block.header.outputs_len as usize,
+                output_hashes.len(),
+            )
+            .into());
+        }
+
+        // Validate outputs_range_hash.
+        if block.header.outputs_range_hash != outputs_range_hash {
+            return Err(BlockError::InvalidMicroBlockOutputsHash(
+                epoch,
+                offset,
+                block_hash,
+                outputs_range_hash,
+                block.header.outputs_range_hash,
+            )
+            .into());
+        }
+
+        // Validate canaries_range_hash.
+        if block.header.canaries_range_hash != canaries_range_hash {
+            return Err(BlockError::InvalidMicroBlockCanariesHash(
+                epoch,
+                offset,
+                block_hash,
+                canaries_range_hash,
+                block.header.canaries_range_hash,
             )
             .into());
         }
@@ -1371,12 +1449,20 @@ pub mod tests {
         let fee: i64 = 1;
 
         //
+        // Canaries.
+        //
+        let output = StakeOutput::new(&pkey1, &nskey, &npkey, amount).unwrap();
+        assert!(output.canary().is_my(&pkey1));
+        let (_skey2, pkey2) = scc::make_random_keys();
+        assert!(!output.canary().is_my(&pkey2));
+
+        //
         // Invalid amount.
         //
         let mut output = StakeOutput::new(&pkey1, &nskey, &npkey, 100).expect("keys are valid");
         output.amount = 0; // mutate amount.
         match output.validate().unwrap_err() {
-            BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+            BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
             e => panic!("{:?}", e),
         };
 
@@ -1458,6 +1544,32 @@ pub mod tests {
             }
             e => panic!("{:?}", e),
         }
+    }
+
+    ///
+    /// Tests validation of PublicPaymentOutput
+    #[test]
+    fn public_payment() {
+        let (_skey, pkey) = scc::make_random_keys();
+        let amount = 100;
+
+        //
+        // Canaries.
+        //
+        let output = PublicPaymentOutput::new(&pkey, amount);
+        assert!(output.canary().is_my(&pkey));
+        let (_skey2, pkey2) = scc::make_random_keys();
+        assert!(!output.canary().is_my(&pkey2));
+
+        //
+        // Invalid amount.
+        //
+        let mut output = PublicPaymentOutput::new(&pkey, amount);
+        output.amount = 0; // mutate amount.
+        match output.validate().unwrap_err() {
+            BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
+            e => panic!("{:?}", e),
+        };
     }
 
     #[test]
@@ -1763,7 +1875,7 @@ pub mod tests {
                 outputs,
             );
             match block.validate_balance(&inputs).unwrap_err() {
-                BlockchainError::OutputError(OutputError::InvalidStake(_output_hash)) => {}
+                BlockchainError::OutputError(OutputError::InvalidAmount(_output_hash, _)) => {}
                 e => panic!("{}", e),
             };
         }

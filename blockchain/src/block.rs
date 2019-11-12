@@ -77,8 +77,26 @@ pub struct MicroBlockHeader {
     /// UNIX timestamp of block creation.
     pub timestamp: Timestamp,
 
+    /// The number of transactions in this block.
+    pub transactions_len: u32,
+
     /// Merklish root of all transactions.
     pub transactions_range_hash: Hash,
+
+    /// The total number of inputs in all transactions in this block.
+    pub inputs_len: u32,
+
+    /// Merklish root of all input hashes.
+    pub inputs_range_hash: Hash,
+
+    /// The total number of outputs in all transactions in this block.
+    pub outputs_len: u32,
+
+    /// Merklish root of all output hashes.
+    pub outputs_range_hash: Hash,
+
+    /// Merklish root of all canary canaries.
+    pub canaries_range_hash: Hash,
 }
 
 /// Micro Block.
@@ -111,7 +129,13 @@ impl Hashable for MicroBlockHeader {
         self.random.hash(state);
         self.solution.hash(state);
         self.timestamp.hash(state);
+        self.transactions_len.hash(state);
         self.transactions_range_hash.hash(state);
+        self.inputs_len.hash(state);
+        self.inputs_range_hash.hash(state);
+        self.outputs_len.hash(state);
+        self.outputs_range_hash.hash(state);
+        self.canaries_range_hash.hash(state);
     }
 }
 
@@ -128,7 +152,24 @@ impl MicroBlock {
         timestamp: Timestamp,
         transactions: Vec<Transaction>,
     ) -> MicroBlock {
-        let transactions_range_hash: Hash = Self::calculate_transactions_range_hash(&transactions);
+        assert!(transactions.len() <= std::u32::MAX as usize);
+        let (
+            transactions_range_hash,
+            inputs_range_hash,
+            outputs_range_hash,
+            canaries_range_hash,
+            transaction_hashes,
+            input_hashes,
+            output_hashes,
+            canary_hashes,
+        ) = Self::calculate_range_hashes(&transactions);
+        assert_eq!(transaction_hashes.len(), transactions.len());
+        assert!(input_hashes.len() <= std::u32::MAX as usize);
+        assert!(output_hashes.len() <= std::u32::MAX as usize);
+        assert_eq!(output_hashes.len(), canary_hashes.len());
+        let transactions_len = transactions.len() as u32;
+        let inputs_len = input_hashes.len() as u32;
+        let outputs_len = output_hashes.len() as u32;
         let header = MicroBlockHeader {
             version: VERSION,
             previous,
@@ -140,9 +181,14 @@ impl MicroBlock {
             random,
             solution,
             timestamp,
+            transactions_len,
             transactions_range_hash,
+            inputs_len,
+            inputs_range_hash,
+            outputs_len,
+            outputs_range_hash,
+            canaries_range_hash,
         };
-
         let sig = pbc::Signature::zero();
         MicroBlock {
             header,
@@ -185,17 +231,45 @@ impl MicroBlock {
         self.sig = sig;
     }
 
-    pub fn calculate_transactions_range_hash(transactions: &[Transaction]) -> Hash {
-        let tx_hashes: Vec<Hash> = transactions
-            .iter()
-            .map(|tx| {
-                let mut hasher = Hasher::new();
-                tx.fullhash(&mut hasher);
-                hasher.result()
-            })
-            .collect();
-        let transactions_tree = Merkle::from_array(&tx_hashes);
-        transactions_tree.roothash().clone()
+    pub(crate) fn calculate_range_hashes(
+        transactions: &[Transaction],
+    ) -> (
+        Hash,
+        Hash,
+        Hash,
+        Hash,
+        Vec<Hash>,
+        Vec<Hash>,
+        Vec<Hash>,
+        Vec<Hash>,
+    ) {
+        let mut transaction_hashes = Vec::with_capacity(transactions.len());
+        let mut input_hashes = Vec::with_capacity(2 * transactions.len());
+        let mut output_hashes = Vec::with_capacity(2 * transactions.len());
+        let mut canary_hashes = Vec::with_capacity(2 * transactions.len());
+        for tx in transactions {
+            let mut hasher = Hasher::new();
+            tx.fullhash(&mut hasher);
+            transaction_hashes.push(hasher.result());
+            input_hashes.extend(tx.txins().iter().cloned());
+            output_hashes.extend(tx.txouts().iter().map(Hash::digest));
+            canary_hashes.extend(tx.txouts().iter().map(|o| Hash::digest(&o.canary())));
+        }
+        assert_eq!(output_hashes.len(), canary_hashes.len());
+        let transactions_range_hash = Merkle::root_hash_from_array(&transaction_hashes);
+        let inputs_range_hash = Merkle::root_hash_from_array(&input_hashes);
+        let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
+        let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
+        (
+            transactions_range_hash,
+            inputs_range_hash,
+            outputs_range_hash,
+            canaries_range_hash,
+            transaction_hashes,
+            input_hashes,
+            output_hashes,
+            canary_hashes,
+        )
     }
 }
 
@@ -250,20 +324,26 @@ pub struct MacroBlockHeader {
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub activity_map: BitVec,
 
+    /// The number of validators for the next epoch.
+    pub validators_len: u32,
+
     /// Merklish root of validators for the next epoch (pkey, slots).
     pub validators_range_hash: Hash,
-    /// The number of entries in validators_range_hash.
-    pub validators_len: u32,
+
+    /// The number of inputs in this block.
+    pub inputs_len: u32,
 
     /// Merklish root of all input hashes.
     pub inputs_range_hash: Hash,
-    /// The number of inputs in Merkle Tree to prevent potential attacks.
-    pub inputs_len: u32,
+
+    /// The number of outputs in this block.
+    pub outputs_len: u32,
 
     /// Merklish root of all output hashes.
     pub outputs_range_hash: Hash,
-    /// The number of outputs in Merkle Tree to prevent potential attacks.
-    pub outputs_len: u32,
+
+    /// Merklish root of all canary hashes.
+    pub canaries_range_hash: Hash,
 }
 
 impl Hashable for MacroBlockHeader {
@@ -283,12 +363,13 @@ impl Hashable for MacroBlockHeader {
         for val in self.activity_map.iter() {
             val.hash(state);
         }
-        self.validators_range_hash.hash(state);
         self.validators_len.hash(state);
-        self.inputs_range_hash.hash(state);
+        self.validators_range_hash.hash(state);
         self.inputs_len.hash(state);
-        self.outputs_range_hash.hash(state);
+        self.inputs_range_hash.hash(state);
         self.outputs_len.hash(state);
+        self.outputs_range_hash.hash(state);
+        self.canaries_range_hash.hash(state);
     }
 }
 
@@ -455,6 +536,10 @@ impl MacroBlock {
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
         let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
 
+        // Calculate canaries_range_hash.
+        let canary_hashes: Vec<Hash> = outputs.iter().map(|o| Hash::digest(&o.canary())).collect();
+        let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
+
         // Create header
         let header = MacroBlockHeader {
             version: VERSION,
@@ -468,12 +553,13 @@ impl MacroBlock {
             block_reward,
             gamma,
             activity_map,
-            validators_range_hash,
             validators_len,
-            inputs_range_hash,
+            validators_range_hash,
             inputs_len,
-            outputs_range_hash,
+            inputs_range_hash,
             outputs_len,
+            outputs_range_hash,
+            canaries_range_hash,
         };
 
         // Create the block.

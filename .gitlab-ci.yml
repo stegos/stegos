@@ -10,7 +10,7 @@ cache:
 
 # Running fast-checks to notice an author that his pull-request fails our standards.
 # This checks should not produce any artifacts
-fast_checks:
+.fast_checks:
   stage: fast_checks
   allow_failure: true
   cache: {}
@@ -32,6 +32,9 @@ test:linux_x64:
   variables:
     RUSTC_WRAPPER: /root/.cargo/bin/sccache
   image: quay.io/stegos/rust:nightly-2019-10-30
+  script:
+    - env
+    - ./ci-scripts/build.sh test
   tags:
     - linux
 

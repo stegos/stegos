@@ -224,6 +224,7 @@ install_toolchain() {
         echo "Installing sccache"
         unset RUSTC_WRAPPER
         cargo install sccache
+        export RUSTC_WRAPPER=$HOME/.cargo/bin/sccache
     fi
 
     # install sccache for MacOS
@@ -231,6 +232,7 @@ install_toolchain() {
         echo "Installing sccache"
         unset RUSTC_WRAPPER
         cargo install sccache
+        export RUSTC_WRAPPER=$HOME/.cargo/bin/sccache
     fi
 
     if uname -s | grep -q Linux && ! cargo-audit --help >/dev/null; then

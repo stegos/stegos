@@ -68,7 +68,7 @@ impl Default for ChainConfig {
             max_slot_count: 1000,
             min_stake_amount: 50_000 * STG,
             micro_blocks_in_epoch,
-            stake_epochs: 3,
+            stake_epochs: 10,
             awards_difficulty: 10, // 10 bits = mean(2^10 epochs) ~ 5 days.
             block_reward: 24 * STG,
             service_award_per_epoch: 12 * STG * (micro_blocks_in_epoch as i64 + 1), // 12 STG per block

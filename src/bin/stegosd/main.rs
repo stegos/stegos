@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
 use stegos_api::{load_or_create_api_token, WebSocketServer};
-use stegos_blockchain::{Block, Blockchain, ConsistencyCheck, MacroBlock, Timestamp};
+use stegos_blockchain::{Block, Blockchain, ChainConfig, ConsistencyCheck, MacroBlock, Timestamp};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_keychain::{self as keychain, KeyError};
@@ -168,11 +168,22 @@ fn load_logger_configuration(
     Ok(log4rs::init_config(config)?)
 }
 
-fn initialize_genesis(cfg: &config::Config) -> Result<MacroBlock, Error> {
-    let genesis: &[u8] = match cfg.general.chain.as_ref() {
-        "dev" => include_bytes!("../../../chains/dev/genesis.bin"),
-        "testnet" => include_bytes!("../../../chains/testnet/genesis.bin"),
-        "devnet" => include_bytes!("../../../chains/devnet/genesis.bin"),
+fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error> {
+    let (genesis, chain_cfg): (&[u8], ChainConfig) = match chain {
+        "dev" => (
+            include_bytes!("../../../chains/dev/genesis.bin"),
+            ChainConfig {
+                awards_difficulty: 3,
+                stake_epochs: 1,
+                ..Default::default()
+            },
+        ),
+        "testnet" => (
+            include_bytes!("../../../chains/testnet/genesis.bin"),
+            ChainConfig {
+                ..Default::default()
+            },
+        ),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));
         }
@@ -180,8 +191,8 @@ fn initialize_genesis(cfg: &config::Config) -> Result<MacroBlock, Error> {
     let genesis = Block::from_buffer(genesis).expect("Invalid genesis");
     let genesis = genesis.unwrap_macro();
     let hash = Hash::digest(&genesis);
-    info!("Using '{}' chain, genesis={}", cfg.general.chain, hash);
-    Ok(genesis)
+    info!("Using '{}' chain, genesis={}", chain, hash);
+    Ok((genesis, chain_cfg))
 }
 
 fn report_metrics(_req: Request<Body>) -> Response<Body> {
@@ -343,35 +354,15 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
         })?;
     }
 
-    // Disable [chain] and [node] sections for mainnet and testnet.
-    let is_prod = cfg.general.chain == "mainnet";
-    if is_prod && cfg.chain != Default::default() {
-        return Err(format_err!(
-            "Can't override [chain] options for {}",
-            cfg.general.chain
-        ));
-    }
-    if is_prod && cfg.node != Default::default() {
+    // Disable [node] sections.
+    if cfg.general.chain == "mainnet" && cfg.node != Default::default() {
         return Err(format_err!(
             "Can't override [node] options for {}",
             cfg.general.chain
         ));
     }
 
-    if !is_prod && cfg.chain == Default::default() {
-        // Update awards difficulty for devnet and dev.
-        cfg.chain.awards_difficulty = 3;
-        debug!(
-            "Setting service awards difficulty to {}",
-            cfg.chain.awards_difficulty
-        );
-        // Update awards difficulty for devnet and dev.
-        cfg.chain.min_stake_amount = 1_000 * 1_000_000; // 1k STG
-        debug!(
-            "Setting minimal stake for validation to {}",
-            cfg.chain.min_stake_amount
-        );
-
+    if cfg.general.chain != "mainnet" {
         enable_debug();
     }
 
@@ -595,11 +586,11 @@ fn run() -> Result<(), Error> {
     }
 
     // Initialize blockchain
-    let genesis = initialize_genesis(&cfg)?;
+    let (genesis, chain_cfg) = initialize_chain(&cfg.general.chain)?;
     let timestamp = Timestamp::now();
 
     let chain = Blockchain::new(
-        cfg.chain.clone(),
+        chain_cfg.clone(),
         &chain_dir,
         cfg.general.consistency_check,
         genesis,
@@ -627,7 +618,7 @@ fn run() -> Result<(), Error> {
         network.clone(),
         node.clone(),
         rt.executor(),
-        cfg.chain.stake_epochs,
+        chain_cfg.stake_epochs,
         cfg.node.max_inputs_in_tx,
         epoch,
     )?;
@@ -696,16 +687,12 @@ mod tests {
     #[ignore]
     fn is_testnet_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
-        let mut config = config::Config::default();
         let chain = "testnet";
-        config.general.chain = chain.to_string();
-        config.chain.min_stake_amount = 1_000 * 1_000_000;
-        config.chain.awards_difficulty = 3;
-        let genesis = initialize_genesis(&config).expect("testnet looks like unloadable.");
+        let (genesis, chain_cfg) = initialize_chain(chain).expect("testnet looks like unloadable.");
         let timestamp = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         Blockchain::new(
-            config.chain,
+            chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,
@@ -715,36 +702,14 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn is_devnet_loadable() {
-        let _ = simple_logger::init_with_level(log::Level::Debug);
-        let mut config = config::Config::default();
-        let chain = "devnet";
-        config.general.chain = chain.to_string();
-        let genesis = initialize_genesis(&config).expect("devnet looks like unloadable.");
-        let timestamp = Timestamp::now();
-        let chain_dir = TempDir::new("test").unwrap();
-        Blockchain::new(
-            Default::default(),
-            chain_dir.path(),
-            ConsistencyCheck::Full,
-            genesis,
-            timestamp,
-        )
-        .expect("devnet looks like unloadable.");
-    }
-
-    #[test]
     fn is_dev_loadable() {
         let _ = simple_logger::init_with_level(log::Level::Debug);
-        let mut config = config::Config::default();
         let chain = "dev";
-        config.general.chain = chain.to_string();
-        let genesis = initialize_genesis(&config).expect("dev looks like unloadable.");
+        let (genesis, chain_cfg) = initialize_chain(chain).expect("dev looks like unloadable.");
         let timestamp = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         Blockchain::new(
-            Default::default(),
+            chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,

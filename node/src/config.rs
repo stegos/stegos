@@ -62,11 +62,11 @@ impl Default for NodeConfig {
             macro_block_timeout: Duration::from_secs(30),
             sync_timeout: Duration::from_secs(5 * 60), // should >= block_timeout.
             sync_change_timeout: Duration::from_secs(30), // should >= block_timeout.
-            max_inputs_in_tx: 1000,
-            max_outputs_in_tx: 50,
-            max_inputs_in_block: 10000,
+            max_inputs_in_tx: 100,
+            max_outputs_in_tx: 100, // snowball::MAX_UTXOS * txpool::MAX_PARTICIPANTS.
+            max_inputs_in_block: 1000,
             max_outputs_in_block: 1000,
-            max_inputs_in_mempool: 100000,
+            max_inputs_in_mempool: 10000,
             max_outputs_in_mempool: 10000,
             min_payment_fee: 1_000, // 0.001 STG
             min_stake_fee: 0,       // free

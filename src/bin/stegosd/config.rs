@@ -29,7 +29,7 @@ use std::io::ErrorKind;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::result::Result;
-use stegos_blockchain::{ChainConfig, ConsistencyCheck};
+use stegos_blockchain::ConsistencyCheck;
 use stegos_network::NetworkConfig;
 use stegos_node::NodeConfig;
 use toml;
@@ -47,9 +47,6 @@ use toml;
 pub struct Config {
     /// General settings
     pub general: GeneralConfig,
-    /// Chain configuration.
-    #[serde(skip_serializing)]
-    pub chain: ChainConfig,
     /// Node configuration.
     #[serde(skip_serializing)]
     pub node: NodeConfig,
@@ -62,7 +59,6 @@ impl Default for Config {
     fn default() -> Config {
         Config {
             general: Default::default(),
-            chain: Default::default(),
             node: Default::default(),
             network: Default::default(),
         }

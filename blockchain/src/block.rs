@@ -532,6 +532,26 @@ impl Block {
     }
 
     ///
+    /// Unwrap a Micro Block by ref.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block is not Micro Block.
+    ///
+    pub fn unwrap_micro_ref(&self) -> &MicroBlock {
+        match self {
+            Block::MicroBlock(ref micro_block) => micro_block,
+            Block::MacroBlock(ref macro_block) => {
+                panic!(
+                    "Expected a micro block: epoch={}, block={}",
+                    macro_block.header.epoch,
+                    Hash::digest(&macro_block)
+                );
+            }
+        }
+    }
+
+    ///
     /// Unwrap a Micro Block.
     ///
     /// # Panics
@@ -542,6 +562,27 @@ impl Block {
         match self {
             Block::MacroBlock(macro_block) => macro_block,
             Block::MicroBlock(micro_block) => {
+                panic!(
+                    "Expected a micro block: epoch={}, offset={}, block={}",
+                    micro_block.header.epoch,
+                    micro_block.header.offset,
+                    Hash::digest(&micro_block)
+                );
+            }
+        }
+    }
+
+    ///
+    /// Unwrap a Micro Block by ref.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block is not Macro Block.
+    ///
+    pub fn unwrap_macro_ref(&self) -> &MacroBlock {
+        match self {
+            Block::MacroBlock(ref macro_block) => macro_block,
+            Block::MicroBlock(ref micro_block) => {
                 panic!(
                     "Expected a micro block: epoch={}, offset={}, block={}",
                     micro_block.header.epoch,

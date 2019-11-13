@@ -21,6 +21,7 @@
 
 mod config;
 
+use crate::config::GeneralConfig;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
@@ -535,12 +536,22 @@ fn run() -> Result<(), Error> {
 
     // Initialize logger
     let _log = load_logger_configuration(&args, &cfg.general.data_dir, &cfg.general.log_config)?;
-
     // Print welcome message
     info!("{} {}", name, version);
     debug!("Configuration:\n{}", serde_yaml::to_string(&cfg).unwrap());
 
-    let data_dir = cfg.general.data_dir.clone();
+    // Append chain name if dir default.
+    // But keep root_dir for api.token unchanged.
+    let root_dir = cfg.general.data_dir.clone();
+    let mut data_dir = root_dir.clone();
+    if data_dir == GeneralConfig::default().data_dir {
+        data_dir.push(cfg.general.chain.as_str());
+    }
+
+    debug!(
+        "Initialize stegos with data directory = {}",
+        data_dir.to_string_lossy()
+    );
     if !data_dir.exists() {
         fs::create_dir_all(&data_dir)
             .map_err(|e| format_err!("Failed to create {:?}: {}", data_dir, e))?
@@ -555,6 +566,7 @@ fn run() -> Result<(), Error> {
         fs::create_dir(&accounts_dir)
             .map_err(|e| format_err!("Failed to create {:?}: {}", accounts_dir, e))?
     }
+
     stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&cfg.general.chain))
         .expect("Network prefix not initialised.");
 
@@ -626,7 +638,7 @@ fn run() -> Result<(), Error> {
 
     // Start WebSocket API server.
     if cfg.general.api_endpoint != "" {
-        let token_file = data_dir.join("api.token");
+        let token_file = root_dir.join("api.token");
         let api_token = load_or_create_api_token(&token_file)?;
         WebSocketServer::spawn(
             cfg.general.api_endpoint,

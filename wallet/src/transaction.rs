@@ -668,7 +668,8 @@ pub mod tests {
         assert_eq!(tx.txouts.len(), 1);
         match &tx.txouts.first().unwrap() {
             Output::PaymentOutput(o) => {
-                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&pkey, &skey).expect("key is valid");
                 assert_eq!(amount, stake - payment_fee);
             }
             _ => panic!("invalid tx"),
@@ -693,7 +694,8 @@ pub mod tests {
         assert_eq!(tx.txouts.len(), 2);
         match &tx.txouts[0] {
             Output::PaymentOutput(o) => {
-                let PaymentPayload { amount, .. } = o.decrypt_payload(&skey).expect("key is valid");
+                let PaymentPayload { amount, .. } =
+                    o.decrypt_payload(&pkey, &skey).expect("key is valid");
                 assert_eq!(amount, unstake - payment_fee);
             }
             _ => panic!("invalid tx"),

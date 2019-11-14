@@ -393,7 +393,7 @@ impl Snowball {
         // validate each TXIN and get my initial signature keying info
         let utxos = my_txins.iter().map(|(_txin, u)| u.clone()).collect();
         // signing error if we can't open the TXIN UTXO
-        let own_sig = sign_utxos(&utxos, &account_skey);
+        let own_sig = sign_utxos(&utxos, &account_pkey, &account_skey);
 
         // double check our own TXINs
         validate_ownership(&my_txins, &own_sig).expect("invalid keys");
@@ -401,7 +401,9 @@ impl Snowball {
         let mut my_signing_skeyF = Fr::zero();
         let mut txin_gamma_sum = Fr::zero();
         for utxo in utxos.clone() {
-            let payload = utxo.decrypt_payload(&account_skey).expect("invalid keys");
+            let payload = utxo
+                .decrypt_payload(&account_pkey, &account_skey)
+                .expect("invalid keys");
             let (gamma, delta, amount) = (payload.gamma, payload.delta, payload.amount);
             assert_ne!(gamma, Fr::zero());
             amt_in += amount;
@@ -554,7 +556,7 @@ impl Snowball {
             .insert(self.my_participant_id, self.my_txins.clone());
 
         let utxos = self.my_txins.iter().map(|(_txin, u)| u.clone()).collect();
-        let ownsig = sign_utxos(&utxos, &self.account_skey);
+        let ownsig = sign_utxos(&utxos, &self.account_pkey, &self.account_skey);
         let msg_txins: Vec<TXIN> = self.my_txins.iter().map(|(k, _u)| k.clone()).collect();
         let msg = PoolJoin {
             seed: self.my_participant_id.seed,
@@ -2101,13 +2103,13 @@ fn make_session_key(skey: &SecretKey, sid: &Hash) -> (SecretKey, PublicKey) {
     (skey, pkey)
 }
 
-fn sign_utxos(utxos: &Vec<UTXO>, skey: &SecretKey) -> SchnorrSig {
+fn sign_utxos(utxos: &Vec<UTXO>, pkey: &PublicKey, skey: &SecretKey) -> SchnorrSig {
     // sign an (ordered) list of UTXOs to form an ownership signature
     let mut signing_f = Fr::zero();
     let mut state = Hasher::new();
     for utxo in utxos {
         utxo.hash(&mut state);
-        let payload = utxo.decrypt_payload(skey).expect("invalid keys");
+        let payload = utxo.decrypt_payload(pkey, skey).expect("invalid keys");
         let (gamma, delta) = (payload.gamma, payload.delta);
         // decryption can always be performed. But if we don't
         // actually own the UTXO then we get garbage back.

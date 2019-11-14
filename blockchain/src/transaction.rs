@@ -219,6 +219,8 @@ impl PaymentTransaction {
         outputs_gamma: &Fr, // = sum(outputs.gamma)
         fee: i64,
     ) -> Result<Self, Error> {
+        let pkey: PublicKey = skey.clone().into();
+
         //
         // Compute S_eff = N * S_M + \sum{\delta_i * gamma_i},
         // where i in txins
@@ -232,7 +234,7 @@ impl PaymentTransaction {
             eff_skey += Fr::from(*skey);
             match txin {
                 Output::PaymentOutput(o) => {
-                    let payload = o.decrypt_payload(skey)?;
+                    let payload = o.decrypt_payload(&pkey, skey)?;
                     gamma_adj += payload.gamma;
                     eff_skey += payload.delta * payload.gamma;
                 }

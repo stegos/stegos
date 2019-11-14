@@ -1589,7 +1589,7 @@ pub mod tests {
         let decr_err = "Can't decrypt UTXO payload";
         let skeff1: scc::SecretKey = match inp1.clone() {
             Output::PaymentOutput(o) => {
-                let payload = o.decrypt_payload(&skey1).expect(decr_err);
+                let payload = o.decrypt_payload(&pkey1, &skey1).expect(decr_err);
                 assert!(payload.gamma == gamma_i1);
                 let skeff: scc::SecretKey =
                     (Fr::from(skey1.clone()) + payload.gamma * payload.delta).into();
@@ -1600,7 +1600,7 @@ pub mod tests {
 
         let skeff2: scc::SecretKey = match inp2.clone() {
             Output::PaymentOutput(o) => {
-                let payload = o.decrypt_payload(&skey2).expect(decr_err);
+                let payload = o.decrypt_payload(&pkey2, &skey2).expect(decr_err);
                 assert!(payload.gamma == gamma_i2);
                 let skeff: scc::SecretKey =
                     (Fr::from(skey2.clone()) + payload.gamma * payload.delta).into();
@@ -1611,7 +1611,7 @@ pub mod tests {
 
         let skeff3: scc::SecretKey = match inp3.clone() {
             Output::PaymentOutput(o) => {
-                let payload = o.decrypt_payload(&skey3).expect(decr_err);
+                let payload = o.decrypt_payload(&pkey3, &skey3).expect(decr_err);
                 assert!(payload.gamma == gamma_i3);
                 let skeff: scc::SecretKey =
                     (Fr::from(skey3.clone()) + payload.gamma * payload.delta).into();

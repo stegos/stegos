@@ -193,7 +193,10 @@ fn create_tx_with_certificate() {
                     // check that we cant decrypt payment using our secretkeys
 
                     assert!(output
-                        .decrypt_payload(&accounts[0].account_service.account_skey)
+                        .decrypt_payload(
+                            &accounts[0].account_service.account_pkey,
+                            &accounts[0].account_service.account_skey
+                        )
                         .is_err());
                     let amount = output
                         .validate_certificate(

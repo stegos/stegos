@@ -899,7 +899,7 @@ impl UnsealedAccountService {
         match output {
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
-                    o.decrypt_payload(&self.account_skey)
+                    o.decrypt_payload(&self.account_pkey, &self.account_skey)
                 {
                     assert!(amount >= 0);
                     info!(
@@ -1013,8 +1013,9 @@ impl UnsealedAccountService {
         match output {
             OutputValue::Payment(p) => {
                 let o = p.output;
-                let PaymentPayload { amount, data, .. } =
-                    o.decrypt_payload(&self.account_skey).expect("is my utxo");
+                let PaymentPayload { amount, data, .. } = o
+                    .decrypt_payload(&self.account_pkey, &self.account_skey)
+                    .expect("is my utxo");
                 info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
                 match self
                     .database

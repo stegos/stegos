@@ -99,7 +99,7 @@ fn recover_account(
         }
 
         let is_my_utxo = match output {
-            Output::PaymentOutput(o) => o.decrypt_payload(&account_skey).is_ok(),
+            Output::PaymentOutput(o) => o.decrypt_payload(&account_pkey, &account_skey).is_ok(),
             Output::PublicPaymentOutput(o) => &o.recipient == account_pkey,
             Output::StakeOutput(o) => &o.recipient == account_pkey,
         };
@@ -362,7 +362,9 @@ pub fn create_fake_micro_block(
         for (_, OutputRecovery { output, epoch, .. }) in unspent {
             match output {
                 Output::PaymentOutput(ref o) => {
-                    let payload = o.decrypt_payload(&keychain.account_skey).unwrap();
+                    let payload = o
+                        .decrypt_payload(&keychain.account_pkey, &keychain.account_skey)
+                        .unwrap();
                     payment_balance += payload.amount;
                     payments.push(output);
                 }

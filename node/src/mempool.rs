@@ -583,8 +583,9 @@ mod test {
         if let Transaction::CoinbaseTransaction(tx) = &block.transactions[0] {
             // Reward + Fee.
             if let Some(Output::PaymentOutput(o)) = tx.txouts.get(0) {
-                let PaymentPayload { amount, .. } =
-                    o.decrypt_payload(&recipient_skey).expect("keys are valid");
+                let PaymentPayload { amount, .. } = o
+                    .decrypt_payload(&recipient_pkey, &recipient_skey)
+                    .expect("keys are valid");
                 assert_eq!(amount, reward + 6);
             } else {
                 unreachable!();

@@ -322,7 +322,12 @@ fn finalized_slashing_with_service_award() {
                 node.node_service.chain.last_macro_block_hash()
             );
             let block_hash = node.node_service.chain.last_block_hash();
-            let block = node.node_service.chain.macro_block(epoch).unwrap();
+            let block = node
+                .node_service
+                .chain
+                .macro_block(epoch)
+                .unwrap()
+                .into_owned();
             assert_eq!(Hash::digest(&block), block_hash);
             let mut outputs = Vec::new();
             for output in block.outputs {
@@ -445,7 +450,12 @@ fn finalized_slashing_with_service_award_for_auditor() {
                 node.node_service.chain.last_macro_block_hash()
             );
             let block_hash = node.node_service.chain.last_block_hash();
-            let block = node.node_service.chain.macro_block(epoch).unwrap();
+            let block = node
+                .node_service
+                .chain
+                .macro_block(epoch)
+                .unwrap()
+                .into_owned();
             assert_eq!(Hash::digest(&block), block_hash);
             let mut outputs = Vec::new();
             for output in block.outputs {
@@ -533,7 +543,12 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
             node.node_service.chain.last_macro_block_hash()
         );
         let block_hash = node.node_service.chain.last_block_hash();
-        let block = node.node_service.chain.macro_block(epoch).unwrap();
+        let block = node
+            .node_service
+            .chain
+            .macro_block(epoch)
+            .unwrap()
+            .into_owned();
         assert_eq!(Hash::digest(&block), block_hash);
         let mut outputs = Vec::new();
         for output in block.outputs {
@@ -692,7 +707,12 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
             node.node_service.chain.last_macro_block_hash()
         );
         let block_hash = node.node_service.chain.last_block_hash();
-        let block = node.node_service.chain.macro_block(epoch).unwrap();
+        let block = node
+            .node_service
+            .chain
+            .macro_block(epoch)
+            .unwrap()
+            .into_owned();
         assert_eq!(Hash::digest(&block), block_hash);
         let mut outputs = Vec::new();
         for output in block.outputs {

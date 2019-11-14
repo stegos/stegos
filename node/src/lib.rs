@@ -752,7 +752,7 @@ impl NodeService {
         let remote_hash = Hash::digest(&remote);
         let remote_view_change = remote.header.view_change;
         let local = self.chain.micro_block(epoch, offset)?;
-        let local_hash = Hash::digest(&local);
+        let local_hash = Hash::digest(local.as_ref());
 
         // check multiple blocks with same view_change
         if remote.header.view_change == local.header.view_change {
@@ -784,7 +784,7 @@ impl NodeService {
 
             metrics::MICRO_BLOCKS_CHEATS.inc();
 
-            let proof = SlashingProof::new_unchecked(remote.clone(), local);
+            let proof = SlashingProof::new_unchecked(remote.clone(), local.into_owned());
 
             if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
                 sdebug!(self, "Cheater was already detected: cheater={}", leader);
@@ -2165,7 +2165,7 @@ impl NodeService {
             return Err(format_err!("Macro block doesn't exists: epoch={}", epoch));
         }
 
-        let block = self.chain.macro_block(epoch)?;
+        let block = self.chain.macro_block(epoch)?.into_owned();
         let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
         let msg = ExtendedMacroBlock {
             block,
@@ -2187,7 +2187,7 @@ impl NodeService {
                 offset
             ));
         }
-        let block = self.chain.micro_block(epoch, offset)?;
+        let block = self.chain.micro_block(epoch, offset)?.into_owned();
         let msg = ExtendedMicroBlock {
             block,
             transaction_statuses: HashMap::new(),

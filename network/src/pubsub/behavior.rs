@@ -302,15 +302,12 @@ where
                 for message in event.messages {
                     // Use `self.received` to skip the messages that we have already received in the past.
                     // Note that this can false positive.
-                    if self
-                        .received
-                        .notify_insert(message.digest(), ())
-                        .0
-                        .is_some()
-                    {
+                    if self.received.notify_get(&message.digest()).0.is_some() {
                         trace!(target: "stegos_network::pubsub", "LRU cache hit");
                         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                         continue;
+                    } else {
+                        self.received.notify_insert(message.digest(), ());
                     }
                     super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                     trace!(target: "stegos_network::pubsub", "processing message: peer_id={}", propagation_source);

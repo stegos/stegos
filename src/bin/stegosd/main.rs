@@ -185,6 +185,12 @@ fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error> {
                 ..Default::default()
             },
         ),
+        "mainnet" => (
+            include_bytes!("../../../chains/mainnet/genesis.bin"),
+            ChainConfig {
+                ..Default::default()
+            },
+        ),
         chain @ _ => {
             return Err(format_err!("Unknown chain: {}", chain));
         }
@@ -711,6 +717,24 @@ mod tests {
             timestamp,
         )
         .expect("testnet looks like unloadable.");
+    }
+
+    #[test]
+    // #[ignore]
+    fn is_mainnet_loadable() {
+        let _ = simple_logger::init_with_level(log::Level::Debug);
+        let chain = "mainnet";
+        let (genesis, chain_cfg) = initialize_chain(chain).expect("mainnet looks like unloadable.");
+        let timestamp = Timestamp::now();
+        let chain_dir = TempDir::new("test").unwrap();
+        Blockchain::new(
+            chain_cfg,
+            chain_dir.path(),
+            ConsistencyCheck::Full,
+            genesis,
+            timestamp,
+        )
+        .expect("mainnet looks like unloadable.");
     }
 
     #[test]

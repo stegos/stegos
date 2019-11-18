@@ -68,7 +68,7 @@ impl Timestamp {
     ///
     pub fn format_rfc3339(&self) -> String {
         let timestamp: SystemTime = self.clone().into();
-        humantime::format_rfc3339(timestamp).to_string()
+        humantime::format_rfc3339_millis(timestamp).to_string()
     }
 
     /// Parses ISO 8601/RFC 3339 date and time string such as `1996-12-19T16:39:57-08:00Z`,
@@ -211,7 +211,8 @@ mod tests {
 
     #[test]
     fn serde() {
-        let timestamp: Timestamp = 1560850195_123456789u64.into();
-        assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123456789Z")]);
+        // check deserialization with millis precision.
+        let timestamp: Timestamp = 1560850195_123000000u64.into();
+        assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123Z")]);
     }
 }

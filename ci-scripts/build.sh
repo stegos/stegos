@@ -186,7 +186,7 @@ install_android_toolchain() {
         fi
         if test ! -x $bindir/$triplet-rustlinker; then
             echo "Install $triplet-rustlinker"
-            cp -pf $SCRIPT_DIR/$triplet-rustlinker $bindir/
+            cp -pf $SCRIPT_DIR/rustlinker $bindir/$triplet-rustlinker
         fi
         $triplet-gcc --version
     done

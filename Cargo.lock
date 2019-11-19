@@ -1326,7 +1326,7 @@ dependencies = [
 [[package]]
 name = "librocksdb-sys"
 version = "6.2.4"
-source = "git+https://github.com/rust-rocksdb/rust-rocksdb#52ebdb5219b0559e0c0abd5144bbf490c627b90a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bindgen 0.49.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "cc 1.0.47 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2106,11 +2106,11 @@ dependencies = [
 
 [[package]]
 name = "rocksdb"
-version = "0.12.3"
-source = "git+https://github.com/rust-rocksdb/rust-rocksdb#52ebdb5219b0559e0c0abd5144bbf490c627b90a"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "libc 0.2.65 (registry+https://github.com/rust-lang/crates.io-index)",
- "librocksdb-sys 6.2.4 (git+https://github.com/rust-rocksdb/rust-rocksdb)",
+ "librocksdb-sys 6.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -2458,7 +2458,7 @@ dependencies = [
  "rand 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand_core 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rayon 1.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "rocksdb 0.12.3 (git+https://github.com/rust-rocksdb/rust-rocksdb)",
+ "rocksdb 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.41 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2645,7 +2645,7 @@ dependencies = [
  "prometheus 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "protobuf 2.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "rocksdb 0.12.3 (git+https://github.com/rust-rocksdb/rust-rocksdb)",
+ "rocksdb 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_derive 1.0.102 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json 1.0.41 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3596,7 +3596,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum libp2p-secio 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "7ee09e259ceb7633a52fd17f187bedf94e3545b1746487beedbd3a0a07d99817"
 "checksum libp2p-swarm 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "cd55bc9f5f9eac2bb1ff24ca3c8a655810a566ac38c7a6ee1f30aced5a62905b"
 "checksum libp2p-tcp 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "234a7093d05651ab5630db926a4a42ca8978a65bab8c27c2ce2b66b200c76989"
-"checksum librocksdb-sys 6.2.4 (git+https://github.com/rust-rocksdb/rust-rocksdb)" = "<none>"
+"checksum librocksdb-sys 6.2.4 (registry+https://github.com/rust-lang/crates.io-index)" = "0a0785e816e1e11e7599388a492c61ef80ddc2afc91e313e61662cce537809be"
 "checksum libsecp256k1 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)" = "2bd9a7c16c9487e710536b699c962f022266347c94201174aa0a7eb0546051aa"
 "checksum linked-hash-map 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "ae91b68aebc4ddb91978b11a1b02ddd8602a05ec19002801c5666000e05e0f83"
 "checksum lipsum 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)" = "58e4464067d52ca040073c04dfd9185658ec8a32236b857b5e1577f9d19f9d5a"
@@ -3681,7 +3681,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum remove_dir_all 0.5.2 (registry+https://github.com/rust-lang/crates.io-index)" = "4a83fa3702a688b9359eccba92d153ac33fd2e8462f9e0e3fdf155239ea7792e"
 "checksum resolv-conf 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)" = "b263b4aa1b5de9ffc0054a2386f96992058bb6870aab516f8cdeb8a667d56dcb"
 "checksum ring 0.16.9 (registry+https://github.com/rust-lang/crates.io-index)" = "6747f8da1f2b1fabbee1aaa4eb8a11abf9adef0bf58a41cee45db5d59cecdfac"
-"checksum rocksdb 0.12.3 (git+https://github.com/rust-rocksdb/rust-rocksdb)" = "<none>"
+"checksum rocksdb 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)" = "12069b106981c6103d3eab7dd1c86751482d0779a520b7c14954c8b586c1e643"
 "checksum rpassword 4.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = "f072d931f11a96546efd97642e1e75e807345aced86b947f9239102f262d0fcd"
 "checksum rust-argon2 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "4ca4eaef519b494d1f2848fc602d18816fed808a981aedf4f1f00ceb7c9d32cf"
 "checksum rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)" = "f76d05d3993fd5f4af9434e8e436db163a12a9d40e1a58a726f27a01dfd12a2a"

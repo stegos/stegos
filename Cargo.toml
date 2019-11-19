@@ -11,6 +11,10 @@ license = "MIT"
 repository = "https://github.com/stegos/stegos"
 description = "Stegos is a completely private, confidential, and scalable cryptocurrency that's friendly to the environment"
 
+[lib]
+name = "stegos"
+crate-type = ["cdylib"]
+
 [workspace]
 members = [
     "api",
@@ -64,6 +68,7 @@ rpassword = "4.0"
 libc = "0.2"
 atty = "0.2"
 serde_json = "1.0"
+jni = "0.14.0"
 
 [build-dependencies]
 failure = "0.1"

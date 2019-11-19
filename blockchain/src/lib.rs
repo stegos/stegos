@@ -57,3 +57,47 @@ pub use crate::output::*;
 pub use crate::slashing::*;
 pub use crate::timestamp::Timestamp;
 pub use crate::transaction::*;
+
+use failure::{format_err, Error};
+use stegos_serialization::traits::ProtoConvert;
+
+pub fn chain_to_prefix(network: &str) -> &'static str {
+    match network {
+        "mainnet" => "stg",
+        "testnet" => "stt",
+        "devnet" => "str",
+        "dev" => "dev",
+        e => panic!("Unexpected prefix name = {}", e),
+    }
+}
+
+pub fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error> {
+    let (genesis, chain_cfg): (&[u8], ChainConfig) = match chain {
+        "dev" => (
+            include_bytes!("../../chains/dev/genesis.bin"),
+            ChainConfig {
+                awards_difficulty: 3,
+                stake_epochs: 1,
+                ..Default::default()
+            },
+        ),
+        "testnet" => (
+            include_bytes!("../../chains/testnet/genesis.bin"),
+            ChainConfig {
+                ..Default::default()
+            },
+        ),
+        "mainnet" => (
+            include_bytes!("../../chains/mainnet/genesis.bin"),
+            ChainConfig {
+                ..Default::default()
+            },
+        ),
+        chain @ _ => {
+            return Err(format_err!("Unknown chain: {}", chain));
+        }
+    };
+    let genesis = Block::from_buffer(genesis).expect("Invalid genesis");
+    let genesis = genesis.unwrap_macro();
+    Ok((genesis, chain_cfg))
+}

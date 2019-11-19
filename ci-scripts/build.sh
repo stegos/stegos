@@ -205,10 +205,7 @@ install_android_toolchain() {
                 ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-g++
             )
         fi
-        if test ! -x $bindir/$triplet-rustlinker; then
-            echo "Install $triplet-rustlinker"
-            cp -pf $SCRIPT_DIR/rustlinker $bindir/$triplet-rustlinker
-        fi
+        cp -pf $SCRIPT_DIR/rustlinker $bindir/$triplet-rustlinker
         $triplet-gcc --version
     done
 
@@ -299,6 +296,7 @@ do_test() {
 do_release() {
     do_builddep
     extension=""
+    dylib="libstegos.so"
     strip="strip"
     case $1 in
     linux-x64)
@@ -306,18 +304,28 @@ do_release() {
         ;;
     macos-x64)
         target=x86_64-apple-darwin
+        dylib="libstegos.dylib"
         ;;
     win-x64)
         target=x86_64-pc-windows-gnu
         extension=".exe"
+        dylib="stegos.dll"
         ;;
     android-x64)
+        install_android_toolchain
         target=x86_64-linux-android
         strip=x86_64-linux-android-strip
+        # ignore sccache
+        unset CC CXX
+        export CC CXX
         ;;
     android-aarch64)
+        install_android_toolchain
         target=aarch64-linux-android
         strip=aarch64-linux-android-strip
+        # ignore sccache
+        unset CC CXX
+        export CC CXX
         ;;
     *)
         echo 2>&1 "Unknown platform: $0"
@@ -325,7 +333,7 @@ do_release() {
         ;;
     esac
     rustup target add $target
-    cargo build --bins --release --target $target
+    cargo build --bins --lib --release --target $target
     ls -lah target/$target/release
     mkdir -p release
     for bin in stegos stegosd bootstrap; do
@@ -333,6 +341,8 @@ do_release() {
         $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension
         zip $bin-$1 release/$bin-$1$extension
     done
+    mv target/$target/release/$dylib release/$dylib.debug
+    $strip -S release/$dylib.debug -o release/$dylib
 
     if test $1 = "win-x64"; then
         for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do

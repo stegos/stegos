@@ -45,6 +45,16 @@ impl ApiToken {
         gen.fill_bytes(&mut key.0[..]);
         key
     }
+
+    pub fn from_base64(token: &str) -> Result<Self, KeyError> {
+        let token = base64::decode(token).map_err(|e| KeyError::ParseError(String::new(), e))?;
+        if token.len() != API_TOKENSIZE {
+            return Err(KeyError::InvalidKeySize(API_TOKENSIZE, token.len()).into());
+        }
+        let mut token2 = [0u8; API_TOKENSIZE];
+        token2.copy_from_slice(&token);
+        Ok(ApiToken(token2))
+    }
 }
 
 // Encrypts the plaintext with given 32-byte key

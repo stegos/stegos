@@ -87,3 +87,6 @@ opt-level = 2
 debug = 2
 debug-assertions = true
 overflow-checks = false
+
+[patch.crates-io]
+cc = { git = 'https://github.com/stegos/cc-rs.git' }

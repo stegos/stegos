@@ -44,7 +44,7 @@ use update_rate::{RateCounter, RollingRateCounter};
 // How many samples to use for rate calculation
 const PUBSUB_SAMPLES: u64 = 100;
 const METRICS_UPDATE_INTERVAL: Duration = Duration::from_secs(5);
-const LRU_EXPIRE_TIME: Duration = Duration::from_secs(60 * 4 + 30); // 4.5 minutes to allow transaction retransmit
+const LRU_EXPIRE_TIME: Duration = Duration::from_secs(60); // 1 minute to allow transaction retransmit
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
@@ -302,7 +302,7 @@ where
                 for message in event.messages {
                     // Use `self.received` to skip the messages that we have already received in the past.
                     // Note that this can false positive.
-                    if self.received.notify_get(&message.digest()).0.is_some() {
+                    if self.received.contains_key(&message.digest()) {
                         trace!(target: "stegos_network::pubsub", "LRU cache hit");
                         super::metrics::LRU_CACHE_SIZE.set(self.received.len() as i64);
                         continue;

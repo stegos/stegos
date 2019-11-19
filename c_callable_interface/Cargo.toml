@@ -1,0 +1,20 @@
+[package]
+name = "stegoscrypto"
+version = "0.1.0"
+authors = ["David McClain <dbm@refined-audiometrics.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+stegos_crypto = { path = "../crypto/" }
+base64 = "0.10"
+rand = "0.6"
+rust-crypto = "0.2"
+
+[lib]
+name = "stegos_crypto"
+crate-type = ["dylib"]
+
+[workspace]
+members = []

@@ -1,6 +1,6 @@
 [package]
 name = "vdf_field"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 categories = ["cryptography"]
 description = "Stegos - Auxiliary Extensions for Crypto Library"

@@ -1,6 +1,6 @@
 [package]
 name = "stegos_crypto"
-version = "0.2.0"
+version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography"]
@@ -13,7 +13,7 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Crypto Library"
 
 [dependencies]
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }
 bit-vec = "0.6"
 bech32 = "0.7"
 failure = "0.1"
@@ -47,7 +47,7 @@ criterion = "0.2"
 
 [build-dependencies]
 issue-47048-fix = "0.1"
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }
 cc = "1.0"
 
 [[bench]]

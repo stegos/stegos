@@ -1,6 +1,6 @@
 [package]
 name = "stegos_network"
-version = "0.4.0"
+version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "network-programming"]
@@ -13,8 +13,8 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Network Library"
 
 [dependencies]
-stegos_crypto = { version = "0.2.0", path = "../crypto" }
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_crypto = { version = "1.0.0", path = "../crypto" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }
 arrayvec = "0.4"
 bigint = "4.4"
 bs58 = "0.2"
@@ -53,4 +53,4 @@ update_rate = "2.0"
 void = "1.0"
 
 [build-dependencies]
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }

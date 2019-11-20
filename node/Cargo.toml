@@ -1,6 +1,6 @@
 [package]
 name = "stegos_node"
-version = "0.2.0"
+version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "network-programming"]
@@ -13,11 +13,11 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Blockchain Node"
 
 [dependencies]
-stegos_blockchain = { version = "0.2.0", path = "../blockchain" }
-stegos_consensus = { version = "0.2.0", path = "../consensus" }
-stegos_crypto = { version = "0.2.0", path = "../crypto" }
-stegos_network = { version = "0.4.0", path = "../network" }
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_blockchain = { version = "1.0.0", path = "../blockchain" }
+stegos_consensus = { version = "1.0.0", path = "../consensus" }
+stegos_crypto = { version = "1.0.0", path = "../crypto" }
+stegos_network = { version = "1.0.0", path = "../network" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }
 bit-vec = "0.6"
 clap = "2.32"
 failure = "0.1"
@@ -44,4 +44,4 @@ humantime = "1.2"
 humantime-serde = "0.1"
 
 [build-dependencies]
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }

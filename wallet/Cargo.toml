@@ -1,6 +1,6 @@
 [package]
 name = "stegos_wallet"
-version = "0.2.0"
+version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "network-programming"]
@@ -13,12 +13,12 @@ repository = "https://github.com/stegos/stegos"
 description = "Stegos - Wallet"
 
 [dependencies]
-stegos_blockchain = { version = "0.2.0", path = "../blockchain" }
-stegos_crypto = { version = "0.2.0", path = "../crypto" }
-stegos_keychain = { version = "0.2.0", path = "../keychain" }
-stegos_network = { version = "0.4.0", path = "../network" }
-stegos_node = { version = "0.2.0", path = "../node" }
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_blockchain = { version = "1.0.0", path = "../blockchain" }
+stegos_crypto = { version = "1.0.0", path = "../crypto" }
+stegos_keychain = { version = "1.0.0", path = "../keychain" }
+stegos_network = { version = "1.0.0", path = "../network" }
+stegos_node = { version = "1.0.0", path = "../node" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }
 serde = "1.0"
 serde_derive = "1.0"
 failure = "0.1"
@@ -43,4 +43,4 @@ serde_json = "1.0"
 pretty_assertions = "0.6.1"
 
 [build-dependencies]
-stegos_serialization = { version = "0.2.0", path = "../serialization" }
+stegos_serialization = { version = "1.0.0", path = "../serialization" }

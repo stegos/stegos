@@ -322,7 +322,26 @@ impl MulAssign<Fr> for Fr {
 
 impl From<Hash> for Fr {
     fn from(h: Hash) -> Fr {
-        Fr::from(Scalar::from_bytes_mod_order(h.bits()))
+        // right shift Hash, as little-endian value,
+        // until below 2^252
+        //
+        // With this change, 97% of all hashes will
+        // produce an Fr value in the range (2^251, 2^252). 
+        // Whereas, before, a modular wrapping would keep only
+        // about 50% of all hashes in that range.
+        //
+        // Hence we significantly increase the probability of
+        // having many mixing bits in Fr multiplications.
+        let mut bits = h.bits();
+        while (bits[31] & 0xf0) > 0 {
+            let mut cy = 0u8;
+            for ix in (0..32).rev() {
+                let byt = bits[ix];
+                bits[ix] = (byt >> 1) | (cy << 7);
+                cy = byt & 1;
+            }
+        }
+        Fr::from(Scalar::from_bytes_mod_order(bits))
     }
 }
 

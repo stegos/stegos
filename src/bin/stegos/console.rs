@@ -315,6 +315,7 @@ impl ConsoleService {
         eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS RVALUE - check that payment certificate is valid");
         eprintln!("msg ADDRESS MESSAGE - send a message via blockchain");
         eprintln!("stake AMOUNT - stake money");
+        eprintln!("stake all - stake all available money");
         eprintln!("unstake [AMOUNT] - unstake money");
         eprintln!("restake - restake all available stakes");
         eprintln!("enable restaking - enable automatic re-staking (default)");
@@ -738,6 +739,10 @@ impl ConsoleService {
                 locked_timestamp: None,
                 with_certificate: false,
             };
+            self.send_account_request(request)?
+        } else if msg.starts_with("stake all") {
+            let payment_fee = PAYMENT_FEE;
+            let request = AccountRequest::StakeAll { payment_fee };
             self.send_account_request(request)?
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {

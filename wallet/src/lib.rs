@@ -551,6 +551,31 @@ impl UnsealedAccountService {
         Ok(snowball)
     }
 
+    fn stake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
+        let mut payment_amount: i64 = 0;
+        let mut outputs: Vec<_> = self.available_payment_outputs().collect();
+        outputs.sort_by_key(|o| o.1);
+        if outputs.len() > self.max_inputs_in_tx {
+            warn!(
+                "Found too many payment outputs, \
+                 limiting to max_inputs_in_tx: outputs_len={}, max_inputs_in_tx={}",
+                outputs.len(),
+                self.max_inputs_in_tx
+            );
+        }
+        for output in outputs.into_iter().rev().take(self.max_inputs_in_tx) {
+            payment_amount += output.1;
+        }
+
+        if payment_amount <= payment_fee {
+            return Err(WalletError::NotEnoughMoney.into());
+        }
+
+        info!("Found payment outputs: amount={}", payment_amount);
+
+        self.stake(payment_amount, payment_fee)
+    }
+
     /// Stake money into the escrow.
     fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
@@ -621,7 +646,17 @@ impl UnsealedAccountService {
     /// Unstake all of the money from the escrow.
     fn unstake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let mut amount: i64 = 0;
-        for output in self.available_stake_outputs() {
+        let mut outputs: Vec<_> = self.available_stake_outputs().collect();
+        outputs.sort_by_key(|o| o.amount);
+        if outputs.len() > self.max_inputs_in_tx {
+            warn!(
+                "Found too many stake outputs, \
+                 limiting to max_inputs_in_tx: outputs_len={}, max_inputs_in_tx={}",
+                outputs.len(),
+                self.max_inputs_in_tx
+            );
+        }
+        for output in outputs.into_iter().rev().take(self.max_inputs_in_tx) {
             amount += output.amount;
         }
         if amount <= payment_fee {
@@ -665,11 +700,21 @@ impl UnsealedAccountService {
         // TX outputs.
         let mut txouts: Vec<Output> = Vec::new();
 
+        let mut outputs: Vec<_> = self.available_public_payment_outputs().collect();
+        outputs.sort_by_key(|o| o.0.amount);
+        if outputs.len() > self.max_inputs_in_tx {
+            warn!(
+                "Found too many public outputs, \
+                 limiting to max_inputs_in_tx: outputs_len={}, max_inputs_in_tx={}",
+                outputs.len(),
+                self.max_inputs_in_tx
+            );
+        }
         //
         // Get inputs.
         //
         let mut amount = 0;
-        for (input, address_id) in self.available_public_payment_outputs() {
+        for (input, address_id) in outputs.into_iter().rev().take(self.max_inputs_in_tx) {
             let input_hash = Hash::digest(&input);
             debug!(
                 "Using PublicUTXO: utxo={}, amount={}",
@@ -1461,6 +1506,9 @@ impl Future for UnsealedAccountService {
                             } => self
                                 .public_payment(&recipient, amount, payment_fee, locked_timestamp)
                                 .into(),
+                            AccountRequest::StakeAll { payment_fee } => {
+                                self.stake_all(payment_fee).into()
+                            }
                             AccountRequest::Stake {
                                 amount,
                                 payment_fee,

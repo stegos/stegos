@@ -324,6 +324,7 @@ impl ConsoleService {
         eprintln!("show public addresses - show created public addresses");
         eprintln!("cloak - exchange all available public outputs");
         eprintln!("show version - print version information");
+        eprintln!("show validators - print active epoch validators list.");
         eprintln!("show keys - print keys");
         eprintln!("show balance - print balance");
         eprintln!("show utxo - print unspent outputs");
@@ -811,6 +812,9 @@ impl ConsoleService {
             self.send_account_request(request)?
         } else if msg == "show version" {
             self.send_network_request(NetworkRequest::VersionInfo {})?;
+            return Ok(true);
+        } else if msg == "show validators" {
+            self.send_node_request(NodeRequest::ValidatorsInfo {})?;
             return Ok(true);
         } else if msg == "show keys" {
             let request = AccountRequest::AccountInfo {};

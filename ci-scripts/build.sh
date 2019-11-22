@@ -349,13 +349,13 @@ do_coverage() {
     # 5) error wrappers.
     # 6) protobuf generated files.
     grcov ccov.zip -s . -t lcov --llvm --branch --ignore-not-existing \
-        --ignore-dir "/*" \
-        --ignore-dir "*/examples/**" \
-        --ignore-dir "*/bins/**" \
-        --ignore-dir "*/tests/**" \
-        --ignore-dir "**/tests.rs" \
-        --ignore-dir "**/error.rs" \
-        --ignore-dir "${CARGO_TARGET_DIR}/debug/build/*/out/**" \
+        --ignore "/*" \
+        --ignore "*/examples/**" \
+        --ignore "*/bins/**" \
+        --ignore "*/tests/**" \
+        --ignore "**/tests.rs" \
+        --ignore "**/error.rs" \
+        --ignore "${CARGO_TARGET_DIR}/debug/build/*/out/**" \
         >lcov.info
     ls -lh lcov.info
 }

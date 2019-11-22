@@ -35,7 +35,6 @@ test:macos_x64:
 # Temporary only build on windows, without running tests
 test:windows_x64:
   extends: .test
-  script: ./ci-scripts/build.sh build
   tags:
     - win2019
 

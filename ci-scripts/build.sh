@@ -57,8 +57,8 @@ configure_mingw() {
     export SNAPPY_LIB_DIR=/mingw64/lib
     export ZSTD_LIB_DIR=/mingw64/lib
     export LZ4_LIB_DIR=/mingw64/lib
-    export ROCKSDB_LIB_DIR=/mingw64/lib
-    export ROCKSDB_STATIC
+    # uncomment if we need shared version of rocksdb installed
+#    export ROCKSDB_LIB_DIR=/mingw64/lib
     export SNAPPY_STATIC
     export ZSTD_STATIC
     export LZ4_STATIC
@@ -120,9 +120,10 @@ install_packages_macos() {
 
 install_packages_mingw() {
     LLVM_VERSION=5.0.0-1
+    GCC_VERSION=9.2.0-2
     MINGW_URL=http://repo.msys2.org/mingw/x86_64/mingw-w64-x86_64
     PEXT=any.pkg.tar.xz
-    URL_VER=$LLVM_VERSION-$PEXT
+
 
     # mingw-gcc set _mingw_ target during compile, while msys-gcc set to gnuc.
     # And some libraryes didn't understands OS.
@@ -134,12 +135,32 @@ install_packages_mingw() {
         mingw-w64-x86_64-zstd \
         mingw-w64-x86_64-lz4 \
         mingw-w64-x86_64-snappy \
-        mingw-w64-x86_64-gcc \
         mingw-w64-x86_64-cmake \
         m4 make diffutils curl patch tar zip
 
+    URL_VER=$LLVM_VERSION-$PEXT
     #downgrade clang to specific versions for bindgen
-    pacman -U --noconfirm $MINGW_URL-clang-$URL_VER $MINGW_URL-llvm-$URL_VER
+    pacman -U --noconfirm --needed $MINGW_URL-clang-$URL_VER $MINGW_URL-llvm-$URL_VER
+
+    # Upgrade gcc version to 9.2.0, because 8.3 cannot build libbactrace during building of rocksdb.
+    URL_VER=$GCC_VERSION-$PEXT
+    pacman -U --noconfirm --needed $MINGW_URL-gcc-$URL_VER $MINGW_URL-gcc-libs-$URL_VER
+
+
+}
+
+patch_mingw_toolchain() {
+      # Currently rust for GNU support outdated toolchain (with gcc 6.3.0)
+    # this patch will partially upgrade toolchain to new from local gcc
+    rust_path="$HOME/.rustup/toolchains/${RUST_TOOLCHAIN}-x86_64-pc-windows-gnu/lib/rustlib/x86_64-pc-windows-gnu"
+    echo "Patching Rust toolchain gcc"
+    for mingw_file in gcc.exe ld.exe; do
+      cp /mingw64/bin/$mingw_file $rust_path/bin
+    done
+
+    for mingw_file in "x86_64-w64-mingw32/lib/libshlwapi.a" lib/gcc/x86_64-w64-mingw32/9.2.0/libstdc++.a; do
+      cp /mingw64/$mingw_file $rust_path/lib/
+    done
 }
 
 # Installs Android toolchain.
@@ -201,7 +222,6 @@ install_android_toolchain() {
         cp -p $SCRIPT_DIR/cargo-config ~/.cargo/config
     fi
 }
-
 # Install Rust toolchain via rustup
 install_toolchain() {
     export PATH="$HOME/.cargo/bin:$PATH"
@@ -248,6 +268,7 @@ do_builddep() {
         install_packages_mingw
         configure_mingw
         install_toolchain
+        patch_mingw_toolchain
         ;;
 
     *)
@@ -314,15 +335,14 @@ do_release() {
     done
 
     if test $1 = "win-x64"; then
-        for lib in gcc_s_seh-1 rocksdb-shared stdc++-6 winpthread-1; do
+        for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
             cp /mingw64/bin/lib$lib.dll ./release/
         done
-        $strip -S ./release/librocksdb-shared.dll
 
         for bin in stegos stegosd; do
             pushd release
             zip $bin-$1 $bin-$1$extension
-            for lib in gcc_s_seh-1 rocksdb-shared stdc++-6 winpthread-1; do
+            for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
                 zip $bin-$1 lib$lib.dll
             done
             popd

@@ -897,8 +897,8 @@ impl NodeService {
 
         metrics::MICRO_BLOCKS_FORKS.inc();
 
-        swarn!(self,
-            "A fork detected: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+        sinfo!(self,
+            "Found a different view of blockchain: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
             epoch,
             offset,
             local.last_block,

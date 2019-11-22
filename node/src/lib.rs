@@ -51,7 +51,7 @@ use futures_stream_select_all_send::select_all;
 pub use loader::CHAIN_LOADER_TOPIC;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::thread;
 use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
@@ -645,6 +645,7 @@ impl NodeService {
         strace!(self, "Restaking expiring stakes");
         let mut inputs: Vec<Output> = Vec::new();
         let mut output_info = None;
+        let mut pending_txs = HashSet::new();
         for (input_hash, amount, account_pkey, active_until_epoch) in
             self.chain.iter_validator_stakes(&self.network_pkey)
         {
@@ -662,10 +663,11 @@ impl NodeService {
             if let Some(tx_hash) = self.mempool.get_tx_by_input(input_hash) {
                 sdebug!(
                     self,
-                    "Skip re-staking - stake is used by tx: utxo={}, tx={}",
+                    "Found restake tx in mempool: utxo={}, tx={}",
                     input_hash,
                     tx_hash
                 );
+                pending_txs.insert(*tx_hash);
                 continue;
             }
 
@@ -731,6 +733,13 @@ impl NodeService {
             // Used for tests.
             0
         };
+
+        for tx in pending_txs
+            .into_iter()
+            .map(|hash| self.mempool.get_tx(&hash).expect("tx in mempool"))
+        {
+            self.network.publish(&TX_TOPIC, tx.into_buffer()?)?;
+        }
         sdebug!(
             self,
             "Next restaking: epoch={}, offset={}",

@@ -314,6 +314,7 @@ impl ConsoleService {
         );
         eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS RVALUE - check that payment certificate is valid");
         eprintln!("msg ADDRESS MESSAGE - send a message via blockchain");
+        eprintln!("stake remote - stake money to remote node, network key should be located near account key.");
         eprintln!("stake AMOUNT - stake money");
         eprintln!("stake all - stake all available money");
         eprintln!("unstake [AMOUNT] - unstake money");
@@ -374,6 +375,11 @@ impl ConsoleService {
         eprintln!();
     }
 
+    fn help_stake_remote() {
+        eprintln!("Usage: stake_remote AMOUNT");
+        eprintln!(" - AMOUNT amount to stake into escrow, in μSTG");
+        eprintln!();
+    }
     fn help_stake() {
         eprintln!("Usage: stake AMOUNT");
         eprintln!(" - AMOUNT amount to stake into escrow, in μSTG");
@@ -743,6 +749,30 @@ impl ConsoleService {
         } else if msg.starts_with("stake all") {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::StakeAll { payment_fee };
+            self.send_account_request(request)?
+        } else if msg.starts_with("stake remote ") {
+            let caps = match STAKE_COMMAND_RE.captures(&msg[13..]) {
+                Some(c) => c,
+                None => {
+                    Self::help_stake_remote();
+                    return Ok(true);
+                }
+            };
+
+            let amount = caps.name("amount").unwrap().as_str();
+            let amount = match parse_money(amount) {
+                Ok(amount) => amount,
+                Err(e) => {
+                    eprintln!("{}", e);
+                    Self::help_pay();
+                    return Ok(true);
+                }
+            };
+            let payment_fee = PAYMENT_FEE;
+            let request = AccountRequest::StakeRemote {
+                amount,
+                payment_fee,
+            };
             self.send_account_request(request)?
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {

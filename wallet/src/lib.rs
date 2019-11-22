@@ -55,7 +55,9 @@ use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain as keychain;
-use stegos_keychain::keyfile::{load_account_pkey, write_account_pkey, write_account_skey};
+use stegos_keychain::keyfile::{
+    load_account_pkey, load_network_keypair, write_account_pkey, write_account_skey,
+};
 use stegos_keychain::KeyError;
 use stegos_network::Network;
 use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, TransactionStatus};
@@ -129,10 +131,8 @@ struct UnsealedAccountService {
     //
     /// Path to RocksDB directory.
     database_dir: PathBuf,
-    /// Path to account secret key.
-    account_skey_file: PathBuf,
-    /// Path to account public key.
-    account_pkey_file: PathBuf,
+    /// Path to account key folder.
+    account_dir: PathBuf,
     /// Account Secret Key.
     account_skey: scc::SecretKey,
     /// Account Public Key.
@@ -202,8 +202,7 @@ impl UnsealedAccountService {
     /// Create a new account.
     fn new(
         database_dir: PathBuf,
-        account_skey_file: PathBuf,
-        account_pkey_file: PathBuf,
+        account_dir: PathBuf,
         account_skey: scc::SecretKey,
         account_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
@@ -257,8 +256,7 @@ impl UnsealedAccountService {
         info!("Loaded account {}", account_pkey);
         UnsealedAccountService {
             database_dir,
-            account_skey_file,
-            account_pkey_file,
+            account_dir,
             account_skey,
             account_pkey,
             network_skey,
@@ -576,8 +574,13 @@ impl UnsealedAccountService {
         self.stake(payment_amount, payment_fee)
     }
 
-    /// Stake money into the escrow.
-    fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
+    fn stake_inner(
+        &mut self,
+        amount: i64,
+        payment_fee: i64,
+        network_pkey: pbc::PublicKey,
+        network_skey: pbc::SecretKey,
+    ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
             return Err(WalletError::NoEnoughPayment(
@@ -591,8 +594,8 @@ impl UnsealedAccountService {
         let (tx, outputs) = create_staking_transaction(
             &self.account_skey,
             &self.account_pkey,
-            &self.network_pkey,
-            &self.network_skey,
+            &network_pkey,
+            &network_skey,
             unspent_iter,
             amount,
             payment_fee,
@@ -614,6 +617,25 @@ impl UnsealedAccountService {
 
         self.send_transaction(tx.into())?;
         Ok(payment_info.to_info(self.epoch))
+    }
+
+    /// Stake money into the escrow, for remote node.
+    fn stake_remote(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
+        let network_pkey_file = self.account_dir.join("network.pkey");
+        let network_skey_file = self.account_dir.join("network.skey");
+        let (network_skey, network_pkey) =
+            load_network_keypair(&network_skey_file, &network_pkey_file)?;
+        self.stake_inner(amount, payment_fee, network_pkey, network_skey)
+    }
+
+    /// Stake money into the escrow.
+    fn stake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
+        self.stake_inner(
+            amount,
+            payment_fee,
+            self.network_pkey,
+            self.network_skey.clone(),
+        )
     }
 
     /// Unstake money from the escrow.
@@ -824,9 +846,9 @@ impl UnsealedAccountService {
 
     /// Change the password.
     fn change_password(&mut self, new_password: String) -> Result<(), Error> {
-        let account_skey_path = Path::new(&self.account_skey_file);
+        let account_skey_file = self.account_dir.join("account.skey");
         keychain::keyfile::write_account_skey(
-            account_skey_path,
+            &account_skey_file,
             &self.account_skey,
             &new_password,
         )?;
@@ -1513,6 +1535,10 @@ impl Future for UnsealedAccountService {
                                 amount,
                                 payment_fee,
                             } => self.stake(amount, payment_fee).into(),
+                            AccountRequest::StakeRemote {
+                                amount,
+                                payment_fee,
+                            } => self.stake_remote(amount, payment_fee).into(),
                             AccountRequest::Unstake {
                                 amount,
                                 payment_fee,
@@ -1707,10 +1733,8 @@ impl Future for UnsealedAccountService {
 struct SealedAccountService {
     /// Path to database dir.
     database_dir: PathBuf,
-    /// Path to account secret key.
-    account_skey_file: PathBuf,
-    /// Path to account public key.
-    account_pkey_file: PathBuf,
+    /// Path to account directory.
+    account_dir: PathBuf,
     /// Account Public Key.
     account_pkey: scc::PublicKey,
     /// Network Secret Key.
@@ -1738,8 +1762,7 @@ struct SealedAccountService {
 impl SealedAccountService {
     fn new(
         database_dir: PathBuf,
-        account_skey_file: PathBuf,
-        account_pkey_file: PathBuf,
+        account_dir: PathBuf,
         account_pkey: scc::PublicKey,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
@@ -1752,8 +1775,7 @@ impl SealedAccountService {
     ) -> Self {
         SealedAccountService {
             database_dir,
-            account_skey_file,
-            account_pkey_file,
+            account_dir,
             account_pkey,
             network_skey,
             network_pkey,
@@ -1767,12 +1789,13 @@ impl SealedAccountService {
     }
 
     fn load_secret_key(&self, password: &str) -> Result<scc::SecretKey, KeyError> {
-        let account_skey = keychain::keyfile::load_account_skey(&self.account_skey_file, password)?;
+        let account_skey_file = self.account_dir.join("account.skey");
+        let account_skey = keychain::keyfile::load_account_skey(&account_skey_file, password)?;
 
-        if let Err(_e) = scc::check_keying(&account_skey, &self.account_pkey) {
-            return Err(KeyError::InvalidKeying(
-                self.account_skey_file.to_string_lossy().to_string(),
-                self.account_pkey_file.to_string_lossy().to_string(),
+        if let Err(e) = scc::check_keying(&account_skey, &self.account_pkey) {
+            return Err(KeyError::InvalidKey(
+                account_skey_file.to_string_lossy().to_string(),
+                e,
             ));
         }
         Ok(account_skey)
@@ -1857,8 +1880,7 @@ impl Future for AccountService {
                     info!("Unsealed account: address={}", &sealed.account_pkey);
                     let unsealed = UnsealedAccountService::new(
                         sealed.database_dir,
-                        sealed.account_skey_file,
-                        sealed.account_pkey_file,
+                        sealed.account_dir,
                         account_skey,
                         sealed.account_pkey,
                         sealed.network_skey,
@@ -1898,8 +1920,7 @@ impl Future for AccountService {
                     info!("Sealed account: address={}", &unsealed.account_pkey);
                     let sealed = SealedAccountService::new(
                         unsealed.database_dir,
-                        unsealed.account_skey_file,
-                        unsealed.account_pkey_file,
+                        unsealed.account_dir,
                         unsealed.account_pkey,
                         unsealed.network_skey,
                         unsealed.network_pkey,
@@ -1924,8 +1945,7 @@ impl AccountService {
     /// Create a new wallet.
     fn new(
         database_dir: &Path,
-        account_skey_file: &Path,
-        account_pkey_file: &Path,
+        account_dir: &Path,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
@@ -1933,13 +1953,13 @@ impl AccountService {
         stake_epochs: u64,
         max_inputs_in_tx: usize,
     ) -> Result<(Self, Account), KeyError> {
-        let account_pkey = load_account_pkey(account_pkey_file)?;
+        let account_pkey_file = account_dir.join("account.pkey");
+        let account_pkey = load_account_pkey(&account_pkey_file)?;
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
         let service = SealedAccountService::new(
             database_dir.to_path_buf(),
-            account_skey_file.to_path_buf(),
-            account_pkey_file.to_path_buf(),
+            account_dir.to_path_buf(),
             account_pkey,
             network_skey,
             network_pkey,
@@ -2095,7 +2115,6 @@ impl WalletService {
     ) -> Result<(), Error> {
         let account_dir = self.accounts_dir.join(account_id);
         let account_database_dir = account_dir.join("history");
-        let account_skey_file = account_dir.join("account.skey");
         let account_pkey_file = account_dir.join("account.pkey");
         let account_pkey = load_account_pkey(&account_pkey_file)?;
         debug!("Found account id={}, pkey={}", account_id, account_pkey);
@@ -2122,8 +2141,7 @@ impl WalletService {
 
         let (account_service, account) = AccountService::new(
             &account_database_dir,
-            &account_skey_file,
-            &account_pkey_file,
+            &account_dir,
             self.network_skey.clone(),
             self.network_pkey.clone(),
             self.network.clone(),

@@ -198,6 +198,10 @@ pub enum AccountRequest {
     StakeAll {
         payment_fee: i64,
     },
+    StakeRemote {
+        amount: i64,
+        payment_fee: i64,
+    },
     Stake {
         amount: i64,
         payment_fee: i64,

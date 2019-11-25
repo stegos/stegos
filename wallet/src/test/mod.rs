@@ -83,17 +83,13 @@ impl AccountSandbox {
             .unwrap();
         stegos_keychain::keyfile::write_account_pkey(&account_pkey_file, &account_pkey).unwrap();
 
-        info!(
-            "Wrote account key pair: skey_file={:?}, pkey_file={:?}",
-            account_skey_file, account_pkey_file
-        );
+        info!("Wrote account key pair: account_foulder={:?}", temp_path);
 
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
         let account_service = UnsealedAccountService::new(
             database_dir,
-            account_skey_file,
-            account_pkey_file,
+            temp_path.to_path_buf(),
             account_skey,
             account_pkey,
             network_skey,

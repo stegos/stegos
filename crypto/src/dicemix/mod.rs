@@ -31,12 +31,14 @@ use crate::hash::{Hash, Hashable, Hasher};
 use crate::pbc;
 use crate::scc;
 use crate::utils::u8v_to_hexstr;
+use crate::CryptoError;
 use rayon::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::ffi::CString;
 use std::fmt;
 use std::os::raw::{c_char, c_int};
+use std::result;
 use std::time::{Duration, SystemTime};
 
 use curve25519_dalek::ristretto::RistrettoPoint;
@@ -345,7 +347,7 @@ pub fn dc_decode(
     nchunks: usize,
     p_excl: &Vec<ParticipantID>,
     k_excl: &HashMap<ParticipantID, HashMap<ParticipantID, Hash>>,
-) -> Vec<Vec<u8>> {
+) -> Result<Vec<Vec<u8>>, CryptoError> {
     // Accept a 4-D array (vector of 3-D vectors) containing
     // modular powers of cloaked chunks. Split along first dimension,
     // which represents the DiceMix matrix from each participant.
@@ -395,12 +397,12 @@ pub fn dc_decode(
         }
     }
 
-    let msgs: Vec<Vec<Vec<u8>>> = index_vec(dim_s)
+    let msgs_rs: Vec<Result<Vec<Vec<u8>>, CryptoError>> = index_vec(dim_s)
         .par_iter()
         .map(|&s_ix| {
             // operate on one sheet at a time
             // (one message from each participant)
-            let mut sheet: Vec<DcRow> = index_vec(dim_r)
+            let mut sheet_of_results: Vec<Result<DcRow, CryptoError>> = index_vec(dim_r)
                 .par_iter()
                 .map(|&r_ix| {
                     // each row contains the cloaked powers of a chunk
@@ -424,57 +426,78 @@ pub fn dc_decode(
                 })
                 .collect(); // we now have a sheet of uncloaked chunks
 
-            // The hash tag of the first chunk from any participant will be
-            // a prefix on corresponding chunks in successive columns.
-            // Here we reassemble the byte-string messages from each participant.
+            match sheet_of_results.iter().find(|&x| x.is_err()) {
+                Some(Ok(_)) => unreachable!(),
+                Some(Err(_)) => Err(CryptoError::DiceMixNoSolution),
+                None => {
+                    let mut sheet: Vec<DcRow> = sheet_of_results
+                        .iter()
+                        .map(|x| x.as_ref().unwrap().clone())
+                        .collect();
 
-            let mut msgs = Vec::<Vec<u8>>::new();
-            for m_ix in 0..dim_c {
-                // scan all rows for msgs
-                let frval = &sheet[0][m_ix];
-                if *frval != Fr::zero() {
-                    // if leading chunk is zero, then no msg in this row
-                    let mut msg = Vec::<u8>::new();
-                    let mut chunk1 = frval.to_bytes();
-                    stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
-                    prep_pref(&mut chunk1);
-                    for r in 1..dim_r {
-                        // try to collect one chunk from each row
-                        let mut found = false;
-                        for c in 0..dim_c {
-                            // scanning all cols for a chunk in that column
-                            let frval = &sheet[r][c];
-                            if *frval != Fr::zero() {
-                                // ignore zero chunk values
-                                let chunk = frval.to_bytes();
-                                if has_hash_prefix(&chunk, &chunk1) {
-                                    stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
-                                    sheet[r][c] = Fr::zero(); // shorten next peek
-                                    found = true;
+                    // The hash tag of the first chunk from any participant will be
+                    // a prefix on corresponding chunks in successive columns.
+                    // Here we reassemble the byte-string messages from each participant.
+
+                    let mut msgs = Vec::<Vec<u8>>::new();
+                    for m_ix in 0..dim_c {
+                        // scan all rows for msgs
+                        let frval = &sheet[0][m_ix];
+                        if *frval != Fr::zero() {
+                            // if leading chunk is zero, then no msg in this row
+                            let mut msg = Vec::<u8>::new();
+                            let mut chunk1 = frval.to_bytes();
+                            stuff_msg(&mut msg, &chunk1, 0, MAX_BYTES);
+                            prep_pref(&mut chunk1);
+                            for r in 1..dim_r {
+                                // try to collect one chunk from each row
+                                let mut found = false;
+                                for c in 0..dim_c {
+                                    // scanning all cols for a chunk in that column
+                                    let frval = &sheet[r][c];
+                                    if *frval != Fr::zero() {
+                                        // ignore zero chunk values
+                                        let chunk = frval.to_bytes();
+                                        if has_hash_prefix(&chunk, &chunk1) {
+                                            stuff_msg(&mut msg, &chunk, NPREF, NCHUNK);
+                                            sheet[r][c] = Fr::zero(); // shorten next peek
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if !found {
+                                    // no chunk found, we must be finished with this msg
                                     break;
                                 }
                             }
-                        }
-                        if !found {
-                            // no chunk found, we must be finished with this msg
-                            break;
+                            msgs.push(msg);
                         }
                     }
-                    msgs.push(msg);
+                    Ok(msgs)
                 }
             }
-            msgs
         })
         .collect(); // we now have collection of messages per sheet
                     // concatenate message groups into a list of messages
                     // each sheet produces a group of messages, one per participant
-    let mut out = Vec::<Vec<u8>>::new();
-    for clump in msgs {
-        for msg in clump {
-            out.push(msg);
+    match msgs_rs.iter().find(|&m| m.is_err()) {
+        Some(&Ok(_)) => unreachable!(),
+        Some(&Err(_)) => Err(CryptoError::DiceMixNoSolution),
+        None => {
+            let msgs: Vec<Vec<Vec<u8>>> = msgs_rs
+                .iter()
+                .map(|m| m.as_ref().unwrap().clone())
+                .collect();
+            let mut out = Vec::<Vec<u8>>::new();
+            for clump in msgs {
+                for msg in clump {
+                    out.push(msg);
+                }
+            }
+            Ok(out) // we just need a simple collection of messages
         }
     }
-    out // we just need a simple collection of messages
 }
 
 fn dc_open(
@@ -508,7 +531,7 @@ const RET_INVALID: c_int = 1;
 const RET_NON_MONIC_ROOT: c_int = 2;
 const RET_NOT_ENOUGH_ROOTS: c_int = 3;
 
-fn dc_solve(col: &Vec<Fr>) -> Vec<Fr> {
+fn dc_solve(col: &Vec<Fr>) -> Result<Vec<Fr>, CryptoError> {
     fn c_str(s: &str) -> CString {
         CString::new(s).unwrap()
     }
@@ -550,19 +573,19 @@ fn dc_solve(col: &Vec<Fr>) -> Vec<Fr> {
                             .collect();
                         dbg!(&msgs);
             */
-            out_messages_hex
+            Ok(out_messages_hex
                 .iter()
                 .map(|m_hex| {
                     let leading_non_zero = m_hex.iter().take_while(|c| **c != 0).count();
                     let rust_string = ::std::str::from_utf8(&m_hex[0..leading_non_zero]).unwrap();
                     Fr::try_from_hex(rust_string).unwrap()
                 })
-                .collect()
+                .collect())
         }
-        RET_INVALID => panic!("No Solution"),
-        RET_NON_MONIC_ROOT => panic!("Non-Monic Root"),
-        RET_NOT_ENOUGH_ROOTS => panic!("Not Enough Roots"),
-        x => panic!("Internal error in flint solver, return value = {}", x),
+        RET_INVALID => Err(CryptoError::DiceMixNoSolution),
+        RET_NON_MONIC_ROOT => Err(CryptoError::DiceMixNonMonicRoot),
+        RET_NOT_ENOUGH_ROOTS => Err(CryptoError::DiceMixNotEnoughRoots),
+        x => Err(CryptoError::DiceMixInternalError(x)),
     }
 }
 
@@ -1076,7 +1099,8 @@ mod tests {
             max_cells,
             &p_excl,
             &k_excl,
-        );
+        )
+        .expect("ok");
         let nmsgs = msgs.len();
         assert!(3 == nmsgs);
         let mut cmsgs = Vec::<String>::new();
@@ -1317,7 +1341,8 @@ mod tests {
             max_cells,
             &p_excl,
             &k_excl,
-        );
+        )
+        .expect("Ok");
         let timing = start.elapsed();
         println!("{}x{} Solve {} Time = {:?}", nsheets, nrows, ncols, timing);
 
@@ -1465,7 +1490,7 @@ mod tests {
             add_col(&mut col, &exp_vec(&f3, 4));
             add_col(&mut col, &exp_vec(&f4, 4));
             /* */
-            let ans = dc_solve(&col);
+            let ans = dc_solve(&col).expect("ok");
             if !(ans.contains(&f1) && ans.contains(&f2) && ans.contains(&f3) && ans.contains(&f4)) {
                 println!("col = {:?}", col);
                 println!("[f1,f2,f3,f4] = [{:?}, {:?}, {:?}, {:?}]", f1, f2, f3, f4);

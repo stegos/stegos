@@ -108,6 +108,15 @@ pub enum CryptoError {
     NetworkPrefixAlreadySet(&'static str),
     #[fail(display = "Failed to set network prefix from two threads.")]
     NetworkPrefixSetFailed,
+
+    #[fail(display = "No solution in DiceMix")]
+    DiceMixNoSolution,
+    #[fail(display = "Non-monic root in DiceMix")]
+    DiceMixNonMonicRoot,
+    #[fail(display = "Not enough roots in DiceMix")]
+    DiceMixNotEnoughRoots,
+    #[fail(display = "Internal error in flint solver, return value = {}", _0)]
+    DiceMixInternalError(i32),
 }
 
 impl From<hex::FromHexError> for CryptoError {

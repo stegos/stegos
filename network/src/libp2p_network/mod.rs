@@ -190,7 +190,7 @@ fn new_service(
     ),
     Error,
 > {
-    let keypair = ed25519::Keypair::generate();
+    let keypair = ed25519_from_pbc(&network_skey);
     let local_key = identity::Keypair::Ed25519(keypair);
     let local_pub_key = local_key.public();
     let peer_id = local_pub_key.clone().into_peer_id();
@@ -870,6 +870,13 @@ fn resolve_seed_nodes(seed_pool: &str, dns_servers: &[String]) -> Result<Vec<Str
         }
     }
     Ok(seed_nodes)
+}
+
+fn ed25519_from_pbc(source: &pbc::SecretKey) -> ed25519::Keypair {
+    let mut raw = source.to_bytes();
+    let secret = ed25519::SecretKey::from_bytes(&mut raw)
+        .expect("this returns `Err` only if the length is wrong; the length is correct; qed");
+    ed25519::Keypair::from(secret)
 }
 
 #[cfg(test)]

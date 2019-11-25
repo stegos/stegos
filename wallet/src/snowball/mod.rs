@@ -2140,13 +2140,11 @@ fn validate_ownership(
 }
 
 fn serialize_utxo(utxo: &UTXO) -> Vec<u8> {
-    let mut message = Vec::new();
-    message.resize(mem::size_of::<u64>(), 0u8);
     let buffer = utxo.into_buffer().expect("Can't serialize UTXO");
-    LittleEndian::write_u64(&mut message[..mem::size_of::<u64>()], buffer.len() as u64);
-    message.extend(buffer);
-    assert!(message.len() <= UTXO_FIXED_SIZE);
-    message.resize(UTXO_FIXED_SIZE, 0);
+    assert!(8 + buffer.len() <= UTXO_FIXED_SIZE);
+    let mut message = vec![0; UTXO_FIXED_SIZE];
+    LittleEndian::write_u64(&mut message[..8], buffer.len() as u64);
+    message[8..8 + buffer.len()].copy_from_slice(&buffer);
     message
 }
 

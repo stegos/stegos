@@ -195,6 +195,9 @@ pub enum AccountRequest {
         comment: String,
         locked_timestamp: Option<Timestamp>,
     },
+    StakeAll {
+        payment_fee: i64,
+    },
     Stake {
         amount: i64,
         payment_fee: i64,

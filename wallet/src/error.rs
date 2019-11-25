@@ -28,7 +28,7 @@ use stegos_crypto::scc;
 pub enum WalletError {
     #[fail(display = "Duplicate account: pkey={}", _0)]
     DuplicateAccount(scc::PublicKey),
-    #[fail(display = "Not enough money.")]
+    #[fail(display = "Not enough money. Or outputs limit is reached.")]
     NotEnoughMoney,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),

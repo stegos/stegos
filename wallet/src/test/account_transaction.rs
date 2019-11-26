@@ -69,7 +69,6 @@ fn create_tx() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -153,7 +152,6 @@ fn create_tx_with_certificate() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: true,
         });
 
@@ -271,7 +269,6 @@ fn full_transfer() {
             amount: balance.payment.current - PAYMENT_FEE,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -329,7 +326,6 @@ fn create_tx_invalid() {
             amount: -10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -347,7 +343,6 @@ fn create_tx_invalid() {
             amount: balance.payment.current - PAYMENT_FEE + 1, // 1 token more than real balance
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -365,7 +360,6 @@ fn create_tx_invalid() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: std::iter::repeat('a').take(PAYMENT_DATA_LEN - 1).collect(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -418,7 +412,6 @@ fn wait_for_epoch_end_with_tx() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -492,7 +485,6 @@ fn create_public_tx() {
             recipient,
             amount: 10,
             payment_fee: PAYMENT_FEE,
-            locked_timestamp: None,
         });
 
         assert_eq!(notification.poll(), Ok(Async::NotReady));
@@ -568,7 +560,6 @@ fn recovery_acount_after_tx() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -648,7 +639,6 @@ fn send_node_duplicate_tx() {
             amount: 10,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
 
@@ -753,7 +743,6 @@ fn precondition_each_account_has_tokens(
             amount,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
         genesis_account.poll();
@@ -801,7 +790,6 @@ fn snowball_start(
         amount,
         payment_fee: PAYMENT_FEE,
         comment: "Test".to_string(),
-        locked_timestamp: None,
     });
 
     account.poll();
@@ -1138,7 +1126,6 @@ fn snowball_lock_utxo() {
             amount: SEND_TOKENS,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
         accounts[0].poll();
@@ -1170,7 +1157,6 @@ fn snowball_lock_utxo() {
             amount: SEND_TOKENS,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
-            locked_timestamp: None,
             with_certificate: false,
         });
         accounts[0].poll();
@@ -1258,7 +1244,6 @@ fn annihilation() {
                 amount: 1,
                 payment_fee: PAYMENT_FEE,
                 comment: "Test".to_string(),
-                locked_timestamp: None,
                 with_certificate: false,
             });
             accounts[0].poll();

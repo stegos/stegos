@@ -309,7 +309,6 @@ impl UnsealedAccountService {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<Timestamp>,
         with_certificate: bool,
     ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
@@ -337,7 +336,6 @@ impl UnsealedAccountService {
             amount,
             payment_fee,
             TransactionType::Regular(data.clone()),
-            locked_timestamp,
             self.max_inputs_in_tx,
         )?;
 
@@ -373,10 +371,6 @@ impl UnsealedAccountService {
             .iter_unspent()
             .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
-            .filter(move |(_h, v)| match &v.output.locked_timestamp {
-                Some(time) if time >= &self.last_macro_block_timestamp => false,
-                _ => true,
-            })
             .inspect(|(h, _)| trace!("Using PaymentOutput: hash={}", h))
             .map(|(_, v)| (v.output, v.amount))
     }
@@ -389,10 +383,6 @@ impl UnsealedAccountService {
             .iter_unspent()
             .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
-            .filter(move |(_h, v)| match &v.output.locked_timestamp {
-                Some(time) if time >= &self.last_macro_block_timestamp => false,
-                _ => true,
-            })
             .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
             .map(|(_, v)| (v.output, v.public_address_id))
     }
@@ -414,7 +404,6 @@ impl UnsealedAccountService {
         recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
-        locked_timestamp: Option<Timestamp>,
     ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
@@ -434,7 +423,6 @@ impl UnsealedAccountService {
             amount,
             payment_fee,
             TransactionType::Public,
-            locked_timestamp,
             self.max_inputs_in_tx,
         )?;
 
@@ -495,7 +483,6 @@ impl UnsealedAccountService {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<Timestamp>,
     ) -> Result<Snowball, Error> {
         if self.snowball.is_some() {
             return Err(WalletError::SnowballBusy.into());
@@ -518,7 +505,6 @@ impl UnsealedAccountService {
             amount,
             payment_fee,
             data,
-            locked_timestamp,
             snowball::MAX_UTXOS,
         )?;
         assert!(inputs.len() <= snowball::MAX_UTXOS);
@@ -781,7 +767,7 @@ impl UnsealedAccountService {
             data.validate().unwrap();
             trace!("Creating PaymentUTXO...");
             let (output, output_gamma, _rvalue) =
-                PaymentOutput::with_payload(None, &recipient, amount, data.clone(), None)?;
+                PaymentOutput::with_payload(None, &recipient, amount, data.clone())?;
             let output_hash = Hash::digest(&output);
             debug!(
                 "Created PaymentUTXO: utxo={}, recipient={}, amount={}, data={:?}",
@@ -867,24 +853,15 @@ impl UnsealedAccountService {
 
     /// Get actual balance.
     fn balance(&self) -> AccountBalance {
-        let time = Timestamp::now();
         let mut balance: AccountBalance = Default::default();
         for (hash, val) in self.database.iter_unspent() {
             match val {
                 OutputValue::Payment(PaymentValue {
                     amount,
-                    output:
-                        PaymentOutput {
-                            locked_timestamp, ..
-                        },
+                    output: PaymentOutput { .. },
                     ..
                 }) => {
                     balance.payment.current += amount;
-                    if let Some(t) = locked_timestamp {
-                        if t > time {
-                            continue;
-                        }
-                    }
                     if self.pending_payments.get(&hash).is_some() {
                         continue;
                     }
@@ -1508,26 +1485,15 @@ impl Future for UnsealedAccountService {
                                 amount,
                                 payment_fee,
                                 comment,
-                                locked_timestamp,
                                 with_certificate,
                             } => self
-                                .payment(
-                                    &recipient,
-                                    amount,
-                                    payment_fee,
-                                    comment,
-                                    locked_timestamp,
-                                    with_certificate,
-                                )
+                                .payment(&recipient, amount, payment_fee, comment, with_certificate)
                                 .into(),
                             AccountRequest::PublicPayment {
                                 recipient,
                                 amount,
                                 payment_fee,
-                                locked_timestamp,
-                            } => self
-                                .public_payment(&recipient, amount, payment_fee, locked_timestamp)
-                                .into(),
+                            } => self.public_payment(&recipient, amount, payment_fee).into(),
                             AccountRequest::StakeAll { payment_fee } => {
                                 self.stake_all(payment_fee).into()
                             }
@@ -1618,24 +1584,20 @@ impl Future for UnsealedAccountService {
                                 amount,
                                 payment_fee,
                                 comment,
-                                locked_timestamp,
-                            } => match self.secure_payment(
-                                &recipient,
-                                amount,
-                                payment_fee,
-                                comment,
-                                locked_timestamp,
-                            ) {
-                                Ok(snowball) => {
-                                    let state = snowball.state();
-                                    self.notify(AccountNotification::SnowballStatus(state));
-                                    self.snowball = (snowball, tx).into();
-                                    continue;
+                            } => {
+                                match self.secure_payment(&recipient, amount, payment_fee, comment)
+                                {
+                                    Ok(snowball) => {
+                                        let state = snowball.state();
+                                        self.notify(AccountNotification::SnowballStatus(state));
+                                        self.snowball = (snowball, tx).into();
+                                        continue;
+                                    }
+                                    Err(e) => AccountResponse::Error {
+                                        error: format!("{}", e),
+                                    },
                                 }
-                                Err(e) => AccountResponse::Error {
-                                    error: format!("{}", e),
-                                },
-                            },
+                            }
                         };
                         tx.send(response).ok(); // ignore errors.
                     }

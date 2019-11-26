@@ -790,7 +790,6 @@ impl PaymentValue {
             output_hash: Hash::digest(&self.output),
             amount: self.amount,
             data: self.data.clone(),
-            locked_timestamp: self.output.locked_timestamp,
             pending_timestamp,
             recipient: self.recipient,
             rvalue: self.rvalue.clone(),
@@ -805,7 +804,6 @@ impl PublicPaymentValue {
         PublicPaymentInfo {
             output_hash: Hash::digest(&self.output),
             amount: self.output.amount,
-            locked_timestamp: self.output.locked_timestamp,
             pending_timestamp,
             recipient: self.output.recipient,
             public_address_id: self.public_address_id,
@@ -958,7 +956,6 @@ mod test {
         let output = PublicPaymentOutput {
             serno: id as i64,
             amount: 10,
-            locked_timestamp: None,
             recipient: PublicKey::zero(),
         };
         let value = PublicPaymentValue {

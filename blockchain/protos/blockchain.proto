@@ -14,7 +14,7 @@ message PaymentPayloadData {
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.BulletProof proof = 2;
-    uint64 locked_timestamp = 3;
+    //uint64 locked_timestamp = 3;
     stegos.crypto.Pt ag = 4;
     bytes payload = 5;
 }
@@ -23,7 +23,7 @@ message PublicPaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     int64 serno = 2;
     int64 amount = 3;
-    uint64 locked_timestamp = 4;
+    //uint64 locked_timestamp = 4;
 }
 
 message StakeOutput {

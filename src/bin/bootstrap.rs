@@ -278,7 +278,7 @@ fn main() {
     };
     let output_data = PaymentPayloadData::Comment("Genesis".to_string());
     let (output, outputs_gamma, _rvalue) =
-        PaymentOutput::with_payload(None, &beneficiary_pkey, payout, output_data, None)
+        PaymentOutput::with_payload(None, &beneficiary_pkey, payout, output_data)
             .expect("invalid keys");
     outputs.push(output.into());
 

@@ -441,12 +441,6 @@ impl ProtoConvert for PaymentOutput {
         let mut proto = blockchain::PaymentOutput::new();
         proto.set_recipient(self.recipient.into_proto());
         proto.set_proof(self.proof.into_proto());
-        let timestamp: u64 = if let Some(locked_timestamp) = self.locked_timestamp {
-            locked_timestamp.into()
-        } else {
-            0u64
-        };
-        proto.set_locked_timestamp(timestamp);
         proto.set_ag(self.ag.into_proto());
         proto.set_payload(self.payload.clone());
         proto
@@ -455,16 +449,11 @@ impl ProtoConvert for PaymentOutput {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let proof = BulletProof::from_proto(proto.get_proof())?;
-        let locked_timestamp: Option<Timestamp> = match proto.get_locked_timestamp() {
-            0 => None,
-            n => Some(n.into()),
-        };
         let ag = Pt::from_proto(proto.get_ag())?;
         let payload = proto.get_payload().to_vec();
         Ok(PaymentOutput {
             recipient,
             proof,
-            locked_timestamp,
             ag,
             payload,
         })
@@ -478,13 +467,6 @@ impl ProtoConvert for PublicPaymentOutput {
         proto.set_recipient(self.recipient.into_proto());
         proto.set_amount(self.amount);
         proto.set_serno(self.serno);
-        let timestamp: u64 = if let Some(locked_timestamp) = self.locked_timestamp {
-            locked_timestamp.into()
-        } else {
-            0u64
-        };
-
-        proto.set_locked_timestamp(timestamp);
         proto
     }
 
@@ -492,15 +474,10 @@ impl ProtoConvert for PublicPaymentOutput {
         let recipient = PublicKey::from_proto(proto.get_recipient())?;
         let amount = proto.get_amount();
         let serno = proto.get_serno();
-        let locked_timestamp: Option<Timestamp> = match proto.get_locked_timestamp() {
-            0 => None,
-            n => Some(n.into()),
-        };
         Ok(PublicPaymentOutput {
             recipient,
             amount,
             serno,
-            locked_timestamp,
         })
     }
 }
@@ -1190,7 +1167,7 @@ mod tests {
         let output: Output = output.into();
         roundtrip(&output);
 
-        let output = PublicPaymentOutput::new_locked(&pkey, 100, Timestamp::now());
+        let output = PublicPaymentOutput::new_locked(&pkey, 100);
 
         roundtrip(&output);
         let output: Output = output.into();

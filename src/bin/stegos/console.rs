@@ -55,7 +55,7 @@ lazy_static! {
     /// Regex to parse "pay" command.
     static ref PAY_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9A-Za-z]+)\s+(?P<amount>[0-9_]{1,25})(?P<arguments>.+)?$").unwrap();
     /// Regex to parse argument of "pay" command.
-    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<lock>(/lock\s*[^/]*)))?(\s+(?P<fee>(/fee\s[0-9_]{1,25})))?(\s+(?P<certificate>(/certificate)))?$").unwrap();
+    static ref PAY_ARGUMENTS_RE: Regex = Regex::new(r"^(\s+(?P<public>(/public)))?(\s+(?P<snowball>(/snowball)))?(\s+(?P<comment>[^/]+?))?(\s+(?P<fee>(/fee\s[0-9_]{1,25})))?(\s+(?P<certificate>(/certificate)))?$").unwrap();
     /// Regex to parse "msg" command.
     static ref MSG_COMMAND_RE: Regex = Regex::new(r"^\s*(?P<recipient>[0-9a-f]+)\s+(?P<msg>.+)$").unwrap();
     /// Regex to parse "stake/unstake" command.
@@ -562,9 +562,9 @@ impl ConsoleService {
                 }
             };
 
-            let (public, snowball, comment, locked_timestamp, payment_fee, with_certificate) =
+            let (public, snowball, comment, payment_fee, with_certificate) =
                 match caps.name("arguments") {
-                    None => (false, false, String::new(), None, PAYMENT_FEE, false),
+                    None => (false, false, String::new(), PAYMENT_FEE, false),
 
                     Some(m) => {
                         let caps = match PAY_ARGUMENTS_RE.captures(m.as_str()) {
@@ -583,10 +583,6 @@ impl ConsoleService {
                             .map(|s| String::from(s.as_str()))
                             .unwrap_or(String::new());
 
-                        let locked_timestamp = match caps.name("lock") {
-                            Some(s) => Some(parse_future_datetime(&s.as_str()[6..])?),
-                            None => None,
-                        };
                         // Parse /fee.
                         let payment_fee = match caps.name("fee") {
                             Some(s) => {
@@ -603,14 +599,7 @@ impl ConsoleService {
                             }
                             None => PAYMENT_FEE, // use the default value.
                         };
-                        (
-                            public,
-                            snowball,
-                            comment,
-                            locked_timestamp,
-                            payment_fee,
-                            certificate,
-                        )
+                        (public, snowball, comment, payment_fee, certificate)
                     }
                 };
 
@@ -640,14 +629,12 @@ impl ConsoleService {
                     amount,
                     payment_fee,
                     comment,
-                    locked_timestamp,
                 }
             } else if public {
                 AccountRequest::PublicPayment {
                     recipient,
                     amount,
                     payment_fee,
-                    locked_timestamp,
                 }
             } else {
                 AccountRequest::Payment {
@@ -655,7 +642,6 @@ impl ConsoleService {
                     amount,
                     payment_fee,
                     comment,
-                    locked_timestamp,
                     with_certificate,
                 }
             };
@@ -742,7 +728,6 @@ impl ConsoleService {
                 amount,
                 payment_fee,
                 comment,
-                locked_timestamp: None,
                 with_certificate: false,
             };
             self.send_account_request(request)?
@@ -1147,17 +1132,6 @@ impl Future for ConsoleService {
 /// Parses durations in free form like 15days 2min 2s
 /// Parses timestamp in RFC 3339/ ISO 8601 format: 2018-01-01T12:53:00Z
 /// Parses timestamps in a weaker format: 2018-01-01 12:53:00
-fn parse_future_datetime(s: &str) -> Result<Timestamp, Error> {
-    match humantime::parse_duration(s) {
-        Ok(duration) => Ok(Timestamp::now() + duration),
-        Err(_e) => match humantime::parse_rfc3339(s) {
-            Ok(timestamp) => Ok(timestamp.into()),
-            Err(e) => return Err(e.into()),
-        },
-    }
-}
-
-/// See parse_future_datetime().
 fn parse_past_datetime(s: &str) -> Result<Timestamp, Error> {
     match humantime::parse_duration(s) {
         Ok(duration) => Ok(Timestamp::now() - duration),

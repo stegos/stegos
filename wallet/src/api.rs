@@ -235,7 +235,8 @@ pub enum AccountRequest {
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum WalletControlRequest {
-    ListAccounts {},
+    ListAccounts {}, // legacy
+    AccountsInfo {},
     CreateAccount {
         password: String,
     },

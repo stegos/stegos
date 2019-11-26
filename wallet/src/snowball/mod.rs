@@ -1490,7 +1490,7 @@ impl Snowball {
         sdebug!(self, "txins hash: {}", state.result());
 
         // get the cloaks we put there for all missing participants
-        let msgs = dc_decode(
+        let msgs = match dc_decode(
             &self.participants,
             &self.matrices,
             &self.my_participant_id,
@@ -1498,7 +1498,13 @@ impl Snowball {
             ROWS_FIXED_SIZE,
             &self.excl_participants, // the excluded participants
             &self.all_excl_cloaks,
-        );
+        ) {
+            Err(_) => {
+                swarn!(self, "DiceMix Error");
+                return self.start();
+            }
+            Ok(ms) => ms,
+        };
         sdebug!(self, "nbr msgs = {}", msgs.len());
 
         let mut all_utxos = Vec::<UTXO>::new();

@@ -42,6 +42,8 @@ use rand_core::SeedableRng;
 use rand_isaac::IsaacRng;
 use std::time::Duration;
 pub use stegos_blockchain::test::*;
+use stegos_blockchain::view_changes::ViewChangeProof;
+use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};
@@ -620,6 +622,58 @@ pub trait Api<'p> {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
         self.poll();
+    }
+    /// Emulate rollback of microblock, for wallet tests
+    fn rollback_microblock(&mut self) {
+        let mut view_changes = Vec::new();
+        let epoch = self.first().node_service.chain.epoch();
+        let offset = self.first().node_service.chain.offset();
+        assert!(offset > 0);
+        let block = self
+            .first()
+            .node_service
+            .chain
+            .micro_block(epoch, offset - 1)
+            .unwrap();
+        let chain_info = ChainInfo {
+            epoch: block.header.epoch,
+            offset: block.header.offset,
+            view_change: block.header.view_change,
+            last_block: block.header.previous,
+        };
+        for node in self.iter_mut() {
+            // chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey
+            let validator_id = node.validator_id().unwrap() as u32;
+            let msg =
+                ViewChangeMessage::new(chain_info, validator_id, &node.node_service.network_skey);
+            view_changes.push(msg)
+        }
+        let signatures = view_changes
+            .iter()
+            .map(|msg| (msg.validator_id, &msg.signature));
+        let proof = ViewChangeProof::new(
+            signatures,
+            self.first().node_service.chain.validators().len(),
+        );
+        let view_change_proof = SealedViewChangeProof {
+            chain: chain_info,
+            proof,
+        };
+        let proof = AddressedViewChangeProof {
+            view_change_proof,
+            pkey: self.first().node_service.network_pkey,
+        };
+        let msg = proof.into_buffer().unwrap();
+        for node in self.iter_mut() {
+            node.network_service
+                .receive_broadcast_raw(VIEW_CHANGE_PROOFS_TOPIC, msg.clone());
+        }
+        if let Some(auditor) = self.auditor_mut() {
+            auditor
+                .network_service
+                .receive_broadcast_raw(VIEW_CHANGE_PROOFS_TOPIC, msg.clone());
+        }
+        self.poll()
     }
 
     fn skip_macro_block(&mut self) {

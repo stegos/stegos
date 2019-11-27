@@ -251,56 +251,88 @@ fn balance_request(account: &mut AccountSandbox) -> AccountBalance {
     }
 }
 
+fn process_tx(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>) -> Hash {
+    s.poll();
+
+    s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+    let balance = balance_request(&mut accounts[0]);
+
+    let recipient = accounts[1].account_service.account_pkey;
+
+    let mut notification = accounts[0].account.subscribe();
+    let rx = accounts[0].account.request(AccountRequest::Payment {
+        recipient,
+        amount: balance.payment.current - PAYMENT_FEE,
+        payment_fee: PAYMENT_FEE,
+        comment: "Test".to_string(),
+        locked_timestamp: None,
+        with_certificate: false,
+    });
+
+    assert_eq!(notification.poll(), Ok(Async::NotReady));
+    accounts[0].poll();
+    let response = get_request(rx);
+    info!("{:?}", response);
+    let my_tx = match response {
+        AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+        _ => panic!("Wrong respnse to payment request"),
+    };
+
+    // poll sandbox, to process transaction.
+    s.poll();
+    // rebroadcast transaction to each node
+    s.broadcast(stegos_node::TX_TOPIC);
+    accounts[0].poll();
+    match get_notification(&mut notification) {
+        AccountNotification::TransactionStatus {
+            tx_hash,
+            status: TransactionStatus::Accepted {},
+        } => assert_eq!(tx_hash, my_tx),
+        _ => unreachable!(),
+    }
+    s.skip_micro_block();
+
+    accounts[0].poll();
+
+    match get_notification(&mut notification) {
+        AccountNotification::TransactionStatus {
+            tx_hash,
+            status: TransactionStatus::Prepared { .. },
+        } => assert_eq!(tx_hash, my_tx),
+        _ => unreachable!(),
+    }
+    my_tx
+}
+
 #[test]
 fn full_transfer() {
     Sandbox::start(Default::default(), |mut s| {
         let mut accounts = genesis_accounts(&mut s);
+        let tx_hash = process_tx(&mut s, &mut accounts);
+    });
+}
 
-        s.poll();
-
-        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
-        let balance = balance_request(&mut accounts[0]);
-
-        let recipient = accounts[1].account_service.account_pkey;
+#[test]
+fn full_transfer_with_rollback() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+        let my_tx = process_tx(&mut s, &mut accounts);
 
         let mut notification = accounts[0].account.subscribe();
-        let rx = accounts[0].account.request(AccountRequest::Payment {
-            recipient,
-            amount: balance.payment.current - 2 * PAYMENT_FEE,
-            payment_fee: PAYMENT_FEE,
-            comment: "Test".to_string(),
-            with_certificate: false,
-        });
-
-        assert_eq!(notification.poll(), Ok(Async::NotReady));
-        accounts[0].poll();
-        let response = get_request(rx);
-        info!("{:?}", response);
-        let my_tx = match response {
-            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
-            _ => panic!("Wrong respnse to payment request"),
-        };
-
-        // poll sandbox, to process transaction.
         s.poll();
-        // rebroadcast transaction to each node
-        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        let offset = s.first().chain().offset();
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        s.rollback_microblock();
+        s.assert_synchronized();
+
+        let new_offset = s.first().chain().offset();
+        assert!(offset == new_offset + 1);
         accounts[0].poll();
         match get_notification(&mut notification) {
             AccountNotification::TransactionStatus {
                 tx_hash,
-                status: TransactionStatus::Accepted {},
-            } => assert_eq!(tx_hash, my_tx),
-            _ => unreachable!(),
-        }
-        s.skip_micro_block();
-
-        accounts[0].poll();
-
-        match get_notification(&mut notification) {
-            AccountNotification::TransactionStatus {
-                tx_hash,
-                status: TransactionStatus::Prepared { .. },
+                status: TransactionStatus::Created {},
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }

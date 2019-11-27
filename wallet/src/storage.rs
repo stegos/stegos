@@ -26,7 +26,7 @@
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
-use log::{debug, trace};
+use log::{debug, info, trace};
 use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
 use std::mem;
@@ -79,6 +79,10 @@ pub struct AccountDatabase {
     created_txs: HashMap<Hash, Timestamp>,
     /// Index of all transactions that wasn't rejected or committed.
     pending_txs: HashSet<Hash>,
+    /// Index of inputs of pending_txs,
+    inputs: HashMap<Hash, Hash>,
+    /// Index of outputs of pending_txs,
+    outputs: HashMap<Hash, Hash>,
     /// Transactions that was created in current epoch.
     epoch_transactions: HashSet<Hash>,
 }
@@ -99,6 +103,8 @@ impl AccountDatabase {
             database,
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
@@ -121,6 +127,8 @@ impl AccountDatabase {
             database,
             created_txs: HashMap::new(),
             pending_txs: HashSet::new(),
+            inputs: HashMap::new(),
+            outputs: HashMap::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
@@ -155,10 +163,10 @@ impl AccountDatabase {
                 }
                 LogEntry::Outgoing { tx } => {
                     let tx_hash = Hash::digest(&tx.tx);
-                    let status = tx.status;
+                    let status = tx.status.clone();
                     trace!("Recovered tx: tx={}, status={:?}", tx_hash, status);
                     assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-                    self.update_tx_indexes(tx_hash, status.clone());
+                    self.update_tx_indexes(tx.clone());
                     for utxo in tx.outputs.iter() {
                         if utxo.is_change() {
                             let utxo_hash = Hash::digest(&utxo.to_output());
@@ -245,7 +253,128 @@ impl AccountDatabase {
         }
     }
 
-    fn update_tx_indexes(&mut self, tx_hash: Hash, status: TransactionStatus) {
+    /// Mark pending transactions as spent.
+    pub fn prune_txs<'a, HashIterator, HashIterator2>(
+        &mut self,
+        inputs: HashIterator,
+        outputs: HashIterator2,
+    ) -> Result<HashMap<Hash, (TransactionValue, bool)>, Error>
+    where
+        HashIterator: Iterator<Item = &'a Hash>,
+        HashIterator2: Iterator<Item = &'a Output>,
+    {
+        let input_hashes: HashSet<_> = inputs.cloned().collect();
+        let output_hashes: HashSet<_> = outputs.map(Hash::digest).collect();
+        let mut tx_hashes: HashSet<Hash> = HashSet::new();
+        // Collect transactions affected by inputs.
+        for input_hash in &input_hashes {
+            if let Some(tx_hash) = self.inputs.remove(&input_hash) {
+                tx_hashes.insert(tx_hash);
+            }
+        }
+
+        // Collect transactions affected by outputs.
+        for output_hash in &output_hashes {
+            if let Some(tx_hash) = self.outputs.remove(&output_hash) {
+                tx_hashes.insert(tx_hash);
+            }
+        }
+
+        let cf = self.database.cf_handle(HISTORY).expect("cf created");
+        let mut txs = HashMap::new();
+        // Prune transactions.
+        for tx_hash in tx_hashes {
+            let tx_key = self.created_txs.get(&tx_hash).expect("transaction exists");
+            let key = Self::bytes_from_timestamp(*tx_key);
+            let value = self
+                .database
+                .get_cf(cf, &key)?
+                .expect("Log entry not found.");
+            let entry = LogEntry::from_buffer(&value)?;
+            let tx = match entry {
+                LogEntry::Outgoing { tx } => tx,
+                e => panic!("Expected outgoing, found={:?}", e),
+            };
+            for input_hash in &tx.tx.txins {
+                if let Some(tx_hash2) = self.inputs.remove(input_hash) {
+                    assert_eq!(tx_hash2, tx_hash);
+                }
+            }
+            for output in &tx.tx.txouts {
+                let output_hash = Hash::digest(output);
+                if let Some(tx_hash2) = self.outputs.remove(&output_hash) {
+                    assert_eq!(tx_hash2, tx_hash);
+                }
+            }
+            assert!(txs.insert(tx_hash, tx).is_none());
+        }
+
+        let mut statuses = HashMap::new();
+
+        for (hash, tx) in txs {
+            let mut full = true;
+            for input_hash in &tx.tx.txins {
+                if !input_hashes.contains(input_hash) {
+                    full = false;
+                    break;
+                }
+            }
+            if full {
+                for output in &tx.tx.txouts {
+                    let output_hash = Hash::digest(output);
+                    if !output_hashes.contains(&output_hash) {
+                        full = false;
+                        break;
+                    }
+                }
+            }
+
+            info!("Removing transaction: hash={}, full={}", hash, full);
+            assert!(statuses.insert(hash, (tx, full)).is_none());
+        }
+        Ok(statuses)
+    }
+
+    /// Rollback prepared transactions.
+    pub fn rollback_txs(
+        &mut self,
+        current_offset: u32,
+    ) -> Result<HashMap<Hash, TransactionValue>, Error> {
+        let cf = self.database.cf_handle(HISTORY).expect("cf created");
+        let mut txs = HashMap::new();
+        for tx_hash in &self.epoch_transactions {
+            let tx_key = self.created_txs.get(&tx_hash).expect("transaction exists");
+            let key = Self::bytes_from_timestamp(*tx_key);
+            let value = self
+                .database
+                .get_cf(cf, &key)?
+                .expect("Log entry not found.");
+            let entry = LogEntry::from_buffer(&value)?;
+            let tx = match entry {
+                LogEntry::Outgoing { tx } => tx,
+                e => panic!("Expected outgoing, found={:?}", e),
+            };
+            match tx.status {
+                TransactionStatus::Prepared { offset, .. } => {
+                    if offset != current_offset {
+                        continue;
+                    }
+                }
+                status => panic!(
+                    "Expect prepared status, for `epoch_transactions` entry, found={:?}.",
+                    status
+                ),
+            }
+
+            info!("Recovered transaction: hash={}", tx_hash);
+            assert!(txs.insert(*tx_hash, tx).is_none());
+        }
+        Ok(txs)
+    }
+
+    fn update_tx_indexes(&mut self, tx: TransactionValue) {
+        let tx_hash = Hash::digest(&tx.tx);
+        let status = tx.status;
         // update epoch transactions
         match status {
             TransactionStatus::Prepared { .. } => {
@@ -270,6 +399,16 @@ impl AccountDatabase {
                     tx_timestamp
                 );
                 self.pending_txs.insert(tx_hash);
+                for utxo in tx.outputs.iter() {
+                    let utxo_hash = Hash::digest(&utxo.to_output());
+                    if utxo.is_change() {
+                        self.known_changes.insert(utxo_hash);
+                    }
+                    self.outputs.insert(utxo_hash, tx_hash);
+                }
+                for txin in tx.tx.txins.iter() {
+                    self.inputs.insert(*txin, tx_hash);
+                }
             }
             _ => {
                 trace!("Found status that is final, didn't add transaction to pending list.");
@@ -331,17 +470,11 @@ impl AccountDatabase {
     ) -> Result<Timestamp, Error> {
         trace!("Push outgoing tx = {:?}", tx);
         let tx_hash = Hash::digest(&tx.tx);
-        let status = tx.status.clone();
         let entry = LogEntry::Outgoing { tx: tx.clone() };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-        self.update_tx_indexes(tx_hash, status);
-        for utxo in tx.outputs.iter() {
-            if utxo.is_change() {
-                let utxo_hash = Hash::digest(&utxo.to_output());
-                self.known_changes.insert(utxo_hash);
-            }
-        }
+        self.update_tx_indexes(tx.clone());
+
         Ok(timestamp)
     }
 
@@ -372,21 +505,28 @@ impl AccountDatabase {
     /// Edit log entry as by idx.
     pub fn update_tx_status(
         &mut self,
-        tx_hash: Hash,
+        _tx_hash: Hash,
         timestamp: Timestamp,
         status: TransactionStatus,
     ) -> Result<(), Error> {
+        let mut updated_tx = None;
         self.update_log_entry(timestamp, |mut e| {
             match &mut e {
                 LogEntry::Outgoing { ref mut tx } => {
-                    tx.status = status.clone();
+                    if tx.status != status {
+                        tx.status = status.clone();
+                        updated_tx = Some(tx.clone());
+                    }
                 }
                 LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
             };
             Ok(e)
         })?;
 
-        self.update_tx_indexes(tx_hash, status);
+        // If status updated, update indexes.
+        if let Some(tx) = updated_tx {
+            self.update_tx_indexes(tx);
+        }
         Ok(())
     }
 
@@ -435,15 +575,17 @@ impl AccountDatabase {
                 .tx_entry(tx_hash)
                 .expect("Transaction should be found in tx list");
 
-            let mut changed_to_status = None;
+            let mut updated_tx = None;
             self.update_log_entry(timestamp, |mut e| {
                 match &mut e {
                     LogEntry::Outgoing { ref mut tx } => match tx.status {
                         TransactionStatus::Prepared { epoch, .. } => {
                             trace!("Finalize tx={}", tx_hash);
                             let status = TransactionStatus::Committed { epoch };
-                            tx.status = status.clone();
-                            changed_to_status = Some(status);
+                            if tx.status != status {
+                                tx.status = status.clone();
+                                updated_tx = Some(tx.clone());
+                            }
                         }
                         _ => {}
                     },
@@ -452,9 +594,9 @@ impl AccountDatabase {
                 Ok(e)
             })?;
 
-            if let Some(status) = changed_to_status {
-                result.insert(tx_hash, status.clone());
-                self.update_tx_indexes(tx_hash, status);
+            if let Some(tx) = updated_tx {
+                result.insert(tx_hash, tx.status.clone());
+                self.update_tx_indexes(tx);
             }
         }
         Ok(result)

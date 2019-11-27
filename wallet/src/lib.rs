@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod change;
@@ -1620,13 +1620,37 @@ impl Future for UnsealedAccountService {
             match rx.poll().expect("all errors are already handled") {
                 Async::Ready(Some(notification)) => match notification {
                     ChainNotification::MicroBlockPrepared(block) => {
+                        let epoch = block.block.header.epoch;
+                        let offset = block.block.header.offset;
                         trace!(
                             "Prepared a micro block: epoch={}, offset={}, block={}",
-                            block.block.header.epoch,
-                            block.block.header.offset,
+                            epoch,
+                            offset,
                             Hash::digest(&block.block)
                         );
-                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        let txs = match self.database.prune_txs(block.inputs(), block.outputs()) {
+                            Ok(txs) => txs,
+                            Err(e) => {
+                                error!("Error duiring processing event = {}", e);
+                                return Err(());
+                            }
+                        };
+                        let statuses = txs
+                            .into_iter()
+                            .map(|(k, v)| {
+                                let status = if v.1 {
+                                    TransactionStatus::Prepared { epoch, offset }
+                                } else {
+                                    TransactionStatus::Conflicted {
+                                        epoch,
+                                        offset: Some(offset),
+                                    }
+                                };
+
+                                (k, status)
+                            })
+                            .collect();
+                        self.on_tx_statuses_changed(&statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.inputs(),
@@ -1636,12 +1660,35 @@ impl Future for UnsealedAccountService {
                         );
                     }
                     ChainNotification::MacroBlockCommitted(block) => {
+                        let epoch = block.block.header.epoch;
                         trace!(
                             "Committed a macro block: epoch={}, block={}",
-                            block.block.header.epoch,
+                            epoch,
                             Hash::digest(&block.block)
                         );
-                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        let txs = match self.database.prune_txs(block.inputs(), block.outputs()) {
+                            Ok(txs) => txs,
+                            Err(e) => {
+                                error!("Error duiring processing event = {}", e);
+                                return Err(());
+                            }
+                        };
+                        let statuses = txs
+                            .into_iter()
+                            .map(|(k, v)| {
+                                let status = if v.1 {
+                                    TransactionStatus::Committed { epoch }
+                                } else {
+                                    TransactionStatus::Conflicted {
+                                        epoch,
+                                        offset: None,
+                                    }
+                                };
+
+                                (k, status)
+                            })
+                            .collect();
+                        self.on_tx_statuses_changed(&statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.inputs(),
@@ -1656,10 +1703,12 @@ impl Future for UnsealedAccountService {
                         );
                     }
                     ChainNotification::MicroBlockReverted(block) => {
+                        let epoch = block.block.header.epoch;
+                        let offset = block.block.header.offset;
                         trace!(
                             "Reverted a micro block: epoch={}, offset={}, block={}, inputs={:?}, outputs={:?}",
-                            block.block.header.epoch,
-                            block.block.header.offset,
+                            epoch,
+                            offset,
                             Hash::digest(&block.block),
                             block
                                 .pruned_outputs()
@@ -1672,8 +1721,21 @@ impl Future for UnsealedAccountService {
                                 .map(|k| k.to_string())
                                 .collect::<Vec<_>>(),
                         );
-
-                        self.on_tx_statuses_changed(&block.transaction_statuses);
+                        let txs = match self.database.rollback_txs(offset) {
+                            Ok(txs) => txs,
+                            Err(e) => {
+                                error!("Error duiring processing event = {}", e);
+                                return Err(());
+                            }
+                        };
+                        let statuses = txs
+                            .into_iter()
+                            .map(|(k, _)| {
+                                let status = TransactionStatus::Created {};
+                                (k, status)
+                            })
+                            .collect();
+                        self.on_tx_statuses_changed(&statuses);
                         self.on_outputs_changed(
                             block.block.header.epoch,
                             block.pruned_outputs(),

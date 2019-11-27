@@ -399,7 +399,7 @@ pub mod tests {
         let h = Hash::from_vector(b"");
         let chk = hex::decode("a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a")
             .unwrap();
-        for (a, b) in h.bits().into_iter().zip(chk.iter()) {
+        for (a, b) in h.bits().iter().zip(chk.iter()) {
             assert_eq!(a, b);
         }
     }

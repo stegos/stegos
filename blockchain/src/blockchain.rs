@@ -980,7 +980,7 @@ impl Blockchain {
         outputs: OutputIter,
     ) -> Result<(), BlockchainError>
     where
-        OutputIter: Iterator<Item = (&'a Output)>,
+        OutputIter: Iterator<Item = &'a Output>,
     {
         self.escrow.validate_stakes(inputs, outputs, self.epoch)
     }

@@ -76,7 +76,7 @@ fn parse_cargo_toml() -> Result<VersionInfo, failure::Error> {
     })
 }
 
-fn parse_describe() -> Result<(VersionInfo), failure::Error> {
+fn parse_describe() -> Result<VersionInfo, failure::Error> {
     // Run `git describe --long` and parse the output.
     // v0.1-49-g895818f
 

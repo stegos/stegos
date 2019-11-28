@@ -552,7 +552,7 @@ impl UnsealedAccountService {
         }
 
         if payment_amount <= payment_fee {
-            return Err(WalletError::NotEnoughMoney.into());
+            return Err(WalletError::InsufficientTransaction(payment_fee, payment_amount).into());
         }
 
         info!("Found payment outputs: amount={}", payment_amount);
@@ -668,7 +668,7 @@ impl UnsealedAccountService {
             amount += output.amount;
         }
         if amount <= payment_fee {
-            return Err(WalletError::NotEnoughMoney.into());
+            return Err(WalletError::InsufficientTransaction(payment_fee, amount).into());
         }
         self.unstake(amount, payment_fee)
     }

@@ -266,7 +266,7 @@ fn full_transfer() {
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
-            amount: balance.payment.current - PAYMENT_FEE,
+            amount: balance.payment.current - 2 * PAYMENT_FEE,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
             with_certificate: false,
@@ -809,7 +809,7 @@ fn snowball_start(
 fn create_snowball_tx() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1090,7 +1090,7 @@ fn create_snowball_tx() {
 fn snowball_lock_utxo() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1109,9 +1109,10 @@ fn snowball_lock_utxo() {
         assert!(num_nodes >= 3);
 
         let recipient = accounts[3].account_service.account_pkey;
-
+        // we can receive some reward during this test, so available can be > 0.
         let balance = balance_request(&mut accounts[0]);
         assert!(balance.payment.available > 0);
+        assert!(balance.payment.available == balance.payment.current);
 
         let mut notification = accounts[0].account.subscribe();
         let mut response =
@@ -1120,31 +1121,35 @@ fn snowball_lock_utxo() {
 
         s.filter_unicast(&[stegos_node::txpool::POOL_JOIN_TOPIC]);
         let balance = balance_request(&mut accounts[0]);
-        assert_eq!(balance.payment.available, 0);
-        let mut response2 = accounts[0].account.request(AccountRequest::Payment {
-            recipient,
-            amount: SEND_TOKENS,
-            payment_fee: PAYMENT_FEE,
-            comment: "Test".to_string(),
-            with_certificate: false,
-        });
-        accounts[0].poll();
+        assert!(balance.payment.available < balance.payment.current);
 
-        assert_eq!(response.poll(), Ok(Async::NotReady));
+        // if available == 0 then no new transaction should be created
+        if balance.payment.available == 0 {
+            let mut response2 = accounts[0].account.request(AccountRequest::Payment {
+                recipient,
+                amount: SEND_TOKENS,
+                payment_fee: PAYMENT_FEE,
+                comment: "Test".to_string(),
+                with_certificate: false,
+            });
+            accounts[0].poll();
 
-        // second request failed, because of locked utxos.
-        let response2 = get_request(response2);
+            assert_eq!(response.poll(), Ok(Async::NotReady));
+            // second request failed, because of locked utxos.
+            let response2 = get_request(response2);
 
-        match response2 {
-            AccountResponse::Error { error } => {
-                assert!(error.starts_with("No enough payment UTXO available"))
-            }
-            _ => unreachable!(),
-        };
+            match response2 {
+                AccountResponse::Error { error } => {
+                    assert!(error.starts_with("No enough payment UTXO available"))
+                }
+                _ => unreachable!(),
+            };
+        }
 
         s.wait(crate::PENDING_UTXO_TIME);
         let balance = balance_request(&mut accounts[0]);
         assert!(balance.payment.available > 0);
+        assert!(balance.payment.available == balance.payment.current);
         accounts[0].poll();
         let response = get_request(response);
         match response {
@@ -1165,10 +1170,10 @@ fn snowball_lock_utxo() {
         let response3 = get_request(response3);
         match response3 {
             AccountResponse::TransactionCreated(_) => {}
-            _ => unreachable!(),
+            e => panic!("{:?}", e),
         };
         let balance = balance_request(&mut accounts[0]);
-        assert_eq!(balance.payment.available, 0);
+        assert!(balance.payment.available < balance.payment.current);
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }
@@ -1179,7 +1184,7 @@ fn snowball_lock_utxo() {
 fn snowball_failed_join() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1268,7 +1273,7 @@ fn annihilation() {
 fn snowball_with_wrong_facilitator_pool() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1320,7 +1325,7 @@ fn snowball_with_wrong_facilitator_pool() {
 fn create_snowball_simple() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1439,7 +1444,7 @@ fn create_snowball_simple() {
 fn create_snowball_fail_share_key() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1563,7 +1568,7 @@ fn create_snowball_fail_share_key() {
 fn create_snowball_fail_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1698,7 +1703,7 @@ fn create_snowball_fail_commitment() {
 fn create_snowball_fail_cloacked_vals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -1926,7 +1931,7 @@ fn deliver_with_restart(
 fn create_snowball_asymetric_dropouts_sharing() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -2004,7 +2009,7 @@ fn create_snowball_asymetric_dropouts_sharing() {
 fn create_snowball_asymetric_dropouts_cloackedvals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
@@ -2086,7 +2091,7 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
 fn create_snowball_asymetric_dropouts_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
-    const MIN_AMOUNT: i64 = SEND_TOKENS + PAYMENT_FEE;
+    const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
     // set micro_blocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {

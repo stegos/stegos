@@ -105,10 +105,6 @@ pub struct PaymentOutput {
     /// Size is approx. 1 KB (very structured data type).
     pub proof: BulletProof,
 
-    /// Timelock for output.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked_timestamp: Option<Timestamp>,
-
     /// AES keying hint needed to decrypt payload.
     pub ag: Pt,
 
@@ -127,10 +123,6 @@ pub struct PublicPaymentOutput {
 
     /// Uncloaked amount
     pub amount: i64,
-
-    /// Timelock for output.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked_timestamp: Option<Timestamp>,
 }
 
 /// Stake UTXO.
@@ -515,7 +507,6 @@ impl PaymentOutput {
         recipient_pkey: &PublicKey,
         amount: i64,
         data: PaymentPayloadData,
-        locked_timestamp: Option<Timestamp>,
     ) -> Result<(Self, Fr, Fr), BlockchainError> {
         // Create range proofs.
         let (proof, gamma) = make_range_proof(amount);
@@ -540,7 +531,6 @@ impl PaymentOutput {
         let output = PaymentOutput {
             recipient: cloaked_pkey,
             proof,
-            locked_timestamp,
             ag,
             payload,
         };
@@ -551,7 +541,7 @@ impl PaymentOutput {
     /// Create a new PaymentOutput.
     pub fn new(recipient_pkey: &PublicKey, amount: i64) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
-        let (output, gamma, _) = Self::with_payload(None, recipient_pkey, amount, data, None)?;
+        let (output, gamma, _) = Self::with_payload(None, recipient_pkey, amount, data)?;
         Ok((output, gamma))
     }
 
@@ -559,11 +549,9 @@ impl PaymentOutput {
     pub fn new_locked(
         recipient_pkey: &PublicKey,
         amount: i64,
-        locked_timestamp: Timestamp,
     ) -> Result<(Self, Fr), BlockchainError> {
         let data = PaymentPayloadData::Comment(String::new());
-        let (output, gamma, _) =
-            Self::with_payload(None, recipient_pkey, amount, data, locked_timestamp.into())?;
+        let (output, gamma, _) = Self::with_payload(None, recipient_pkey, amount, data)?;
         Ok((output, gamma))
     }
 
@@ -641,21 +629,15 @@ impl PublicPaymentOutput {
             recipient: recipient_pkey.clone(),
             serno,
             amount,
-            locked_timestamp: None,
         }
     }
 
-    pub fn new_locked(
-        recipient_pkey: &PublicKey,
-        amount: i64,
-        locked_timestamp: Timestamp,
-    ) -> Self {
+    pub fn new_locked(recipient_pkey: &PublicKey, amount: i64) -> Self {
         let serno = random::<i64>();
         PublicPaymentOutput {
             recipient: recipient_pkey.clone(),
             serno,
             amount,
-            locked_timestamp: locked_timestamp.into(),
         }
     }
 
@@ -780,15 +762,6 @@ impl Output {
         }
     }
 
-    /// Returns timestamp when tx could be spent.
-    pub fn locked_timestamp(&self) -> Option<Timestamp> {
-        match self {
-            Output::PaymentOutput(o) => o.locked_timestamp.clone(),
-            Output::PublicPaymentOutput(o) => o.locked_timestamp.clone(),
-            Output::StakeOutput(_) => None,
-        }
-    }
-
     /// Returns canary for the light nodes.
     pub fn canary(&self) -> Canary {
         match self {
@@ -822,7 +795,6 @@ impl Hashable for PaymentOutput {
         "Payment".hash(state);
         self.recipient.hash(state);
         self.proof.hash(state);
-        self.locked_timestamp.hash(state);
         self.ag.hash(state);
         self.payload.hash(state);
     }
@@ -834,7 +806,6 @@ impl Hashable for PublicPaymentOutput {
         self.recipient.hash(state);
         self.serno.hash(state);
         self.amount.hash(state);
-        self.locked_timestamp.hash(state);
     }
 }
 
@@ -1103,8 +1074,7 @@ pub mod tests {
         let amount: i64 = 100500;
         let data = PaymentPayloadData::Comment("hello".to_string());
         let (output, gamma, _rvalue) =
-            PaymentOutput::with_payload(None, &pkey2, amount, data, None)
-                .expect("encryption successful");
+            PaymentOutput::with_payload(None, &pkey2, amount, data).expect("encryption successful");
         let payload = output
             .decrypt_payload(&pkey2, &skey2)
             .expect("decryption successful");
@@ -1135,7 +1105,7 @@ pub mod tests {
         let amount = 100500;
         let data = PaymentPayloadData::Comment("Hello".to_string());
         let (output, _gamma, rvalue) =
-            PaymentOutput::with_payload(Some(&spender_skey), &recipient_pkey, amount, data, None)
+            PaymentOutput::with_payload(Some(&spender_skey), &recipient_pkey, amount, data)
                 .expect("encryption successful");
 
         let amount2 = output

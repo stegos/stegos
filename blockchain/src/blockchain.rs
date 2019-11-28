@@ -1264,14 +1264,9 @@ impl Blockchain {
         {
             let block_reward = self.cfg.block_reward;
             let data = PaymentPayloadData::Comment("Block reward".to_string());
-            let (output, gamma, _rvalue) = PaymentOutput::with_payload(
-                None,
-                &beneficiary_pkey,
-                block_reward,
-                data.clone(),
-                None,
-            )
-            .expect("invalid keys");
+            let (output, gamma, _rvalue) =
+                PaymentOutput::with_payload(None, &beneficiary_pkey, block_reward, data.clone())
+                    .expect("invalid keys");
 
             info!(
                 "Created reward UTXO: hash={}, amount={}, data={:?}",

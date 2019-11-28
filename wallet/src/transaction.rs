@@ -59,7 +59,6 @@ pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     data: PaymentPayloadData,
-    locked_timestamp: Option<Timestamp>,
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
 where
@@ -124,14 +123,13 @@ where
         recip: recipient.clone(),
         amount,
         data: data.clone(),
-        locked_timestamp,
         is_change: false,
     };
     outputs.push(output1);
 
     info!(
-        "Created payment UTXO: recipient={}, amount={}, locked={:?}, data={:?}",
-        recipient, amount, locked_timestamp, data
+        "Created payment UTXO: recipient={}, amount={}, data={:?}",
+        recipient, amount, data
     );
 
     if change > 0 {
@@ -142,7 +140,6 @@ where
             recip: sender_pkey.clone(),
             amount: change,
             data: data.clone(),
-            locked_timestamp: None,
             is_change: true,
         };
         info!(
@@ -173,7 +170,6 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     amount: i64,
     payment_fee: i64,
     transaction: TransactionType,
-    locked_timestamp: Option<Timestamp>,
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<OutputValue>, i64), Error>
 where
@@ -226,21 +222,16 @@ where
         TransactionType::Regular(data) => {
             data.validate()?;
             trace!("Creating payment UTXO...");
-            let (output1, gamma1, rvalue) = PaymentOutput::with_payload(
-                certificate_skey,
-                recipient,
-                amount,
-                data.clone(),
-                locked_timestamp,
-            )?;
+            let (output1, gamma1, rvalue) =
+                PaymentOutput::with_payload(certificate_skey, recipient, amount, data.clone())?;
 
             // return rvalue only if signature was created.
             let rvalue = certificate_skey.map(|_| rvalue);
 
             let output1_hash = Hash::digest(&output1);
             info!(
-                "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}, locked={:?}",
-                output1_hash, recipient, amount, data, locked_timestamp
+                "Created payment UTXO: hash={}, recipient={}, amount={}, data={:?}",
+                output1_hash, recipient, amount, data
             );
 
             let extended_output = PaymentValue {
@@ -257,15 +248,11 @@ where
         TransactionType::Public => {
             trace!("Creating public payment UTXO...");
             let gamma1 = Fr::zero();
-            let output1 = if let Some(locked_timestamp) = locked_timestamp {
-                PublicPaymentOutput::new_locked(recipient, amount, locked_timestamp)
-            } else {
-                PublicPaymentOutput::new(recipient, amount)
-            };
+            let output1 = PublicPaymentOutput::new(recipient, amount);
             let output1_hash = Hash::digest(&output1);
             info!(
-                "Created public payment UTXO: hash={}, recipient={}, amount={}, locked={:?}",
-                output1_hash, recipient, amount, locked_timestamp
+                "Created public payment UTXO: hash={}, recipient={}, amount={}",
+                output1_hash, recipient, amount
             );
 
             // TODO: support public addresses.
@@ -288,7 +275,7 @@ where
         trace!("Creating change UTXO...");
         let data = PaymentPayloadData::Comment("Change".to_string());
         let (output2, gamma2, _rvalue) =
-            PaymentOutput::with_payload(None, sender_pkey, change, data.clone(), None)?;
+            PaymentOutput::with_payload(None, sender_pkey, change, data.clone())?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
             Hash::digest(&output2),
@@ -406,7 +393,7 @@ where
         trace!("Creating change UTXO...");
         let data = PaymentPayloadData::Comment(String::from("Change for stake."));
         let (output2, gamma2, _rvalue) =
-            PaymentOutput::with_payload(None, sender_pkey, change, data.clone(), None)?;
+            PaymentOutput::with_payload(None, sender_pkey, change, data.clone())?;
         info!(
             "Created change UTXO: hash={}, recipient={}, change={}",
             Hash::digest(&output2),
@@ -516,7 +503,7 @@ where
     trace!("Creating payment UTXO...");
     let data = PaymentPayloadData::Comment(String::from("Change for stake."));
     let (output1, gamma1, _rvalue) =
-        PaymentOutput::with_payload(None, sender_pkey, amount, data.clone(), None)?;
+        PaymentOutput::with_payload(None, sender_pkey, amount, data.clone())?;
     info!(
         "Created payment UTXO: hash={}, recipient={}, amount={}",
         Hash::digest(&output1),

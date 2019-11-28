@@ -99,8 +99,8 @@ use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::mem;
 use std::time::Duration;
+use stegos_blockchain::Output;
 use stegos_blockchain::PaymentTransaction;
-use stegos_blockchain::{Output, Timestamp};
 use stegos_blockchain::{PaymentOutput, PaymentPayloadData};
 use stegos_crypto::bulletproofs::{simple_commit, validate_range_proof};
 use stegos_crypto::dicemix::*;
@@ -166,7 +166,6 @@ pub struct ProposedUTXO {
     pub recip: PublicKey, // payee key (uncloaked)
     pub amount: i64,
     pub data: PaymentPayloadData,
-    pub locked_timestamp: Option<Timestamp>,
     pub is_change: bool,
 }
 
@@ -1896,7 +1895,6 @@ impl Snowball {
                 &txout.recip,
                 txout.amount,
                 txout.data,
-                txout.locked_timestamp,
             )
             .expect("Can't produce Payment UTXO");
             outs.push((output, gamma));

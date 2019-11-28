@@ -25,7 +25,7 @@ use crate::error::*;
 use crate::mempool::Mempool;
 use failure::Error;
 use stegos_blockchain::Timestamp;
-use stegos_blockchain::{Blockchain, Output, OutputError, Transaction, TransactionError};
+use stegos_blockchain::{Blockchain, Output, Transaction, TransactionError};
 use stegos_crypto::hash::Hash;
 
 ///
@@ -73,17 +73,6 @@ pub(crate) fn validate_external_transaction(
                 return Err(TransactionError::MissingInput(tx_hash, input_hash.clone()).into());
             }
         };
-
-        if let Some(timestamp) = input.locked_timestamp() {
-            if timestamp >= chain.last_macro_block_timestamp() {
-                return Err(OutputError::UtxoLocked(
-                    *input_hash,
-                    timestamp,
-                    chain.last_macro_block_timestamp(),
-                )
-                .into());
-            }
-        }
 
         // Check that the input is not claimed by other transactions.
         if mempool.contains_input(input_hash) {

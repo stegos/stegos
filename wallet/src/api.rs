@@ -65,8 +65,6 @@ pub struct PaymentInfo {
     #[serde(flatten)]
     pub data: PaymentPayloadData,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked_timestamp: Option<Timestamp>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_timestamp: Option<Timestamp>,
     pub recipient: scc::PublicKey,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -78,8 +76,6 @@ pub struct PaymentInfo {
 pub struct PublicPaymentInfo {
     pub output_hash: Hash,
     pub amount: i64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub locked_timestamp: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_timestamp: Option<Timestamp>,
     pub recipient: scc::PublicKey,
@@ -179,21 +175,18 @@ pub enum AccountRequest {
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<Timestamp>,
         with_certificate: bool,
     },
     PublicPayment {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
-        locked_timestamp: Option<Timestamp>,
     },
     SecurePayment {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
-        locked_timestamp: Option<Timestamp>,
     },
     StakeAll {
         payment_fee: i64,

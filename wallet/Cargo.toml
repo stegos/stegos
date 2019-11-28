@@ -20,6 +20,7 @@ stegos_network = { version = "1.0.0", path = "../network" }
 stegos_txpool = { version = "1.0.0", path = "../txpool" }
 stegos_node = { version = "1.0.0", path = "../node" }
 stegos_serialization = { version = "1.0.0", path = "../serialization" }
+bit-vec = "0.6"
 serde = "1.0"
 serde_derive = "1.0"
 failure = "0.1"

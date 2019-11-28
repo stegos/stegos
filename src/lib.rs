@@ -95,11 +95,8 @@ fn init(
 
     // Initialize blockchain
     let (genesis, chain_cfg) = initialize_chain(&chain_name)?;
-    info!(
-        "Using '{}' chain, genesis={}",
-        chain_name,
-        Hash::digest(&genesis)
-    );
+    let genesis_hash = Hash::digest(&genesis);
+    info!("Using '{}' chain, genesis={}", chain_name, genesis_hash);
     let timestamp = Timestamp::now();
     let chain = Blockchain::new(
         chain_cfg.clone(),
@@ -131,7 +128,8 @@ fn init(
         network.clone(),
         node.clone(),
         rt.executor(),
-        chain_cfg.stake_epochs,
+        genesis_hash,
+        chain_cfg,
         node_cfg.max_inputs_in_tx,
         epoch,
     )?;

@@ -1,3 +1,5 @@
+//! LightNode + Wallet database.
+
 //
 // Copyright (c) 2019 Stegos AG
 //
@@ -19,28 +21,23 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-//!
-//! Data objects used to store information about transaction, produced outputs, and consumed inputs.
-//!
-
 use crate::api::*;
+use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
-use log::{debug, info, trace};
+use log::*;
 use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
+use serde_derive::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
-use stegos_blockchain::{
-    Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
-    StakeOutput, Timestamp,
-};
+use stegos_blockchain::mvcc::MultiVersionedMap;
+use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::scc::{Fr, PublicKey};
-use stegos_node::TransactionStatus;
+use stegos_crypto::pbc;
+use stegos_crypto::scc::{self, Fr};
 use stegos_serialization::traits::ProtoConvert;
-use tempdir::TempDir;
 use tokio_timer::clock;
 
 // colon families.
@@ -50,7 +47,15 @@ const META: &'static str = "meta";
 const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
 
 // Keys in meta cf
-const EPOCH_KEY: &[u8; 9] = b"epoch_key";
+const EPOCH_KEY: &[u8; 5] = b"epoch";
+
+/// A special offset used to tore Macro Blocks on the disk.
+const MACRO_BLOCK_OFFSET: u32 = u32::max_value();
+
+#[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
+struct LSN(u64, u32); // use `struct` to disable explicit casts.
+
+type OutputByHashMap = MultiVersionedMap<Hash, OutputValue, LSN>;
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -58,31 +63,42 @@ pub enum LogEntry {
     Outgoing { tx: TransactionValue },
 }
 
-/// Currently we support only transaction that have 2 outputs,
-/// one for recipient, and one for change.
-pub struct AccountDatabase {
-    /// Guard object for temporary directory.
-    _temp_dir: Option<TempDir>,
+///
+/// LightNode + Wallet database.
+///
+pub struct LightDatabase {
     /// RocksDB database object.
     database: DB,
-
+    /// Configuration.
+    cfg: ChainConfig,
     /// Current Epoch.
     epoch: u64,
-    /// Index of epoch UTXOS, that is not final.
-    utxos: HashMap<Hash, UnspentOutput>,
+    /// The hash of genesis block.
+    genesis_hash: Hash,
+    /// Copy of the last macro block hash.
+    last_macro_block_hash: Hash,
+    /// Copy of the last macro block random.
+    last_macro_block_random: Hash,
+    /// Validators on the start of the epoch.
+    validators: StakersGroup,
+    /// Facilitator.
+    facilitator_pkey: pbc::PublicKey,
+    /// Micro blocks for the current epoch.
+    micro_blocks: Vec<MicroBlockHeader>,
+
+    /// In-memory index of all UTXOs.
+    utxos: OutputByHashMap,
     /// Index of UTXOS that known to be change.
     known_changes: HashSet<Hash>,
     /// Is last update of UTXO was in current epoch.
-    /// TODO: encapsulate this member.
-    pub(super) current_epoch_balance_changed: bool,
+    current_epoch_balance_changed: bool,
     /// Index of all created UTXOs by this wallet.
     utxos_list: HashMap<Hash, Timestamp>,
     /// Index of all created transactions by this wallet.
     created_txs: HashMap<Hash, Timestamp>,
-    /// List of pending utxos.
+    /// List of locked inputs.
     // Store time in Instant, to be more compatible with tokio-timer.
-    /// TODO: encapsulate this member.
-    pub(super) pending_payments: HashMap<Hash, PendingOutput>,
+    locked_inputs: HashMap<Hash, LockedInput>,
     /// Index of all transactions that wasn't rejected or committed.
     pending_txs: HashSet<Hash>,
     /// Index of inputs of pending_txs,
@@ -93,10 +109,9 @@ pub struct AccountDatabase {
     epoch_transactions: HashSet<Hash>,
 }
 
-//Account log api.
-impl AccountDatabase {
+impl LightDatabase {
     /// Open database.
-    pub fn open(path: &Path) -> AccountDatabase {
+    pub fn open(path: &Path, genesis_hash: Hash, cfg: ChainConfig) -> LightDatabase {
         debug!("Database path = {}", path.to_string_lossy());
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -104,48 +119,29 @@ impl AccountDatabase {
         let database = DB::open_cf(&opts, path, COLON_FAMILIES).expect("couldn't open database");
         debug!("Loading database");
 
-        let mut log = AccountDatabase {
-            _temp_dir: None,
+        let mut log = LightDatabase {
             database,
             epoch: 0,
+            cfg,
+            genesis_hash,
+            last_macro_block_hash: Hash::digest("genesis"),
+            last_macro_block_random: Hash::digest("genesis"),
+            validators: vec![],
+            facilitator_pkey: pbc::PublicKey::dum(),
+            micro_blocks: Vec::new(),
             created_txs: HashMap::new(),
-            pending_payments: HashMap::new(),
+            locked_inputs: HashMap::new(),
             pending_txs: HashSet::new(),
             inputs: HashMap::new(),
             outputs: HashMap::new(),
             epoch_transactions: HashSet::new(),
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
-            utxos: HashMap::new(),
+            utxos: MultiVersionedMap::new(),
             current_epoch_balance_changed: false,
         };
-        log.epoch = log.recover_state();
+        log.recover_state();
         log
-    }
-
-    #[allow(unused)]
-    pub fn testing() -> AccountDatabase {
-        let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
-        let mut opts = Options::default();
-        opts.create_if_missing(true);
-        opts.create_missing_column_families(true);
-        let database =
-            DB::open_cf(&opts, temp_dir.path(), COLON_FAMILIES).expect("couldn't open database");
-        AccountDatabase {
-            _temp_dir: Some(temp_dir),
-            database,
-            created_txs: HashMap::new(),
-            pending_payments: HashMap::new(),
-            pending_txs: HashSet::new(),
-            inputs: HashMap::new(),
-            outputs: HashMap::new(),
-            epoch_transactions: HashSet::new(),
-            utxos_list: HashMap::new(),
-            known_changes: HashSet::new(),
-            utxos: HashMap::new(),
-            epoch: 0,
-            current_epoch_balance_changed: false,
-        }
     }
 
     pub fn is_known_changes(&self, utxo: Hash) -> bool {
@@ -154,15 +150,52 @@ impl AccountDatabase {
         exist
     }
 
-    /// Returns current epoch
-    #[inline]
+    /// Return the current blockchain epoch.
+    #[inline(always)]
     pub fn epoch(&self) -> u64 {
         self.epoch
     }
 
-    /// TODO: remove this method.
-    pub fn on_epoch_changed(&mut self, epoch: u64) {
-        self.epoch = epoch;
+    /// Returns the number of blocks in the current epoch.
+    #[inline(always)]
+    pub fn offset(&self) -> u32 {
+        self.micro_blocks.len() as u32
+    }
+
+    /// Returns a hash of genetic block.
+    #[inline(always)]
+    pub fn genesis_hash(&self) -> &Hash {
+        &self.genesis_hash
+    }
+
+    /// Returns facilitator's public key.
+    #[inline(always)]
+    pub fn facilitator_pkey(&self) -> &pbc::PublicKey {
+        &self.facilitator_pkey
+    }
+
+    /// Returns chain configuration.
+    #[inline(always)]
+    pub fn cfg(&self) -> &ChainConfig {
+        &self.cfg
+    }
+
+    /// Returns the last block hash.
+    pub fn last_block_hash(&self) -> Hash {
+        if let Some(header) = self.micro_blocks.last() {
+            Hash::digest(header)
+        } else {
+            self.last_macro_block_hash
+        }
+    }
+
+    /// Returns the last random.
+    pub fn last_block_random(&self) -> Hash {
+        if let Some(header) = self.micro_blocks.last() {
+            header.random.rand
+        } else {
+            self.last_macro_block_random
+        }
     }
 
     /// Get actual balance.
@@ -176,7 +209,7 @@ impl AccountDatabase {
                     ..
                 }) => {
                     balance.payment.current += amount;
-                    if self.pending_payments.get(&hash).is_some() {
+                    if self.locked_inputs.get(&hash).is_some() {
                         continue;
                     }
                     balance.payment.available += amount;
@@ -186,7 +219,7 @@ impl AccountDatabase {
                     ..
                 }) => {
                     balance.public_payment.current += amount;
-                    if self.pending_payments.get(&hash).is_some() {
+                    if self.locked_inputs.get(&hash).is_some() {
                         continue;
                     }
                     balance.public_payment.available += amount;
@@ -197,7 +230,7 @@ impl AccountDatabase {
                     ..
                 }) => {
                     balance.stake.current += amount;
-                    if self.pending_payments.get(&hash).is_some() {
+                    if self.locked_inputs.get(&hash).is_some() {
                         continue;
                     }
                     if let Some(active_until_epoch) = active_until_epoch {
@@ -214,7 +247,7 @@ impl AccountDatabase {
         balance.total.available =
             balance.payment.available + balance.stake.available + balance.public_payment.available;
         assert!(balance.total.available <= balance.total.current);
-        balance.is_final = !self.current_epoch_balance_changed || !self.pending_payments.is_empty();
+        balance.is_final = !self.current_epoch_balance_changed || !self.locked_inputs.is_empty();
         balance
     }
 
@@ -224,7 +257,7 @@ impl AccountDatabase {
     ) -> impl Iterator<Item = (PaymentOutput, i64)> + 'a {
         self.iter_unspent()
             .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
-            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .filter(move |(h, _)| self.locked_inputs.get(h).is_none())
             .inspect(|(h, _)| trace!("Using PaymentOutput: hash={}", h))
             .map(|(_, v)| (v.output, v.amount))
     }
@@ -235,7 +268,7 @@ impl AccountDatabase {
     ) -> impl Iterator<Item = PublicPaymentOutput> + 'a {
         self.iter_unspent()
             .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
-            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .filter(move |(h, _)| self.locked_inputs.get(h).is_none())
             .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
             .map(|(_, v)| v.output)
     }
@@ -251,9 +284,44 @@ impl AccountDatabase {
     }
 
     /// Returns id of first unknown epoch
-    fn recover_state(&mut self) -> u64 {
-        // TODO: limit time for recover
-        // (for example, if some transaction was created weak ago, it's no reason to resend it)
+    fn recover_state(&mut self) {
+        let meta_cf = self.database.cf_handle(META).expect("META cf created");
+        let epoch_info = match self
+            .database
+            .get_cf(meta_cf, EPOCH_KEY)
+            .expect("cannot read epoch_key")
+        {
+            Some(epoch_info) => epoch_info,
+            None => {
+                info!("Created an empty database");
+                return; /* nothing to recover */
+            }
+        };
+        let epoch_info = LightEpochInfo::from_buffer(&epoch_info).expect("LightEpochInfo is valid");
+        self.epoch = epoch_info.header.epoch + 1;
+        assert!(self.micro_blocks.is_empty());
+        self.last_macro_block_hash = Hash::digest(&epoch_info.header);
+        self.last_macro_block_random = epoch_info.header.random.rand;
+        self.facilitator_pkey = epoch_info.facilitator;
+        self.validators = epoch_info.validators;
+        let lsn = LSN(epoch_info.header.epoch, MACRO_BLOCK_OFFSET);
+        let cf_unspent = self
+            .database
+            .cf_handle(UNSPENT)
+            .expect("UNSPENT cf created");
+        for (unspent_hash, unspent) in self
+            .database
+            .iterator_cf(cf_unspent, IteratorMode::Start)
+            .expect("Cannot read UNSPENT cf.")
+            .map(|(k, v)| {
+                let k = Hash::from_buffer(&*k).expect("couldn't deserialize UNSPENT key.");
+                let v = OutputValue::from_buffer(&*v).expect("couldn't deserialize UNSPENT entry.");
+                (k, v)
+            })
+        {
+            self.utxos.insert(lsn, unspent_hash, unspent);
+        }
+
         let starting_time = Timestamp::UNIX_EPOCH;
         // Motivation: We need to update in memory indexes while iterating over DB.
         // 1) We update only in memory indexes, without modifying database.
@@ -286,93 +354,749 @@ impl AccountDatabase {
         }
         drop(static_db);
 
-        let meta_cf = self.database.cf_handle(META).expect("cf created");
-
-        let epoch = self
-            .database
-            .get_cf(meta_cf, EPOCH_KEY)
-            .expect("cannot read epoch");
-        epoch
-            .and_then(|b| Self::u64_from_bytes(&b))
-            .map(|i| i + 1)
-            .unwrap_or(0)
+        info!(
+            "Recovered database: epoch={}, last_macro_block={}",
+            self.epoch, self.last_macro_block_hash
+        );
     }
 
     pub fn iter_unspent<'a>(&'a self) -> impl Iterator<Item = (Hash, OutputValue)> + 'a {
-        let cf = self.database.cf_handle(UNSPENT).expect("cf created");
-
-        let mode = IteratorMode::Start;
-        let iter = self
-            .database
-            .iterator_cf(cf, mode)
-            .expect("Cannot open cf iterator.");
-
-        let iter = iter.map(|(k, v)| {
-            let k = Hash::try_from_bytes(&k).expect("couldn't deserialize entry.");
-            let v = OutputValue::from_buffer(&*v).expect("couldn't deserialize entry.");
-            (k, v)
-        });
-        // filter-out utxos that was removed in epoch.
-        let iter_filtered = iter.filter(move |(hash, _)| self.utxos.get(hash).is_none());
-        // add utxos that was not finalized.
-        let iter_chained = iter_filtered.chain(self.utxos.iter().filter_map(|(k, v)| match v {
-            UnspentOutput::Add(v) => Some((k.clone(), v.clone())),
-            UnspentOutput::Removed => None,
-        }));
-        // map info about change.
-        iter_chained.map(move |(h, mut utxo)| {
-            match &mut utxo {
-                OutputValue::Payment(ref mut p) => p.is_change = self.known_changes.contains(&h),
-                _ => (),
-            }
-            (h, utxo)
-        })
+        // TODO: remove cloned().
+        self.utxos.iter().map(|(k, v)| (k.clone(), v.clone()))
     }
 
-    pub fn insert_unspent(&mut self, utxo: OutputValue) -> Result<(), Error> {
-        let key = Hash::digest(&utxo.to_output());
-        let utxo = UnspentOutput::Add(utxo);
-        self.utxos.insert(key, utxo);
+    fn filter_inputs_and_outputs<'a, InputsIter, OutputsIter>(
+        &self,
+        inputs_iter: InputsIter,
+        outputs_iter: OutputsIter,
+        account_pkey: &scc::PublicKey,
+        account_skey: &scc::SecretKey,
+    ) -> Result<(Vec<Hash>, Vec<OutputValue>), Error>
+    where
+        InputsIter: Iterator<Item = &'a Hash>,
+        OutputsIter: Iterator<Item = &'a Output>,
+    {
+        let mut my_inputs: HashSet<Hash> = HashSet::new();
+        let mut my_outputs: HashMap<Hash, OutputValue> = HashMap::new();
+        for output in outputs_iter {
+            let value: OutputValue = match output {
+                Output::PaymentOutput(o) => {
+                    if let Ok(PaymentPayload { amount, data, .. }) =
+                        o.decrypt_payload(&account_pkey, &account_skey)
+                    {
+                        assert!(amount >= 0);
+                        let value = PaymentValue {
+                            output: o.clone(),
+                            amount,
+                            recipient: account_pkey.clone(),
+                            data,
+                            rvalue: None,
+                            is_change: false,
+                        };
+                        value.into()
+                    } else {
+                        continue; // not our UTXO.
+                    }
+                }
+                Output::PublicPaymentOutput(o) => {
+                    if &o.recipient != account_pkey {
+                        continue; // not our UTXO.
+                    };
+                    let value = PublicPaymentValue { output: o.clone() };
+                    value.into()
+                }
+                Output::StakeOutput(o) => {
+                    if &o.recipient != account_pkey {
+                        continue; // not our UTXO.
+                    }
+                    let active_until_epoch = self.epoch + self.cfg.stake_epochs;
+                    let value = StakeValue {
+                        output: o.clone(),
+                        active_until_epoch: active_until_epoch.into(),
+                    };
+                    value.into()
+                }
+            };
+
+            let output_hash = Hash::digest(&output);
+            my_outputs.insert(output_hash, value);
+        }
+
+        for input_hash in inputs_iter {
+            if let Some(_o) = my_outputs.remove(&input_hash) {
+                continue; // annihilate this input with an output
+            }
+            let _input = match self.output_by_hash(&input_hash)? {
+                Some(_o) => {
+                    my_inputs.insert(*input_hash);
+                }
+                None => continue, // not our UTXO.
+            };
+        }
+
+        let my_inputs: Vec<Hash> = my_inputs.into_iter().collect();
+        let my_outputs: Vec<OutputValue> = my_outputs.into_iter().map(|(_k, v)| v).collect();
+        Ok((my_inputs, my_outputs))
+    }
+
+    ///
+    /// Common part of push_macro_block()/push_micro_block().
+    ///
+    fn register_inputs_and_outputs(
+        &mut self,
+        lsn: LSN,
+        block_hash: Hash,
+        offset: Option<u32>,
+        timestamp: Timestamp,
+        input_hashes: Vec<Hash>,
+        outputs: Vec<OutputValue>,
+    ) -> Result<HashMap<Hash, TransactionStatus>, Error> {
+        //
+        // Process inputs.
+        //
+        for input_hash in &input_hashes {
+            let input_value = if let Some(input) = self.utxos.remove(lsn, &input_hash) {
+                input
+            } else {
+                panic!(
+                    "Missing input UTXO: epoch={}, block={}, utxo={}",
+                    self.epoch, block_hash, input_hash
+                );
+            };
+
+            match input_value {
+                OutputValue::Payment(p) => {
+                    info!(
+                        "Spent: utxo={}, amount={}, data={:?}",
+                        input_hash, p.amount, p.data
+                    );
+                }
+                OutputValue::PublicPayment(p) => {
+                    let o = &p.output;
+                    info!(
+                        "Spent public payment: utxo={}, amount={}",
+                        input_hash, o.amount
+                    );
+                }
+                OutputValue::Stake(s) => {
+                    let o = s.output;
+                    let active_until_epoch = self.epoch + self.cfg.stake_epochs;
+                    info!(
+                        "Unstaked: hash={}, amount={}, active_until_epoch={}",
+                        input_hash, o.amount, active_until_epoch
+                    );
+                }
+            }
+        }
+
+        //
+        // Process outputs.
+        //
+        let mut output_hashes = Vec::with_capacity(outputs.len());
+        for output_value in &outputs {
+            let output = output_value.to_output();
+            let output_hash = Hash::digest(&output);
+
+            // Update indexes.
+            if let Some(_) = self
+                .utxos
+                .insert(lsn, output_hash.clone(), output_value.clone())
+            {
+                panic!(
+                    "UTXO hash collision: epoch={}, block={}, utxo={}",
+                    self.epoch, &block_hash, &output_hash
+                );
+            }
+            assert_eq!(self.utxos.current_lsn(), lsn);
+
+            // Update history.
+            if let Err(e) = self.push_incoming(timestamp, output_value.clone().into()) {
+                error!("Error when adding incoming tx = {}", e)
+            }
+
+            match output_value {
+                OutputValue::Payment(p) => {
+                    info!(
+                        "Received: utxo={}, amount={}, data={:?}",
+                        output_hash, p.amount, p.data
+                    );
+                }
+                OutputValue::PublicPayment(p) => {
+                    let PublicPaymentOutput { ref amount, .. } = &p.output;
+                    assert!(*amount >= 0);
+                    info!(
+                        "Received public payment: utxo={}, amount={}",
+                        output_hash, amount
+                    );
+                }
+                OutputValue::Stake(p) => {
+                    let output = &p.output;
+                    let active_until_epoch = self.epoch + self.cfg.stake_epochs;
+                    info!(
+                        "Staked: hash={}, amount={}, active_until_epoch={}",
+                        output_hash, output.amount, active_until_epoch
+                    );
+                }
+            }
+            output_hashes.push(output_hash);
+        }
+
+        //
+        // Update transaction statuses.
+        //
+        let transaction_statuses = self
+            .prune_txs(input_hashes.iter(), output_hashes.iter())?
+            .into_iter()
+            .map(|(k, v)| {
+                let status = if v.1 {
+                    match offset {
+                        None => TransactionStatus::Committed { epoch: self.epoch },
+                        Some(offset) => TransactionStatus::Prepared {
+                            epoch: self.epoch,
+                            offset,
+                        },
+                    }
+                } else {
+                    TransactionStatus::Conflicted {
+                        epoch: self.epoch,
+                        offset,
+                    }
+                };
+
+                (k, status)
+            })
+            .collect();
+
+        Ok(transaction_statuses)
+    }
+
+    ///
+    /// Validates the light macro block.
+    ///
+    pub fn validate_macro_block(
+        &mut self,
+        header: &MacroBlockHeader,
+        multisig: &pbc::Signature,
+        multisigmap: &BitVec,
+        input_hashes: &[Hash],
+        output_hashes: &[Hash],
+        canaries: &[Canary],
+        validators: &StakersGroup,
+    ) -> Result<(), Error> {
+        let block_hash = Hash::digest(header);
+
+        // Check genesis.
+        if self.epoch == 0 && block_hash != self.genesis_hash {
+            return Err(BlockchainError::IncompatibleGenesis(self.genesis_hash, block_hash).into());
+        }
+
+        // Check block version.
+        if header.version != VERSION {
+            return Err(BlockError::InvalidBlockVersion(
+                header.epoch,
+                block_hash,
+                header.version,
+                VERSION,
+            )
+            .into());
+        }
+
+        // Check epoch.
+        if header.epoch != self.epoch {
+            return Err(
+                BlockError::OutOfOrderMacroBlock(block_hash, header.epoch, self.epoch).into(),
+            );
+        }
+
+        // Check previous hash.
+        if self.last_macro_block_hash != header.previous {
+            return Err(BlockError::InvalidMacroBlockPreviousHash(
+                header.epoch,
+                block_hash,
+                header.previous,
+                self.last_macro_block_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate multi-signature.
+        //
+        if header.epoch > 0 {
+            check_multi_signature(
+                &block_hash,
+                multisig,
+                &multisigmap,
+                &self.validators,
+                self.cfg.max_slot_count,
+            )
+            .map_err(|e| BlockError::InvalidBlockSignature(e, header.epoch, block_hash))?;
+        }
+
+        // Check VRF.
+        let seed = mix(self.last_macro_block_random.clone(), header.view_change);
+        if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+            return Err(BlockError::IncorrectRandom(header.epoch, block_hash).into());
+        }
+
+        //
+        // Validate inputs.
+        //
+        if header.inputs_len as usize != input_hashes.len() {
+            return Err(BlockError::InvalidMacroBlockInputsLen(
+                header.epoch,
+                block_hash,
+                header.inputs_len as usize,
+                input_hashes.len(),
+            )
+            .into());
+        }
+        let inputs_range_hash = Merkle::root_hash_from_array(&input_hashes);
+        if header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidMacroBlockInputsHash(
+                header.epoch,
+                block_hash,
+                inputs_range_hash,
+                header.inputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate outputs.
+        //
+        if header.outputs_len as usize != output_hashes.len() {
+            return Err(BlockError::InvalidMacroBlockInputsLen(
+                header.epoch,
+                block_hash,
+                header.outputs_len as usize,
+                output_hashes.len(),
+            )
+            .into());
+        }
+        let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
+        if header.outputs_range_hash != outputs_range_hash {
+            return Err(BlockError::InvalidMacroBlockOutputsHash(
+                header.epoch,
+                block_hash,
+                outputs_range_hash,
+                header.outputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate canaries.
+        //
+        let canary_hashes: Vec<Hash> = canaries.iter().map(Hash::digest).collect();
+        let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
+        if header.canaries_range_hash != canaries_range_hash {
+            return Err(BlockError::InvalidMacroBlockCanariesHash(
+                header.epoch,
+                block_hash,
+                canaries_range_hash,
+                header.canaries_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate validators.
+        //
+        let validators_len = validators.len();
+        if header.validators_len as usize != validators_len {
+            panic!(
+                "Invalid validators_len: expected={}, got={}",
+                validators_len, header.validators_len,
+            );
+        }
+        let validators_range_hash = Merkle::root_hash_from_array(validators);
+        if header.validators_range_hash != validators_range_hash {
+            panic!(
+                "Invalid validators_range_hash: expected={}, got={}",
+                validators_range_hash, header.validators_range_hash
+            );
+        }
+
         Ok(())
     }
 
-    pub fn remove_unspent(&mut self, key: &Hash) -> Result<(), Error> {
-        trace!("Removed UTXO = {}", key);
-        let utxo = UnspentOutput::Removed;
-        self.utxos.insert(*key, utxo);
+    ///
+    /// Validate the light micro block.
+    ///
+    pub fn validate_light_micro_block(
+        &mut self,
+        header: &MicroBlockHeader,
+        sig: &pbc::Signature,
+        input_hashes: &[Hash],
+        output_hashes: &[Hash],
+        canaries: &[Canary],
+    ) -> Result<(), Error> {
+        let block_hash = Hash::digest(header);
+
+        // Check block version.
+        if header.version != VERSION {
+            return Err(BlockError::InvalidBlockVersion(
+                header.epoch,
+                block_hash,
+                header.version,
+                VERSION,
+            )
+            .into());
+        }
+
+        // Check epoch and offset.
+        if header.epoch != self.epoch() || header.offset != self.offset() {
+            return Err(BlockError::OutOfOrderMicroBlock(
+                block_hash,
+                header.epoch,
+                header.offset,
+                self.epoch(),
+                self.offset(),
+            )
+            .into());
+        }
+
+        // Check the block order.
+        if self.offset() >= self.cfg.micro_blocks_in_epoch {
+            return Err(
+                BlockchainError::ExpectedMacroBlock(self.epoch, self.offset(), block_hash).into(),
+            );
+        }
+
+        // Check previous hash.
+        if self.last_block_hash() != header.previous {
+            return Err(BlockError::InvalidMicroBlockPreviousHash(
+                header.epoch,
+                header.offset,
+                block_hash,
+                header.previous,
+                self.last_block_hash(),
+            )
+            .into());
+        }
+
+        // Check signature.
+        let last_random = self.last_block_random();
+        let leader = election::select_leader(&self.validators, &last_random, header.view_change);
+        if leader != header.pkey {
+            return Err(BlockError::DifferentPublicKey(leader, header.pkey).into());
+        }
+        if let Err(_e) = pbc::check_hash(&block_hash, sig, &leader) {
+            return Err(BlockError::InvalidLeaderSignature(header.epoch, block_hash).into());
+        }
+
+        // Check VRF.
+        let seed = mix(last_random.clone(), header.view_change);
+        if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
+            return Err(BlockError::IncorrectRandom(header.epoch, block_hash).into());
+        }
+
+        //
+        // Validate inputs.
+        //
+        if header.inputs_len as usize != input_hashes.len() {
+            return Err(BlockError::InvalidMicroBlockInputsLen(
+                header.epoch,
+                header.offset,
+                block_hash,
+                header.inputs_len as usize,
+                input_hashes.len(),
+            )
+            .into());
+        }
+        let inputs_range_hash = Merkle::root_hash_from_array(&input_hashes);
+        if header.inputs_range_hash != inputs_range_hash {
+            return Err(BlockError::InvalidMicroBlockInputsHash(
+                header.epoch,
+                header.offset,
+                block_hash,
+                inputs_range_hash,
+                header.inputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate outputs.
+        //
+        if header.outputs_len as usize != output_hashes.len() {
+            return Err(BlockError::InvalidMicroBlockInputsLen(
+                header.epoch,
+                header.offset,
+                block_hash,
+                header.outputs_len as usize,
+                output_hashes.len(),
+            )
+            .into());
+        }
+        let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
+        if header.outputs_range_hash != outputs_range_hash {
+            return Err(BlockError::InvalidMicroBlockOutputsHash(
+                header.epoch,
+                header.offset,
+                block_hash,
+                outputs_range_hash,
+                header.outputs_range_hash,
+            )
+            .into());
+        }
+
+        //
+        // Validate canaries.
+        //
+        let canary_hashes: Vec<Hash> = canaries.iter().map(Hash::digest).collect();
+        let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
+        if header.canaries_range_hash != canaries_range_hash {
+            return Err(BlockError::InvalidMicroBlockCanariesHash(
+                header.epoch,
+                header.offset,
+                block_hash,
+                canaries_range_hash,
+                header.canaries_range_hash,
+            )
+            .into());
+        }
+
         Ok(())
     }
 
-    pub fn get_unspent(&self, hash: &Hash) -> Result<Option<OutputValue>, Error> {
-        trace!("Get UTXO = {}", hash);
-        let cf = self.database.cf_handle(UNSPENT).expect("cf created");
-        match self.utxos.get(hash) {
-            Some(UnspentOutput::Removed) => Ok(None),
-            Some(UnspentOutput::Add(t)) => Ok(Some(t.clone())),
-            None => {
-                trace!("Get UTXO from db = {}", hash);
-                self.database
-                    .get_cf(cf, hash.base_vector())
-                    .map(|v| {
-                        v.map(|b| OutputValue::from_buffer(&b).expect("Deserialization error."))
-                    })
-                    .map_err(Into::into)
+    ///
+    /// Applies the light macro block.
+    ///
+    /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
+    ///
+    pub fn apply_light_macro_block<'a, InputsIter, OutputsIter>(
+        &mut self,
+        header: MacroBlockHeader,
+        inputs_iter: InputsIter,
+        outputs_iter: OutputsIter,
+        validators: StakersGroup,
+        account_pkey: &scc::PublicKey,
+        account_skey: &scc::SecretKey,
+    ) -> Result<HashMap<Hash, TransactionStatus>, Error>
+    where
+        InputsIter: Iterator<Item = &'a Hash>,
+        OutputsIter: Iterator<Item = &'a Output>,
+    {
+        assert_eq!(self.epoch, header.epoch, "block order");
+        let epoch = header.epoch;
+
+        let (my_inputs, my_outputs) =
+            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey)?;
+
+        //
+        // Revert micro blocks.
+        //
+        let mut transaction_statuses: HashMap<Hash, TransactionStatus> = HashMap::new();
+        while self.micro_blocks.len() > 0 {
+            for (tx_hash, tx_status) in self.revert_micro_block()? {
+                transaction_statuses.insert(tx_hash, tx_status);
             }
+        }
+        assert!(self.micro_blocks.is_empty(), "micro blocks are removed");
+        let block_hash = Hash::digest(&header);
+        let lsn = LSN(epoch, MACRO_BLOCK_OFFSET);
+        let mut batch = rocksdb::WriteBatch::default();
+        let transaction_statuses2 = self.register_inputs_and_outputs(
+            lsn,
+            block_hash,
+            None,
+            header.timestamp,
+            my_inputs,
+            my_outputs,
+        )?;
+        for (tx_hash, tx_status) in transaction_statuses2 {
+            transaction_statuses.insert(tx_hash, tx_status);
+        }
+
+        let facilitator = election::select_facilitator(&header.random.rand, &validators);
+        self.facilitator_pkey = facilitator;
+        self.epoch += 1;
+        self.micro_blocks.clear();
+        self.last_macro_block_hash = block_hash;
+        self.last_macro_block_random = header.random.rand;
+        self.validators = validators;
+        self.current_epoch_balance_changed = false;
+
+        let unspent = self.database.cf_handle(UNSPENT).expect("cf created");
+        let meta_cf = self.database.cf_handle(META).expect("cf created");
+        Blockchain::write_log(&mut batch, unspent, self.utxos.checkpoint())?;
+        let epoch_info = LightEpochInfo {
+            header,
+            validators: self.validators.clone(),
+            facilitator: self.facilitator_pkey.clone(),
+        };
+        batch.put_cf(meta_cf, EPOCH_KEY, epoch_info.into_buffer()?)?;
+
+        for (tx_hash, tx_status) in &transaction_statuses {
+            let timestamp = self
+                .tx_entry(tx_hash.clone())
+                .expect("Transaction should be found in tx list");
+
+            let mut updated_tx = None;
+            self.update_log_entry(timestamp, |mut e| {
+                match &mut e {
+                    LogEntry::Outgoing { ref mut tx } => {
+                        tx.status = tx_status.clone();
+                        updated_tx = Some(tx.clone());
+                    }
+                    LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
+                };
+                Ok(e)
+            })?;
+
+            if let Some(tx) = updated_tx {
+                self.update_tx_indexes(tx);
+            }
+        }
+        self.epoch_transactions.clear();
+        self.database.write(batch).expect("I/O error");
+
+        info!(
+            "Applied a macro block: epoch={}, block={}",
+            epoch, &block_hash,
+        );
+
+        Ok(transaction_statuses)
+    }
+
+    ///
+    /// Applies the light micro block.
+    ///
+    /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
+    ///
+    pub fn apply_light_micro_block<'a, InputsIter, OutputsIter>(
+        &mut self,
+        header: MicroBlockHeader,
+        inputs_iter: InputsIter,
+        outputs_iter: OutputsIter,
+        account_pkey: &scc::PublicKey,
+        account_skey: &scc::SecretKey,
+    ) -> Result<HashMap<Hash, TransactionStatus>, Error>
+    where
+        InputsIter: Iterator<Item = &'a Hash>,
+        OutputsIter: Iterator<Item = &'a Output>,
+    {
+        assert_eq!(header.version, VERSION);
+        assert_eq!(self.epoch, header.epoch);
+        assert_eq!(self.offset(), header.offset);
+        assert_eq!(header.previous, self.last_block_hash());
+        let epoch = self.epoch;
+        let offset = self.offset();
+
+        let (my_inputs, my_outputs) =
+            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey)?;
+        let is_balance_changed = my_outputs.len() > 0;
+        if is_balance_changed {
+            self.current_epoch_balance_changed = true;
+        }
+
+        let block_hash = Hash::digest(&header);
+        let lsn = LSN(epoch, offset);
+        let transaction_statuses = self.register_inputs_and_outputs(
+            lsn,
+            block_hash,
+            Some(self.offset()),
+            header.timestamp,
+            my_inputs,
+            my_outputs,
+        )?;
+        self.micro_blocks.push(header);
+
+        info!(
+            "Applied a micro block: epoch={}, offset={}, block={}",
+            epoch, offset, &block_hash,
+        );
+
+        Ok(transaction_statuses)
+    }
+
+    ///
+    /// Revertts the light micro block.
+    ///
+    pub fn revert_micro_block(&mut self) -> Result<HashMap<Hash, TransactionStatus>, Error> {
+        let header = self.micro_blocks.pop().expect("have microblocks");
+        let block_hash = Hash::digest(&header);
+        let lsn = if self.micro_blocks.len() == 0 {
+            LSN(self.epoch - 1, MACRO_BLOCK_OFFSET)
+        } else {
+            LSN(self.epoch, (self.micro_blocks.len() - 1) as u32)
+        };
+        self.utxos.rollback_to_lsn(lsn);
+        let current_offset = self.offset();
+        let cf = self.database.cf_handle(HISTORY).expect("cf created");
+        let mut txs = HashMap::new();
+        for tx_hash in &self.epoch_transactions {
+            let tx_key = self.created_txs.get(&tx_hash).expect("transaction exists");
+            let key = Self::bytes_from_timestamp(*tx_key);
+            let value = self
+                .database
+                .get_cf(cf, &key)?
+                .expect("Log entry not found.");
+            let entry = LogEntry::from_buffer(&value)?;
+            let tx = match entry {
+                LogEntry::Outgoing { tx } => tx,
+                e => panic!("Expected outgoing, found={:?}", e),
+            };
+            match tx.status {
+                TransactionStatus::Prepared { offset, .. } => {
+                    if offset != current_offset {
+                        continue;
+                    }
+                }
+                status => panic!(
+                    "Expect prepared status, for `epoch_transactions` entry, found={:?}.",
+                    status
+                ),
+            }
+
+            info!("Recovered transaction: hash={}", tx_hash);
+            assert!(txs.insert(*tx_hash, tx).is_none());
+        }
+
+        if txs.len() > 0 {
+            self.current_epoch_balance_changed = true;
+        }
+
+        let transaction_statuses = txs
+            .into_iter()
+            .map(|(k, _)| {
+                let status = TransactionStatus::Created {};
+                (k, status)
+            })
+            .collect();
+
+        info!(
+            "Reverted a micro block: epoch={}, offset={}, block={}",
+            self.epoch, header.offset, &block_hash,
+        );
+
+        Ok(transaction_statuses)
+    }
+
+    ///
+    /// Resolve UTXO by its hash.
+    ///
+    fn output_by_hash(&self, hash: &Hash) -> Result<Option<OutputValue>, Error> {
+        if let Some(output) = self.utxos.get(hash) {
+            return Ok(Some(output.clone()));
+        } else {
+            Ok(None)
         }
     }
 
     /// Mark pending transactions as spent.
-    pub fn prune_txs<'a, HashIterator, HashIterator2>(
+    pub fn prune_txs<'a, HashIterator>(
         &mut self,
-        inputs: HashIterator,
-        outputs: HashIterator2,
+        input_hashes: HashIterator,
+        output_hashes: HashIterator,
     ) -> Result<HashMap<Hash, (TransactionValue, bool)>, Error>
     where
         HashIterator: Iterator<Item = &'a Hash>,
-        HashIterator2: Iterator<Item = &'a Output>,
     {
-        let input_hashes: HashSet<_> = inputs.cloned().collect();
-        let output_hashes: HashSet<_> = outputs.map(Hash::digest).collect();
+        let input_hashes: HashSet<_> = input_hashes.cloned().collect();
+        let output_hashes: HashSet<_> = output_hashes.cloned().collect();
         let mut tx_hashes: HashSet<Hash> = HashSet::new();
         // Collect transactions affected by inputs.
         for input_hash in &input_hashes {
@@ -427,6 +1151,9 @@ impl AccountDatabase {
                     break;
                 }
             }
+            // Sic: the light node has only its own outputs, threfore
+            // there is no way to check that all txouts have been pruned.
+            /*
             if full {
                 for output in &tx.tx.txouts {
                     let output_hash = Hash::digest(output);
@@ -436,48 +1163,12 @@ impl AccountDatabase {
                     }
                 }
             }
+            */
 
             info!("Removing transaction: hash={}, full={}", hash, full);
             assert!(statuses.insert(hash, (tx, full)).is_none());
         }
         Ok(statuses)
-    }
-
-    /// Rollback prepared transactions.
-    pub fn rollback_txs(
-        &mut self,
-        current_offset: u32,
-    ) -> Result<HashMap<Hash, TransactionValue>, Error> {
-        let cf = self.database.cf_handle(HISTORY).expect("cf created");
-        let mut txs = HashMap::new();
-        for tx_hash in &self.epoch_transactions {
-            let tx_key = self.created_txs.get(&tx_hash).expect("transaction exists");
-            let key = Self::bytes_from_timestamp(*tx_key);
-            let value = self
-                .database
-                .get_cf(cf, &key)?
-                .expect("Log entry not found.");
-            let entry = LogEntry::from_buffer(&value)?;
-            let tx = match entry {
-                LogEntry::Outgoing { tx } => tx,
-                e => panic!("Expected outgoing, found={:?}", e),
-            };
-            match tx.status {
-                TransactionStatus::Prepared { offset, .. } => {
-                    if offset != current_offset {
-                        continue;
-                    }
-                }
-                status => panic!(
-                    "Expect prepared status, for `epoch_transactions` entry, found={:?}.",
-                    status
-                ),
-            }
-
-            info!("Recovered transaction: hash={}", tx_hash);
-            assert!(txs.insert(*tx_hash, tx).is_none());
-        }
-        Ok(txs)
     }
 
     fn update_tx_indexes(&mut self, tx: TransactionValue) {
@@ -552,7 +1243,7 @@ impl AccountDatabase {
     }
 
     /// Insert log entry as last entry in log.
-    pub fn push_incomming(
+    fn push_incoming(
         &mut self,
         timestamp: Timestamp,
         incoming: OutputValue,
@@ -573,17 +1264,31 @@ impl AccountDatabase {
     pub fn lock_input(&mut self, input: &Hash) {
         let time = clock::now();
         assert!(self
-            .pending_payments
-            .insert(*input, PendingOutput { time })
+            .locked_inputs
+            .insert(*input, LockedInput { time })
             .is_none());
     }
 
     pub fn unlock_input(&mut self, input: &Hash) {
-        assert!(self.pending_payments.remove(&input).is_some())
+        assert!(self.locked_inputs.remove(&input).is_some())
     }
 
-    pub fn is_input_locked(&mut self, input: &Hash) -> Option<&PendingOutput> {
-        self.pending_payments.get(input)
+    pub fn is_input_locked(&mut self, input: &Hash) -> Option<&LockedInput> {
+        self.locked_inputs.get(input)
+    }
+
+    pub fn expire_locked_inputs(&mut self, pending_time: Duration) -> Vec<Hash> {
+        let now = clock::now();
+        let mut expired_inputs = Vec::new();
+        let pending = std::mem::replace(&mut self.locked_inputs, HashMap::new());
+        for (input_hash, p) in pending {
+            if p.time + pending_time <= now {
+                expired_inputs.push(input_hash);
+            } else {
+                assert!(self.locked_inputs.insert(input_hash, p).is_none());
+            }
+        }
+        expired_inputs
     }
 
     /// Insert log entry as last entry in log.
@@ -592,13 +1297,12 @@ impl AccountDatabase {
         timestamp: Timestamp,
         tx: TransactionValue,
     ) -> Result<Timestamp, Error> {
-        trace!("Push outgoing tx = {:?}", tx);
         let tx_hash = Hash::digest(&tx.tx);
+        trace!("Push outgoing tx={}", tx_hash);
         let entry = LogEntry::Outgoing { tx: tx.clone() };
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
-        self.update_tx_indexes(tx.clone());
-
+        self.update_tx_indexes(tx);
         Ok(timestamp)
     }
 
@@ -654,78 +1358,6 @@ impl AccountDatabase {
         Ok(())
     }
 
-    /// Finalize Prepare status for transaction, return list of updated transactions
-    pub fn finalize_epoch(
-        &mut self,
-        epoch: u64,
-    ) -> Result<HashMap<Hash, TransactionStatus>, Error> {
-        debug!("Finalizing unspent utxos");
-
-        let unspent = self.database.cf_handle(UNSPENT).expect("cf created");
-        let meta_cf = self.database.cf_handle(META).expect("cf created");
-
-        let our_epoch = self
-            .database
-            .get_cf(meta_cf, EPOCH_KEY)?
-            .and_then(|b| Self::u64_from_bytes(&b))
-            .unwrap_or(0);
-        let mut batch = WriteBatch::default();
-        let utxos = mem::replace(&mut self.utxos, HashMap::new());
-        for (hash, utxo) in utxos {
-            match utxo {
-                UnspentOutput::Removed => {
-                    trace!("Found removed utxo = {}", hash);
-                    batch.delete_cf(unspent, hash.base_vector())?;
-                }
-                UnspentOutput::Add(v) => {
-                    trace!("Found added utxo = {}", hash);
-                    let data = v.into_buffer()?;
-                    batch.put_cf(unspent, hash.base_vector(), &data)?;
-                }
-            }
-        }
-
-        batch.put_cf(meta_cf, EPOCH_KEY, &Self::bytes_from_u64(epoch))?;
-        self.database.write(batch)?;
-        if our_epoch == epoch {
-            debug!("Skipping epoch txs finalization");
-            return Ok(HashMap::new());
-        }
-        debug!("Finalize epoch txs");
-        let mut result = HashMap::new();
-        let txs = std::mem::replace(&mut self.epoch_transactions, Default::default());
-        for tx_hash in txs {
-            let timestamp = self
-                .tx_entry(tx_hash)
-                .expect("Transaction should be found in tx list");
-
-            let mut updated_tx = None;
-            self.update_log_entry(timestamp, |mut e| {
-                match &mut e {
-                    LogEntry::Outgoing { ref mut tx } => match tx.status {
-                        TransactionStatus::Prepared { epoch, .. } => {
-                            trace!("Finalize tx={}", tx_hash);
-                            let status = TransactionStatus::Committed { epoch };
-                            if tx.status != status {
-                                tx.status = status.clone();
-                                updated_tx = Some(tx.clone());
-                            }
-                        }
-                        _ => {}
-                    },
-                    LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
-                };
-                Ok(e)
-            })?;
-
-            if let Some(tx) = updated_tx {
-                result.insert(tx_hash, tx.status.clone());
-                self.update_tx_indexes(tx);
-            }
-        }
-        Ok(result)
-    }
-
     /// For internall usage only create a iter from database .
     fn iter_range_inner<'a>(
         database: &'a DB,
@@ -773,10 +1405,10 @@ impl AccountDatabase {
             .expect("Log entry not found.");
         let entry = LogEntry::from_buffer(&value)?;
 
-        trace!("Entry before = {:?}", entry);
+        //trace!("Entry before = {:?}", entry);
         let entry = func(entry)?;
 
-        trace!("Entry after = {:?}", entry);
+        //trace!("Entry after = {:?}", entry);
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         let mut batch = WriteBatch::default();
@@ -794,13 +1426,6 @@ impl AccountDatabase {
         bytes
     }
 
-    /// Convert u64 to bytearray.
-    fn bytes_from_u64(len: u64) -> [u8; 8] {
-        let mut bytes = [0u8; 8];
-        BigEndian::write_u64(&mut bytes[0..8], len);
-        bytes
-    }
-
     /// Convert bytearray to timestamp.
     fn timestamp_from_bytes(bytes: &[u8]) -> Option<Timestamp> {
         if bytes.len() == 8 {
@@ -810,26 +1435,10 @@ impl AccountDatabase {
             None
         }
     }
-
-    /// Convert bytearray to u64.
-    fn u64_from_bytes(bytes: &[u8]) -> Option<u64> {
-        if bytes.len() == 8 {
-            let idx = BigEndian::read_u64(&bytes[0..8]);
-            Some(idx)
-        } else {
-            None
-        }
-    }
 }
 
-pub struct PendingOutput {
+pub struct LockedInput {
     pub time: Instant,
-}
-
-#[derive(Clone, Debug)]
-pub enum UnspentOutput {
-    Removed,
-    Add(OutputValue),
 }
 
 /// Information about created transactions
@@ -854,7 +1463,7 @@ pub struct PaymentValue {
     pub output: PaymentOutput,
     pub amount: i64,
     /// Uncloaked public key of the owner
-    pub recipient: PublicKey,
+    pub recipient: scc::PublicKey,
     pub data: PaymentPayloadData,
     pub rvalue: Option<Fr>,
     pub is_change: bool,
@@ -972,7 +1581,7 @@ impl TransactionValue {
 }
 
 /// Convert Time from instant to timestamp, for visualise in API.
-fn pending_timestamp(pending: Option<&PendingOutput>) -> Option<Timestamp> {
+fn pending_timestamp(pending: Option<&LockedInput>) -> Option<Timestamp> {
     pending.and_then(|p| {
         let now = tokio_timer::clock::now();
         if p.time + super::PENDING_UTXO_TIME < now {
@@ -984,7 +1593,7 @@ fn pending_timestamp(pending: Option<&PendingOutput>) -> Option<Timestamp> {
 }
 
 impl PaymentValue {
-    pub fn to_info(&self, pending: Option<&PendingOutput>) -> PaymentInfo {
+    pub fn to_info(&self, pending: Option<&LockedInput>) -> PaymentInfo {
         let pending_timestamp = pending_timestamp(pending);
         PaymentInfo {
             output_hash: Hash::digest(&self.output),
@@ -999,7 +1608,7 @@ impl PaymentValue {
 }
 
 impl PublicPaymentValue {
-    pub fn to_info(&self, pending: Option<&PendingOutput>) -> PublicPaymentInfo {
+    pub fn to_info(&self, pending: Option<&LockedInput>) -> PublicPaymentInfo {
         let pending_timestamp = pending_timestamp(pending);
         PublicPaymentInfo {
             output_hash: Hash::digest(&self.output),
@@ -1116,11 +1725,22 @@ impl Hashable for StakeValue {
 #[cfg(test)]
 mod test {
     use super::*;
-    use stegos_crypto::scc::make_random_keys;
+    use stegos_blockchain::test::fake_genesis;
+    use stegos_crypto::scc;
+    use tempdir::TempDir;
+
+    impl LightDatabase {
+        fn testing(path: &Path) -> LightDatabase {
+            let genesis_hash = Hash::digest("ignored");
+            let cfg = ChainConfig::default();
+            LightDatabase::open(path, genesis_hash, cfg)
+        }
+    }
+
     impl LogEntry {
         #[allow(unused)]
         fn testing_stub(id: usize) -> LogEntry {
-            let (_s, p) = make_random_keys();
+            let (_s, p) = scc::make_random_keys();
             let output = PublicPaymentOutput::new(&p, id as i64);
             let public = PublicPaymentValue { output };
 
@@ -1147,23 +1767,14 @@ mod test {
         (time, entry)
     }
 
-    fn create_output(id: usize) -> OutputValue {
-        let output = PublicPaymentOutput {
-            serno: id as i64,
-            amount: 10,
-            recipient: PublicKey::zero(),
-        };
-        let value = PublicPaymentValue { output };
-        OutputValue::PublicPayment(value)
-    }
-
     #[test]
     fn smoke_test() {
         let _ = simple_logger::init();
 
         let entries: Vec<_> = (0..5).map(create_entry).collect();
 
-        let mut db = AccountDatabase::testing();
+        let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
+        let mut db = LightDatabase::testing(temp_dir.path());
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -1186,7 +1797,10 @@ mod test {
 
         let entries: Vec<_> = (0..256).map(create_entry).collect();
 
-        let mut db = AccountDatabase::testing();
+        let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
+        let genesis_hash = Hash::digest("ignored");
+        let cfg = ChainConfig::default();
+        let mut db = LightDatabase::open(temp_dir.path(), genesis_hash, cfg);
         for (time, e) in entries.iter() {
             db.push_entry(*time, e.clone()).unwrap();
         }
@@ -1208,7 +1822,8 @@ mod test {
 
         let entries: Vec<_> = (0..2).map(create_entry).collect();
         let time = Timestamp::UNIX_EPOCH + Duration::from_millis(5);
-        let mut db = AccountDatabase::testing();
+        let temp_dir = TempDir::new("account").expect("couldn't create temp dir");
+        let mut db = LightDatabase::testing(temp_dir.path());
         for (_, e) in entries.iter() {
             db.push_entry(time, e.clone()).unwrap();
         }
@@ -1221,24 +1836,29 @@ mod test {
     }
 
     #[test]
-    fn push_output_get_iter() {
-        let _ = simple_logger::init();
+    fn basic() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let outputs: Vec<_> = (0..2).map(create_output).collect();
-        let mut db = AccountDatabase::testing();
-        for output in outputs.iter() {
-            db.insert_unspent(output.clone()).unwrap();
-        }
+        let timestamp = Timestamp::now();
+        let cfg: ChainConfig = Default::default();
+        let (_keychains, genesis) = fake_genesis(
+            cfg.min_stake_amount,
+            10 * cfg.min_stake_amount,
+            cfg.max_slot_count,
+            3,
+            timestamp,
+            None,
+        );
+        let chain_dir = TempDir::new("account").expect("couldn't create temp dir");
+        let genesis_hash = Hash::digest(&genesis);
+        let db = LightDatabase::open(chain_dir.path(), genesis_hash, cfg.clone());
+        assert_eq!(db.epoch(), 0);
+        assert_eq!(db.offset(), 0);
+        assert_eq!(db.last_block_hash(), Hash::digest("genesis"));
 
-        for (t, ref saved) in db.iter_unspent() {
-            debug!("saved = {:?}", saved);
-            assert_eq!(t, Hash::digest(&saved.to_output()));
-        }
-        let _ = db.finalize_epoch(1).unwrap();
-
-        for (t, ref saved) in db.iter_unspent() {
-            debug!("saved = {:?}", saved);
-            assert_eq!(t, Hash::digest(&saved.to_output()));
-        }
+        drop(db);
+        let db = LightDatabase::open(chain_dir.path(), genesis_hash, cfg.clone());
+        // TODO: check
+        drop(db);
     }
 }

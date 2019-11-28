@@ -25,11 +25,11 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
-    ValidatorKeyInfo,
+    TransactionStatus, ValidatorKeyInfo,
 };
 use stegos_replication::api::*;
 
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::hash::Hash;
 use stegos_crypto::scc;
 use stegos_crypto::utils::{
     deserialize_protobuf_array_from_hex, deserialize_protobuf_from_hex,
@@ -274,73 +274,5 @@ impl From<MicroBlock> for ChainNotification {
 impl From<RevertedMicroBlock> for ChainNotification {
     fn from(block: RevertedMicroBlock) -> ChainNotification {
         ChainNotification::MicroBlockReverted(block)
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
-#[serde(tag = "status")]
-#[serde(rename_all = "snake_case")]
-pub enum TransactionStatus {
-    Created {},
-    Accepted {},
-    Rejected {
-        error: String,
-    },
-    /// Transaction was included in microblock.
-    Prepared {
-        epoch: u64,
-        offset: u32,
-    },
-    /// Transaction was reverted back to mempool.
-    Rollback {
-        epoch: u64,
-        offset: u32,
-    },
-    /// Transaction was committed to macro block.
-    Committed {
-        epoch: u64,
-    },
-    /// Transaction was rejected, because other conflicted
-    Conflicted {
-        epoch: u64,
-        offset: Option<u32>,
-    },
-}
-
-impl Hashable for TransactionStatus {
-    fn hash(&self, hasher: &mut Hasher) {
-        match self {
-            TransactionStatus::Created {} => "Created".hash(hasher),
-            TransactionStatus::Accepted {} => "Accepted".hash(hasher),
-            TransactionStatus::Rejected { error } => {
-                "Rejected".hash(hasher);
-                error.hash(hasher)
-            }
-            TransactionStatus::Prepared { epoch, offset } => {
-                "Prepare".hash(hasher);
-                epoch.hash(hasher);
-                offset.hash(hasher);
-            }
-            TransactionStatus::Rollback { epoch, offset } => {
-                "Rollback".hash(hasher);
-                epoch.hash(hasher);
-                offset.hash(hasher);
-            }
-            TransactionStatus::Committed { epoch } => {
-                "Committed".hash(hasher);
-                epoch.hash(hasher);
-            }
-            TransactionStatus::Conflicted { epoch, offset } => {
-                "Conflicted".hash(hasher);
-
-                epoch.hash(hasher);
-                if let Some(offset) = offset {
-                    "some".hash(hasher);
-                    offset.hash(hasher);
-                } else {
-                    "none".hash(hasher);
-                }
-            }
-        }
     }
 }

@@ -295,3 +295,9 @@ message EpochInfo {
     stegos.crypto.SecurePublicKey facilitator = 2;
     AwardsInfo awards = 3;
 }
+
+message LightEpochInfo {
+    MacroBlockHeader header = 1;
+    stegos.crypto.SecurePublicKey facilitator = 2;
+    repeated Staker validators = 3;
+}

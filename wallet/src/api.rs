@@ -27,10 +27,10 @@ use std::collections::BTreeMap;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+use stegos_blockchain::TransactionStatus;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
-use stegos_node::TransactionStatus;
 pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]

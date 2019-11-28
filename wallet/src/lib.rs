@@ -41,6 +41,7 @@ use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
 use api::*;
+use bit_vec::BitVec;
 use failure::{format_err, Error};
 use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
@@ -50,7 +51,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -60,7 +61,7 @@ use stegos_keychain::keyfile::{
 };
 use stegos_keychain::KeyError;
 use stegos_network::Network;
-use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, TransactionStatus};
+use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse};
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
 
@@ -141,20 +142,14 @@ struct UnsealedAccountService {
     network_skey: pbc::SecretKey,
     /// Network Public Key.
     network_pkey: pbc::PublicKey,
-    /// Lifetime of stake.
-    stake_epochs: u64,
     /// Maximum allowed count of input UTXOs (from Node config)
     max_inputs_in_tx: usize,
 
     //
     // Current state
     //
-    /// Time of last macro block.
-    last_macro_block_timestamp: Timestamp,
-    /// Faciliator's PBC public key
-    facilitator_pkey: pbc::PublicKey,
     /// Persistent part of the state.
-    database: AccountDatabase,
+    database: LightDatabase,
 
     /// Network API (shared).
     network: Network,
@@ -200,7 +195,8 @@ impl UnsealedAccountService {
         network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        stake_epochs: u64,
+        genesis_hash: Hash,
+        chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
@@ -208,13 +204,11 @@ impl UnsealedAccountService {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
 
-        let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let snowball = None;
-        let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
 
         debug!("Loading account {}", account_pkey);
         // TODO: add proper handling for I/O errors.
-        let database = AccountDatabase::open(&database_dir);
+        let database = LightDatabase::open(&database_dir, genesis_hash, chain_cfg);
         let epoch = database.epoch();
         debug!("Opened database: epoch={}", epoch);
         let transaction_response = None;
@@ -231,13 +225,10 @@ impl UnsealedAccountService {
             network_skey,
             network_pkey,
             database,
-            facilitator_pkey,
             resend_tx,
             expire_locked_inputs,
             snowball,
-            stake_epochs,
             max_inputs_in_tx,
-            last_macro_block_timestamp,
             network,
             node,
             subscribers,
@@ -402,7 +393,7 @@ impl UnsealedAccountService {
             self.network_pkey.clone(),
             self.network.clone(),
             self.node.clone(),
-            self.facilitator_pkey.clone(),
+            self.database.facilitator_pkey().clone(),
             inputs,
             outputs,
             fee,
@@ -664,210 +655,106 @@ impl UnsealedAccountService {
         Ok(AccountRecovery { recovery })
     }
 
-    /// Called when outputs registered and/or pruned.
-    fn on_outputs_changed<'a, I, O>(
+    fn apply_light_micro_block(
         &mut self,
-        epoch: u64,
-        inputs: I,
-        outputs: O,
-        is_final: bool,
-        block_timestamp: Timestamp,
-    ) where
-        I: Iterator<Item = &'a Hash>,
-        O: Iterator<Item = &'a Output>,
-    {
-        let saved_balance = self.database.balance();
+        header: MicroBlockHeader,
+        sig: pbc::Signature,
+        input_hashes: Vec<Hash>,
+        outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
+    ) -> Result<(), Error> {
+        //
+        // Validate block.
+        //
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
+        self.database.validate_light_micro_block(
+            &header,
+            &sig,
+            &input_hashes,
+            &output_hashes,
+            &canaries,
+        )?;
 
-        // This order is important - first create outputs, then remove inputs.
-        // Otherwise it will fail in case of annihilated input/output in a macro block.
-        for output in outputs {
-            self.on_output_created(epoch, output, block_timestamp);
-        }
-        for input_hash in inputs {
-            self.on_output_pruned(input_hash);
-        }
+        //
+        // Register block.
+        //
+        let transaction_statuses = self.database.apply_light_micro_block(
+            header,
+            input_hashes.iter(),
+            outputs.iter(),
+            &self.account_pkey,
+            &self.account_skey,
+        )?;
 
-        // finalize epoch balance, before checking balance info.
-        if is_final {
-            self.database.current_epoch_balance_changed = false;
+        self.on_tx_statuses_changed(&transaction_statuses);
+        if transaction_statuses.len() > 0 {
+            self.notify_balance_changed(self.database.balance());
         }
-        let balance = self.database.balance();
-        if saved_balance != balance {
-            self.notify_balance_changed(balance);
-        }
+        Ok(())
     }
 
-    /// Called when UTXO is created.
-    fn on_output_created(&mut self, epoch: u64, output: &Output, block_timestamp: Timestamp) {
-        let hash = Hash::digest(&output);
-        match output {
-            Output::PaymentOutput(o) => {
-                if let Ok(PaymentPayload { amount, data, .. }) =
-                    o.decrypt_payload(&self.account_pkey, &self.account_skey)
-                {
-                    assert!(amount >= 0);
-                    info!(
-                        "Received: utxo={}, amount={}, data={:?}",
-                        hash, amount, data
-                    );
-                    self.database.current_epoch_balance_changed = true;
-                    let value = PaymentValue {
-                        output: o.clone(),
-                        amount,
-                        recipient: self.account_pkey,
-                        data: data.clone(),
-                        rvalue: None,
-                        is_change: false,
-                    };
-
-                    if let Err(e) = self
-                        .database
-                        .push_incomming(block_timestamp, value.clone().into())
-                    {
-                        error!("Error when adding incomming tx = {}", e)
-                    }
-
-                    let info = value.to_info(None);
-                    let missing = self
-                        .database
-                        .get_unspent(&hash)
-                        .expect("Cannot read database");
-                    assert!(missing.is_none());
-                    self.database
-                        .insert_unspent(value.into())
-                        .expect("Cannot write to database.");
-                    self.notify(AccountNotification::Received(info));
-                }
-            }
-            Output::PublicPaymentOutput(o) => {
-                if &o.recipient != &self.account_pkey {
-                    return;
-                }
-                let PublicPaymentOutput { ref amount, .. } = &o;
-                assert!(*amount >= 0);
-                info!("Received public payment: utxo={}, amount={}", hash, amount);
-                self.database.current_epoch_balance_changed = true;
-                let value = PublicPaymentValue { output: o.clone() };
-
-                if let Err(e) = self
-                    .database
-                    .push_incomming(block_timestamp, value.clone().into())
-                {
-                    error!("Error when adding incomming tx = {}", e)
-                }
-
-                let info = value.to_info(None);
-                let missing = self
-                    .database
-                    .get_unspent(&hash)
-                    .expect("Cannot read database");
-                assert!(missing.is_none());
-                self.database
-                    .insert_unspent(value.into())
-                    .expect("Cannot write to database.");
-                self.notify(AccountNotification::ReceivedPublic(info));
-            }
-            Output::StakeOutput(o) => {
-                if &o.recipient != &self.account_pkey {
-                    return;
-                }
-                let active_until_epoch = epoch + self.stake_epochs;
-                info!(
-                    "Staked money to escrow: hash={}, amount={}, active_until_epoch={}",
-                    hash, o.amount, active_until_epoch
-                );
-                self.database.current_epoch_balance_changed = true;
-                let value = StakeValue {
-                    output: o.clone(),
-                    active_until_epoch: active_until_epoch.into(),
-                };
-
-                let info = value.to_info(self.database.epoch());
-                let missing = self
-                    .database
-                    .get_unspent(&hash)
-                    .expect("Cannot read database");
-                assert!(missing.is_none(), "Inconsistent account state");
-                self.database
-                    .insert_unspent(value.into())
-                    .expect("Cannot write to database.");
-                self.notify(AccountNotification::Staked(info));
-            }
-        };
+    fn revert_light_micro_block(&mut self) -> Result<(), Error> {
+        let transaction_statuses = self.database.revert_micro_block()?;
+        self.on_tx_statuses_changed(&transaction_statuses);
+        if transaction_statuses.len() > 0 {
+            self.notify_balance_changed(self.database.balance());
+        }
+        Ok(())
     }
 
-    /// Called when UTXO is spent.
-    fn on_output_pruned(&mut self, hash: &Hash) {
-        let output = match self
-            .database
-            .get_unspent(&hash)
-            .expect("Cannot read database")
-        {
-            Some(o) => o,
-            None => return,
-        };
-        self.database.current_epoch_balance_changed = true;
-        match output {
-            OutputValue::Payment(p) => {
-                let o = p.output;
-                let PaymentPayload { amount, data, .. } = o
-                    .decrypt_payload(&self.account_pkey, &self.account_skey)
-                    .expect("is my utxo");
-                info!("Spent: utxo={}, amount={}, data={:?}", hash, amount, data);
-                match self
-                    .database
-                    .get_unspent(&hash)
-                    .expect("Cannot read database")
-                {
-                    Some(OutputValue::Payment(value)) => {
-                        self.database
-                            .remove_unspent(&hash)
-                            .expect("Cannot write database");
-                        let info = value.to_info(self.database.is_input_locked(&hash));
-                        self.notify(AccountNotification::Spent(info));
-                    }
-                    _ => panic!("Inconsistent account state"),
-                }
-            }
-            OutputValue::PublicPayment(p) => {
-                let o = &p.output;
-                assert!(o.recipient == self.account_pkey, "is my utxo");
-                info!("Spent public payment: utxo={}, amount={}", hash, o.amount);
-                match self
-                    .database
-                    .get_unspent(&hash)
-                    .expect("Cannot read database")
-                {
-                    Some(OutputValue::PublicPayment(value)) => {
-                        self.database
-                            .remove_unspent(&hash)
-                            .expect("Cannot write database");
-                        let info = value.to_info(self.database.is_input_locked(&hash));
-                        self.notify(AccountNotification::SpentPublic(info));
-                    }
-                    _ => panic!("Inconsistent account state"),
-                }
-            }
-            OutputValue::Stake(s) => {
-                let o = s.output;
-                assert_eq!(o.recipient, self.account_pkey, "is my utxo");
-                info!("Unstaked: utxo={}, amount={}", hash, o.amount);
-                match self
-                    .database
-                    .get_unspent(&hash)
-                    .expect("Cannot read database")
-                {
-                    Some(OutputValue::Stake(value)) => {
-                        self.database
-                            .remove_unspent(&hash)
-                            .expect("Cannot write database");
-                        let info = value.to_info(self.database.epoch());
-                        self.notify(AccountNotification::Unstaked(info));
-                    }
-                    _ => panic!("Inconsistent account state"),
-                }
-            }
+    fn apply_light_macro_block(
+        &mut self,
+        header: MacroBlockHeader,
+        multisig: pbc::Signature,
+        multisigmap: BitVec,
+        input_hashes: Vec<Hash>,
+        outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
+        validators: StakersGroup,
+    ) -> Result<(), Error> {
+        let epoch = header.epoch;
+        let timestamp = header.timestamp;
+
+        //
+        // Validate block.
+        //
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
+        self.database.validate_macro_block(
+            &header,
+            &multisig,
+            &multisigmap,
+            &input_hashes,
+            &output_hashes,
+            &canaries,
+            &validators,
+        )?;
+
+        //
+        // Register block
+        //
+        let transaction_statuses = self.database.apply_light_macro_block(
+            header,
+            input_hashes.iter(),
+            outputs.iter(),
+            validators,
+            &self.account_pkey,
+            &self.account_skey,
+        )?;
+
+        debug!(
+            "Epoch changed: epoch={}, facilitator={}, last_macro_block_timestamp={}",
+            epoch,
+            self.database.facilitator_pkey(),
+            timestamp
+        );
+        if let Some((ref mut snowball, _)) = &mut self.snowball {
+            snowball.change_facilitator(self.database.facilitator_pkey().clone());
         }
+        self.on_tx_statuses_changed(&transaction_statuses);
+        if transaction_statuses.len() > 0 {
+            self.notify_balance_changed(self.database.balance());
+        }
+        Ok(())
     }
 
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
@@ -895,29 +782,6 @@ impl UnsealedAccountService {
             .push_outgoing(Timestamp::now(), tx_value.clone())?;
         self.send_transaction(tx_value.tx.into())?;
         Ok(tx_info)
-    }
-
-    fn on_epoch_changed(
-        &mut self,
-        epoch: u64,
-        facilitator_pkey: pbc::PublicKey,
-        last_macro_block_timestamp: Timestamp,
-    ) {
-        debug!(
-            "Epoch changed: epoch={}, facilitator={}, last_macro_block_timestamp={}",
-            epoch, facilitator_pkey, last_macro_block_timestamp
-        );
-        self.database.on_epoch_changed(epoch);
-        self.facilitator_pkey = facilitator_pkey;
-        if let Some((ref mut snowball, _)) = &mut self.snowball {
-            snowball.change_facilitator(self.facilitator_pkey.clone());
-        }
-        self.last_macro_block_timestamp = last_macro_block_timestamp;
-        let updated_statuses = self
-            .database
-            .finalize_epoch(epoch)
-            .expect("Cannot write to db.");
-        self.on_tx_statuses_changed(&updated_statuses);
     }
 
     fn handle_snowball_transaction(
@@ -1001,36 +865,32 @@ impl UnsealedAccountService {
         }
     }
 
-    fn handle_check_pending_utxos(&mut self, now: Instant) {
+    fn expire_locked_inputs(&mut self) {
         trace!("Handle check pending utxo transactions");
-        let pending = std::mem::replace(&mut self.database.pending_payments, HashMap::new());
+        let pending = self.database.expire_locked_inputs(PENDING_UTXO_TIME);
         let mut balance_unlocked = false;
-        for (hash, p) in pending {
-            if p.time + PENDING_UTXO_TIME <= now {
-                trace!("Found outdated pending utxo = {}", hash);
-                balance_unlocked = true;
-                if let Some((snowball, _)) = &self.snowball {
-                    if !snowball.is_my_input(hash) {
-                        continue;
-                    }
-                    // Terminate Snowball session.
-                    error!("Snowball timed out");
-                    let (_snowball, tx) = self.snowball.take().unwrap();
-                    self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
-                    let response = AccountResponse::Error {
-                        error: "Snowball timed out".to_string(),
-                    };
-                    let _ = tx.send(response);
-
-                    info!(
-                        "Some outputs of snowball are now outdated: snowball_session = {}",
-                        hash
-                    );
-                    warn!("Resetting Snowball on timeout.");
-                    self.snowball = None;
+        for hash in pending {
+            trace!("Found outdated pending utxo = {}", hash);
+            balance_unlocked = true;
+            if let Some((snowball, _)) = &self.snowball {
+                if !snowball.is_my_input(hash) {
+                    continue;
                 }
-            } else {
-                assert!(self.database.pending_payments.insert(hash, p).is_none());
+                // Terminate Snowball session.
+                error!("Snowball timed out");
+                let (_snowball, tx) = self.snowball.take().unwrap();
+                self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
+                let response = AccountResponse::Error {
+                    error: "Snowball timed out".to_string(),
+                };
+                let _ = tx.send(response);
+
+                info!(
+                    "Some outputs of snowball are now outdated: snowball_session = {}",
+                    hash
+                );
+                warn!("Resetting Snowball on timeout.");
+                self.snowball = None;
             }
         }
 
@@ -1159,7 +1019,7 @@ impl Future for UnsealedAccountService {
                 .poll()
                 .expect("no errors in timers")
             {
-                Async::Ready(Some(t)) => self.handle_check_pending_utxos(t),
+                Async::Ready(Some(_t)) => self.expire_locked_inputs(),
                 Async::NotReady => break,
                 e => panic!("Error in handling check pending utxos timer = {:?}", e),
             }
@@ -1358,130 +1218,37 @@ impl Future for UnsealedAccountService {
             };
             match rx.poll().expect("all errors are already handled") {
                 Async::Ready(Some(notification)) => match notification {
-                    ChainNotification::MicroBlockPrepared(block) => {
-                        let epoch = block.header.epoch;
-                        let offset = block.header.offset;
-                        trace!(
-                            "Prepared a micro block: epoch={}, offset={}, block={}",
-                            epoch,
-                            offset,
-                            Hash::digest(&block)
-                        );
-                        let txs = match self.database.prune_txs(block.inputs(), block.outputs()) {
-                            Ok(txs) => txs,
-                            Err(e) => {
-                                error!("Error duiring processing event = {}", e);
-                                return Err(());
-                            }
-                        };
-                        let statuses = txs
-                            .into_iter()
-                            .map(|(k, v)| {
-                                let status = if v.1 {
-                                    TransactionStatus::Prepared { epoch, offset }
-                                } else {
-                                    TransactionStatus::Conflicted {
-                                        epoch,
-                                        offset: Some(offset),
-                                    }
-                                };
-
-                                (k, status)
-                            })
-                            .collect();
-                        self.on_tx_statuses_changed(&statuses);
-                        self.on_outputs_changed(
-                            block.header.epoch,
-                            block.inputs(),
-                            block.outputs(),
-                            false,
-                            block.header.timestamp,
-                        );
-                    }
                     ChainNotification::MacroBlockCommitted(block) => {
-                        let epoch = block.block.header.epoch;
-                        trace!(
-                            "Committed a macro block: epoch={}, block={}",
-                            epoch,
-                            Hash::digest(&block.block)
-                        );
-                        let txs = match self.database.prune_txs(block.inputs(), block.outputs()) {
-                            Ok(txs) => txs,
-                            Err(e) => {
-                                error!("Error duiring processing event = {}", e);
-                                return Err(());
-                            }
-                        };
-                        let statuses = txs
+                        let validators = block
+                            .epoch_info
+                            .validators
                             .into_iter()
-                            .map(|(k, v)| {
-                                let status = if v.1 {
-                                    TransactionStatus::Committed { epoch }
-                                } else {
-                                    TransactionStatus::Conflicted {
-                                        epoch,
-                                        offset: None,
-                                    }
-                                };
-
-                                (k, status)
-                            })
+                            .map(|info| (info.network_pkey, info.slots))
                             .collect();
-                        self.on_tx_statuses_changed(&statuses);
-                        self.on_outputs_changed(
-                            block.block.header.epoch,
-                            block.inputs(),
-                            block.outputs(),
-                            true,
-                            block.block.header.timestamp,
-                        );
-                        self.on_epoch_changed(
-                            block.block.header.epoch,
-                            block.epoch_info.facilitator,
-                            block.block.header.timestamp,
-                        );
+                        self.apply_light_macro_block(
+                            block.block.header,
+                            block.block.multisig,
+                            block.block.multisigmap,
+                            block.block.inputs,
+                            block.block.outputs,
+                            validators,
+                        )
+                        .expect("failed to apply a macro block");
                     }
-                    ChainNotification::MicroBlockReverted(block) => {
-                        let epoch = block.block.header.epoch;
-                        let offset = block.block.header.offset;
-                        trace!(
-                            "Reverted a micro block: epoch={}, offset={}, block={}, inputs={:?}, outputs={:?}",
-                            epoch,
-                            offset,
-                            Hash::digest(&block.block),
-                            block
-                                .pruned_outputs()
-                                .cloned()
-                                .map(|k| k.to_string())
-                                .collect::<Vec<_>>(),
-                            block
-                                .recovered_inputs()
-                                .map(Hash::digest)
-                                .map(|k| k.to_string())
-                                .collect::<Vec<_>>(),
-                        );
-                        let txs = match self.database.rollback_txs(offset) {
-                            Ok(txs) => txs,
-                            Err(e) => {
-                                error!("Error duiring processing event = {}", e);
-                                return Err(());
-                            }
-                        };
-                        let statuses = txs
-                            .into_iter()
-                            .map(|(k, _)| {
-                                let status = TransactionStatus::Created {};
-                                (k, status)
-                            })
-                            .collect();
-                        self.on_tx_statuses_changed(&statuses);
-                        self.on_outputs_changed(
-                            block.block.header.epoch,
-                            block.pruned_outputs(),
-                            block.recovered_inputs(),
-                            false,
-                            block.block.header.timestamp,
-                        );
+                    ChainNotification::MicroBlockPrepared(block) => {
+                        let input_hashes = block.inputs().cloned().collect();
+                        let outputs = block.outputs().cloned().collect();
+                        self.apply_light_micro_block(
+                            block.header.clone(),
+                            block.sig,
+                            input_hashes,
+                            outputs,
+                        )
+                        .expect("failed to apply a micro block");
+                    }
+                    ChainNotification::MicroBlockReverted(_block) => {
+                        self.revert_light_micro_block()
+                            .expect("failed to revert a micro block");
                     }
                 },
                 Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
@@ -1504,8 +1271,10 @@ struct SealedAccountService {
     network_skey: pbc::SecretKey,
     /// Network Public Key.
     network_pkey: pbc::PublicKey,
-    /// Lifetime of stake.
-    stake_epochs: u64,
+    /// Genesis header.
+    genesis_hash: Hash,
+    /// Chain configuration.
+    chain_cfg: ChainConfig,
     /// Maximum allowed count of input UTXOs
     max_inputs_in_tx: usize,
 
@@ -1531,7 +1300,8 @@ impl SealedAccountService {
         network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        stake_epochs: u64,
+        genesis_hash: Hash,
+        chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
@@ -1542,7 +1312,8 @@ impl SealedAccountService {
             account_pkey,
             network_skey,
             network_pkey,
-            stake_epochs,
+            genesis_hash,
+            chain_cfg,
             max_inputs_in_tx,
             node,
             network,
@@ -1650,7 +1421,8 @@ impl Future for AccountService {
                         sealed.network_pkey,
                         sealed.network,
                         sealed.node,
-                        sealed.stake_epochs,
+                        sealed.genesis_hash,
+                        sealed.chain_cfg,
                         sealed.max_inputs_in_tx,
                         sealed.subscribers,
                         sealed.events,
@@ -1689,7 +1461,8 @@ impl Future for AccountService {
                         unsealed.network_pkey,
                         unsealed.network,
                         unsealed.node,
-                        unsealed.stake_epochs,
+                        unsealed.database.genesis_hash().clone(),
+                        unsealed.database.cfg().clone(),
                         unsealed.max_inputs_in_tx,
                         unsealed.subscribers,
                         unsealed.events,
@@ -1713,7 +1486,8 @@ impl AccountService {
         network_pkey: pbc::PublicKey,
         network: Network,
         node: Node,
-        stake_epochs: u64,
+        genesis_hash: Hash,
+        chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
     ) -> Result<(Self, Account), KeyError> {
         let account_pkey_file = account_dir.join("account.pkey");
@@ -1728,7 +1502,8 @@ impl AccountService {
             network_pkey,
             network,
             node,
-            stake_epochs,
+            genesis_hash,
+            chain_cfg,
             max_inputs_in_tx,
             subscribers,
             events,
@@ -1789,7 +1564,8 @@ pub struct WalletService {
     network: Network,
     node: Node,
     executor: TaskExecutor,
-    stake_epochs: u64,
+    genesis_hash: Hash,
+    chain_cfg: ChainConfig,
     max_inputs_in_tx: usize,
     accounts: HashMap<AccountId, AccountHandle>,
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
@@ -1806,7 +1582,8 @@ impl WalletService {
         network: Network,
         node: Node,
         executor: TaskExecutor,
-        stake_epochs: u64,
+        genesis_hash: Hash,
+        chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         last_epoch: u64,
     ) -> Result<(Self, Wallet), Error> {
@@ -1820,7 +1597,8 @@ impl WalletService {
             network,
             node,
             executor,
-            stake_epochs,
+            genesis_hash,
+            chain_cfg,
             max_inputs_in_tx,
             accounts: HashMap::new(),
             subscribers,
@@ -1872,7 +1650,7 @@ impl WalletService {
     ///
     fn open_account(&mut self, account_id: &str, is_new: bool) -> Result<(), Error> {
         let account_dir = self.accounts_dir.join(account_id);
-        let account_database_dir = account_dir.join("history");
+        let account_database_dir = account_dir.join("lightdb");
         let account_pkey_file = account_dir.join("account.pkey");
         let account_pkey = load_account_pkey(&account_pkey_file)?;
         debug!("Found account id={}, pkey={}", account_id, account_pkey);
@@ -1884,16 +1662,8 @@ impl WalletService {
             }
         }
 
-        if is_new {
-            // Initialize database.
-            let mut database = AccountDatabase::open(&account_database_dir);
-
-            // Save the last finalized epoch to skip recovery for the new fresh account.
-            assert_eq!(database.epoch(), 0, "account is not recovered");
-            info!("Set account epoch to = {}", self.last_epoch);
-            database.finalize_epoch(self.last_epoch)?;
-            drop(database);
-        }
+        // TODO: implement the fast recovery for freshly created accounts.
+        drop(is_new);
 
         let (account_service, account) = AccountService::new(
             &account_database_dir,
@@ -1902,7 +1672,8 @@ impl WalletService {
             self.network_pkey.clone(),
             self.network.clone(),
             self.node.clone(),
-            self.stake_epochs,
+            self.genesis_hash.clone(),
+            self.chain_cfg.clone(),
             self.max_inputs_in_tx,
         )?;
         let account_notifications = account.subscribe();

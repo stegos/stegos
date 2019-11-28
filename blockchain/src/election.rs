@@ -70,12 +70,15 @@ impl Default for ElectionResult {
     }
 }
 
+pub fn select_leader(validators: &StakersGroup, random: &Hash, view_change: u32) -> pbc::PublicKey {
+    let random = generate_u64(*random, view_change);
+    let leader_id = select_winner(validators.iter().map(|(_k, slots)| slots), random).unwrap();
+    validators[leader_id].0
+}
+
 impl ElectionResult {
     pub fn select_leader(&self, view_change: u32) -> pbc::PublicKey {
-        let random = generate_u64(self.random.rand, view_change);
-        let leader_id =
-            select_winner(self.validators.iter().map(|(_k, slots)| slots), random).unwrap();
-        self.validators[leader_id].0
+        select_leader(&self.validators, &self.random.rand, view_change)
     }
 
     /// Returns true if peer is validator in current epoch.
@@ -153,20 +156,24 @@ pub fn select_validators_slots(
     }
     // Convert Map -> Vec. Deterministically ordered.
     let validators: Vec<_> = validators.into_iter().collect();
-    // generate special random for facilitator.
-    let mut hasher = Hasher::new();
-    seed.hash(&mut hasher);
-    "facilitator".hash(&mut hasher);
-    let seed = hasher.result();
-    let rand = shrink_hash(seed);
-    let facilitator_id = select_winner(validators.iter().map(|(_k, slots)| slots), rand).unwrap();
-    let facilitator = validators[facilitator_id].0;
+    let facilitator = select_facilitator(&seed, &validators);
     ElectionResult {
         validators,
         random,
         view_change: 0,
         facilitator,
     }
+}
+
+pub fn select_facilitator(random: &Hash, validators: &StakersGroup) -> pbc::PublicKey {
+    // generate special random for facilitator.
+    let mut hasher = Hasher::new();
+    random.hash(&mut hasher);
+    "facilitator".hash(&mut hasher);
+    let seed = hasher.result();
+    let rand = shrink_hash(seed);
+    let facilitator_id = select_winner(validators.iter().map(|(_k, slots)| slots), rand).unwrap();
+    validators[facilitator_id].0.clone()
 }
 
 /// Mix seed hash with round value to produce new hash.

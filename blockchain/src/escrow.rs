@@ -261,7 +261,7 @@ impl Escrow {
         epoch: u64,
     ) -> Result<(), BlockchainError>
     where
-        OutputIter: Iterator<Item = (&'a Output)>,
+        OutputIter: Iterator<Item = &'a Output>,
     {
         let mut staking_balance: HashMap<pbc::PublicKey, i64> = HashMap::new();
         for input in inputs {

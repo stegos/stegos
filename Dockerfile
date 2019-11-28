@@ -1,5 +1,5 @@
 # Use multi-stage build to reduce image size
-FROM quay.io/stegos/rust:nightly-2019-10-30 AS source
+FROM quay.io/stegos/rust:nightly-2019-11-25 AS source
 LABEL maintainer="Stegos AG <info@stegos.com>"
 
 COPY . /usr/src/stegos

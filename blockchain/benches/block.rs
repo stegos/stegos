@@ -5,7 +5,7 @@ use log::*;
 use simple_logger;
 use std::path::Path;
 use std::time::Duration;
-use stegos_blockchain::{test, Blockchain, ChainConfig, MacroBlock, Timestamp};
+use stegos_blockchain::{test, Blockchain, ChainConfig, ConsistencyCheck, MacroBlock, Timestamp};
 use tempdir::TempDir;
 
 fn generate_chain(
@@ -26,8 +26,14 @@ fn generate_chain(
         timestamp,
         None,
     );
-    let mut chain = Blockchain::new(cfg.clone(), chain_dir, false, genesis.clone(), timestamp)
-        .expect("Failed to create blockchain");
+    let mut chain = Blockchain::new(
+        cfg.clone(),
+        chain_dir,
+        ConsistencyCheck::None,
+        genesis.clone(),
+        timestamp,
+    )
+    .expect("Failed to create blockchain");
 
     //
     // Generate epochs.
@@ -86,12 +92,12 @@ fn push_macro_block(b: &mut Bencher) {
             let chain = Blockchain::new(
                 cfg.clone(),
                 chain_dir.path(),
-                false,
+                ConsistencyCheck::None,
                 blocks[0].clone(),
                 timestamp,
             )
             .unwrap();
-            (chain, temp_dir, blocks.clone())
+            (chain, chain_dir, blocks.clone())
         },
         |(mut chain, _temp_dir, blocks)| {
             for block in blocks.into_iter().skip(1) {
@@ -119,7 +125,7 @@ fn recover_macro_block(b: &mut Bencher) {
         let _chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
-            false,
+            ConsistencyCheck::None,
             blocks[0].clone(),
             timestamp,
         )

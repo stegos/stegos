@@ -2160,7 +2160,7 @@ impl WalletService {
         request: WalletControlRequest,
     ) -> Result<WalletControlResponse, Error> {
         match request {
-            WalletControlRequest::ListAccounts {} => {
+            WalletControlRequest::ListAccounts {} | WalletControlRequest::AccountsInfo {} => {
                 let accounts = self
                     .accounts
                     .iter()

@@ -439,6 +439,18 @@ impl ConsoleService {
     }
 
     fn send_wallet_control_request(&mut self, request: WalletControlRequest) -> Result<(), Error> {
+        match &request {
+            WalletControlRequest::CreateAccount { .. }
+            | WalletControlRequest::RecoverAccount { .. } => {
+                // Print passwords only if Trace level is enabled.
+                if log::log_enabled!(log::Level::Trace) {
+                    self.print(&request);
+                }
+            }
+            _ => {
+                self.print(&request);
+            }
+        }
         let request = WalletRequest::WalletControlRequest(request);
         let request = Request {
             kind: RequestKind::WalletsRequest(request),
@@ -907,7 +919,7 @@ impl ConsoleService {
             let request = NodeRequest::SubscribeStatus {};
             self.send_node_request(request)?
         } else if msg == "show accounts" {
-            let request = WalletControlRequest::ListAccounts {};
+            let request = WalletControlRequest::AccountsInfo {};
             self.send_wallet_control_request(request)?;
         } else if msg == "create account" {
             let password = read_password_with_confirmation()?;

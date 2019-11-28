@@ -23,7 +23,7 @@
 
 use failure::{format_err, Error};
 use futures::prelude::*;
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use libp2p;
 pub use libp2p_core::multiaddr::Multiaddr;
 pub use libp2p_core::PeerId;
@@ -53,7 +53,7 @@ use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::ncp::{Ncp, NcpOutEvent};
 use crate::pubsub::{Floodsub, FloodsubEvent};
 use crate::replication::{Replication, ReplicationEvent};
-use crate::{Network, NetworkProvider, UnicastMessage};
+use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
 
 mod proto;
 use self::proto::unicast_proto;
@@ -158,6 +158,13 @@ impl NetworkProvider for Libp2pNetwork {
         let msg = ControlMessage::DisableReplicationUpstream { peer_id };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
+    }
+
+    fn list_connected_nodes(&self) -> Result<oneshot::Receiver<NetworkResponse>, Error> {
+        let (tx, rx) = oneshot::channel::<NetworkResponse>();
+        self.control_tx
+            .unbounded_send(ControlMessage::ConnectedNodesRequest { tx })?;
+        Ok(rx)
     }
 
     // Clone self as a box
@@ -395,6 +402,12 @@ where
             ControlMessage::DisableReplicationUpstream { peer_id } => {
                 self.replication.disconnect(peer_id);
             }
+            ControlMessage::ConnectedNodesRequest { tx } => {
+                let nodes = self.ncp.get_connected_nodes();
+                if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes }) {
+                    warn!(target: "stegos_network", "Failed send API response for connected nodes");
+                }
+            }
         }
     }
 
@@ -625,7 +638,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum ControlMessage {
     Subscribe {
         topic: String,
@@ -653,6 +666,9 @@ pub enum ControlMessage {
     },
     DisableReplicationUpstream {
         peer_id: PeerId,
+    },
+    ConnectedNodesRequest {
+        tx: oneshot::Sender<NetworkResponse>,
     },
 }
 

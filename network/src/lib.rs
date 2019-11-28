@@ -38,7 +38,7 @@ mod replication;
 mod utils;
 
 use failure::{Error, Fail};
-use futures::sync::mpsc;
+use futures::sync::{mpsc, oneshot};
 use std::fmt;
 use stegos_crypto::pbc;
 
@@ -50,6 +50,7 @@ pub use self::libp2p_network::PeerId;
 pub use self::libp2p_network::NETWORK_IDLE_TIMEOUT;
 pub use self::libp2p_network::NETWORK_READY_TOKEN;
 pub use self::libp2p_network::NETWORK_STATUS_TOPIC;
+pub use self::ncp::NodeInfo;
 pub use self::replication::ReplicationEvent;
 pub use self::utils::IntoMultihash;
 
@@ -79,6 +80,8 @@ where
 
     /// Disconnect from a replication upstream.
     fn replication_disconnect(&self, peer_id: PeerId) -> Result<(), Error>;
+    /// Request list of connected nodes
+    fn list_connected_nodes(&self) -> Result<oneshot::Receiver<NetworkResponse>, Error>;
 
     /// Helper for cloning boxed object
     fn box_clone(&self) -> Network;
@@ -97,6 +100,11 @@ pub struct UnicastMessage {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+pub enum NetworkResponse {
+    ConnectedNodes { nodes: Vec<NodeInfo> },
+}
+
 impl Clone for Network {
     fn clone(&self) -> Network {
         self.box_clone()
@@ -109,4 +117,6 @@ impl Clone for Network {
 pub enum NetworkError {
     #[fail(display = "Generic network error talking to node: {:#?}", _0)]
     GenericError(pbc::PublicKey),
+    #[fail(display = "Error returning result to API call: {}", _0)]
+    APIResponseError(String),
 }

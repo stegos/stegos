@@ -38,6 +38,7 @@ use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::pbc;
+pub use stegos_network::NodeInfo;
 pub use stegos_node::{ChainNotification, NodeRequest, NodeResponse, StatusNotification};
 pub use stegos_wallet::api::*;
 pub use websocket::WebSocketError;
@@ -75,6 +76,7 @@ pub enum NetworkRequest {
         topic: String,
         data: Vec<u8>,
     },
+    ConnectedNodesRequest {},
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -88,6 +90,8 @@ pub enum NetworkResponse {
     UnsubscribedBroadcast,
     SentUnicast,
     PublishedBroadcast,
+    ConnectedNodesRequested,
+    ConnectedNodes { total: usize, nodes: Vec<NodeInfo> },
     Error { error: String },
 }
 

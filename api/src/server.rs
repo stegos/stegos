@@ -32,7 +32,7 @@ use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use log::*;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use stegos_network::{Network, UnicastMessage};
+use stegos_network::{Network, NetworkResponse as NetworkServiceResponse, UnicastMessage};
 use stegos_node::{ChainNotification, Node, NodeResponse, StatusNotification};
 use stegos_wallet::api::{WalletNotification, WalletResponse};
 use stegos_wallet::Wallet;
@@ -70,6 +70,8 @@ struct WebSocketHandler {
     network_unicast: HashMap<String, mpsc::UnboundedReceiver<UnicastMessage>>,
     /// Network broadcast subscribtions.
     network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
+    /// Responses from the network subsystem
+    network_responses: Vec<(RequestId, oneshot::Receiver<NetworkServiceResponse>)>,
     /// Wallet API.
     wallet: Wallet,
     /// Wallet events.
@@ -86,6 +88,11 @@ struct WebSocketHandler {
     chain_notifications: Option<mpsc::Receiver<ChainNotification>>,
     /// Server version.
     version: String,
+}
+
+enum NetworkResult {
+    Immediate(NetworkResponse),
+    Async(oneshot::Receiver<NetworkServiceResponse>),
 }
 
 impl WebSocketHandler {
@@ -106,6 +113,7 @@ impl WebSocketHandler {
         let mut network_broadcast = HashMap::new();
         let rx = network.subscribe(CONSOLE_TOPIC).unwrap();
         network_broadcast.insert(CONSOLE_TOPIC.to_string(), rx);
+        let network_responses = Vec::new();
         let wallet_notifications = wallet.subscribe();
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
@@ -120,6 +128,7 @@ impl WebSocketHandler {
             network,
             network_unicast,
             network_broadcast,
+            network_responses,
             wallet,
             wallet_notifications,
             wallet_responses,
@@ -134,11 +143,13 @@ impl WebSocketHandler {
     fn handle_network_request(
         &mut self,
         network_request: NetworkRequest,
-    ) -> Result<NetworkResponse, Error> {
+    ) -> Result<NetworkResult, Error> {
         match network_request {
             NetworkRequest::VersionInfo {} => {
                 let version = self.version.clone();
-                Ok(NetworkResponse::VersionInfo { version })
+                Ok(NetworkResult::Immediate(NetworkResponse::VersionInfo {
+                    version,
+                }))
             }
             NetworkRequest::SubscribeUnicast { topic } => {
                 if !self.network_unicast.contains_key(&topic) {
@@ -146,7 +157,7 @@ impl WebSocketHandler {
                     self.network_unicast.insert(topic, rx);
                     task::current().notify();
                 }
-                Ok(NetworkResponse::SubscribedUnicast)
+                Ok(NetworkResult::Immediate(NetworkResponse::SubscribedUnicast))
             }
             NetworkRequest::SubscribeBroadcast { topic } => {
                 if !self.network_broadcast.contains_key(&topic) {
@@ -154,23 +165,35 @@ impl WebSocketHandler {
                     self.network_broadcast.insert(topic, rx);
                     task::current().notify();
                 }
-                Ok(NetworkResponse::SubscribedBroadcast)
+                Ok(NetworkResult::Immediate(
+                    NetworkResponse::SubscribedBroadcast,
+                ))
             }
             NetworkRequest::UnsubscribeUnicast { topic } => {
                 self.network_unicast.remove(&topic);
-                Ok(NetworkResponse::UnsubscribedUnicast)
+                Ok(NetworkResult::Immediate(
+                    NetworkResponse::UnsubscribedUnicast,
+                ))
             }
             NetworkRequest::UnsubscribeBroadcast { topic } => {
                 self.network_broadcast.remove(&topic);
-                Ok(NetworkResponse::UnsubscribedBroadcast)
+                Ok(NetworkResult::Immediate(
+                    NetworkResponse::UnsubscribedBroadcast,
+                ))
             }
             NetworkRequest::SendUnicast { topic, to, data } => {
                 self.network.send(to, &topic, data)?;
-                Ok(NetworkResponse::SentUnicast)
+                Ok(NetworkResult::Immediate(NetworkResponse::SentUnicast))
             }
             NetworkRequest::PublishBroadcast { topic, data } => {
                 self.network.publish(&topic, data)?;
-                Ok(NetworkResponse::PublishedBroadcast)
+                Ok(NetworkResult::Immediate(
+                    NetworkResponse::PublishedBroadcast,
+                ))
+            }
+            NetworkRequest::ConnectedNodesRequest {} => {
+                let rx = self.network.list_connected_nodes()?;
+                Ok(NetworkResult::Async(rx))
             }
         }
     }
@@ -229,17 +252,28 @@ impl Future for WebSocketHandler {
                     trace!("[{}] => {:?}", self.peer, request);
                     match request.kind {
                         RequestKind::NetworkRequest(network_request) => {
-                            let resp = match self.handle_network_request(network_request) {
-                                Ok(r) => r,
-                                Err(e) => NetworkResponse::Error {
-                                    error: format!("{}", e),
-                                },
+                            match self.handle_network_request(network_request) {
+                                Ok(NetworkResult::Immediate(r)) => {
+                                    let response = Response {
+                                        kind: ResponseKind::NetworkResponse(r),
+                                        id: request.id,
+                                    };
+                                    try_send!(self, response);
+                                }
+                                Ok(NetworkResult::Async(rx)) => {
+                                    self.network_responses.push((request.id, rx));
+                                }
+                                Err(e) => {
+                                    let r = NetworkResponse::Error {
+                                        error: format!("{}", e),
+                                    };
+                                    let response = Response {
+                                        kind: ResponseKind::NetworkResponse(r),
+                                        id: request.id,
+                                    };
+                                    try_send!(self, response);
+                                }
                             };
-                            let response = Response {
-                                kind: ResponseKind::NetworkResponse(resp),
-                                id: request.id,
-                            };
-                            try_send!(self, response);
                         }
                         RequestKind::WalletsRequest(wallet_request) => {
                             self.wallet_responses
@@ -315,6 +349,30 @@ impl Future for WebSocketHandler {
                     Async::NotReady => break,
                 }
             }
+        }
+
+        // Network responses
+        let mut i = 0;
+        while i < self.network_responses.len() {
+            match self.network_responses[i].1.poll() {
+                Ok(Async::Ready(response)) => {
+                    let (id, _) = self.network_responses.swap_remove(i);
+                    let resp = match response {
+                        NetworkServiceResponse::ConnectedNodes { nodes } => Response {
+                            kind: ResponseKind::NetworkResponse(NetworkResponse::ConnectedNodes {
+                                total: nodes.len(),
+                                nodes,
+                            }),
+                            id,
+                        },
+                    };
+                    try_send!(self, resp);
+                    continue;
+                }
+                Ok(Async::NotReady) => {}
+                Err(oneshot::Canceled) => panic!("missing response for WalletRequest"),
+            }
+            i += 1;
         }
 
         // Wallet notifications.

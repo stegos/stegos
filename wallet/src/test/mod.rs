@@ -148,14 +148,14 @@ impl AccountSandbox {
     }
 }
 
-fn get_request(mut rx: oneshot::Receiver<AccountResponse>) -> AccountResponse {
+fn get_request<T>(mut rx: oneshot::Receiver<T>) -> T {
     match rx.poll() {
         Ok(Async::Ready(msg)) => return msg,
         _ => panic!("No message received in time, or error when receiving message"),
     }
 }
 
-fn get_notification(rx: &mut mpsc::UnboundedReceiver<AccountNotification>) -> AccountNotification {
+fn get_notification<T>(rx: &mut mpsc::UnboundedReceiver<T>) -> T {
     match rx.poll() {
         Ok(Async::Ready(Some(msg))) => return msg,
         _ => panic!("No message received in time, or error when receiving message"),

@@ -528,6 +528,7 @@ fn create_public_tx() {
 
         assert_eq!(our_output.amount, 10);
         assert_eq!(our_output.recipient, recipient);
+        let output = our_output.clone();
 
         accounts[0].poll();
 
@@ -536,6 +537,25 @@ fn create_public_tx() {
                 tx_hash,
                 status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        let request = NodeRequest::PublicOutputs { pkey: recipient };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs { list } => assert_eq!(list, vec![output]),
+            _ => unreachable!(),
+        }
+
+        let request = NodeRequest::PublicOutputs {
+            pkey: accounts[0].account_service.account_pkey,
+        };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs { list } => assert_eq!(list, vec![]),
             _ => unreachable!(),
         }
     });

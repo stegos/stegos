@@ -729,6 +729,57 @@ impl Blockchain {
             .map(|r| r.output))
     }
 
+    /// Get accounts public utxos, collection.
+    pub fn get_public_unspent(
+        &self,
+        account_pkey: scc::PublicKey,
+    ) -> impl Iterator<Item = Result<PublicPaymentOutput, StorageError>> + '_ {
+        self.output_by_hash.iter().filter_map(move |(_hash, key)| {
+            match key {
+                OutputKey::MacroBlock { epoch, output_id } => {
+                    let block = match self.macro_block(*epoch) {
+                        Ok(b) => b,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    assert_eq!(block.header.epoch, *epoch);
+                    match block.outputs.get(*output_id as usize) {
+                        Some(Output::PublicPaymentOutput(output))
+                            if output.recipient == account_pkey =>
+                        {
+                            Some(Ok(output.clone()))
+                        }
+                        _ => None, // Pruned.
+                    }
+                }
+                OutputKey::MicroBlock {
+                    epoch,
+                    offset,
+                    tx_id,
+                    txout_id,
+                } => {
+                    let block = match self.micro_block(*epoch, *offset) {
+                        Ok(b) => b,
+                        Err(e) => return Some(Err(e)),
+                    };
+                    let tx = block
+                        .transactions
+                        .get(*tx_id as usize)
+                        .expect("Corrupted outputs_by_hash (Micro-2)");
+                    let output = tx
+                        .txouts()
+                        .get(*txout_id as usize)
+                        .expect("Corrupted outputs_by_hash (Micro-3)");
+                    match output {
+                        Output::PublicPaymentOutput(output) if output.recipient == account_pkey => {
+                            Some(Ok(output.clone()))
+                        }
+                        _ => None, // Pruned.
+                    }
+                }
+            }
+        })
+    }
+
     ///
     /// Resolve historic and possible spent UTXO by hash.
     /// Needed to validate Payment Certificate.

@@ -2328,6 +2328,19 @@ impl Future for NodeService {
                                         },
                                     }
                                 }
+                                NodeRequest::PublicOutputs { pkey } => {
+                                    let result: Result<Vec<_>, _> =
+                                        self.chain.get_public_unspent(pkey).collect();
+                                    match result {
+                                        Ok(list) => NodeResponse::PublicOutputs {
+                                            list,
+                                            epoch: self.chain.epoch(),
+                                        },
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
                                 NodeRequest::AddTransaction(tx) => {
                                     let hash = Hash::digest(&tx);
                                     NodeResponse::AddTransaction {

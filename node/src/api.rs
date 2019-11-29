@@ -25,8 +25,8 @@ use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::{
-    ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
-    ValidatorKeyInfo,
+    ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, PublicPaymentOutput,
+    Timestamp, Transaction, ValidatorKeyInfo,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
@@ -43,6 +43,9 @@ pub enum NodeRequest {
     ReplicationInfo {},
     PopMicroBlock {},
     ChainName {},
+    PublicOutputs {
+        pkey: scc::PublicKey,
+    },
     #[serde(skip)]
     AddTransaction(Transaction),
     ValidateCertificate {
@@ -88,6 +91,10 @@ pub enum NodeResponse {
     AddTransaction {
         hash: Hash,
         status: TransactionStatus,
+    },
+    PublicOutputs {
+        epoch: u64,
+        list: Vec<PublicPaymentOutput>,
     },
     CertificateValid {
         epoch: u64,

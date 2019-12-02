@@ -28,16 +28,17 @@ use stegos_crypto::scc;
 pub enum WalletError {
     #[fail(display = "Duplicate account: pkey={}", _0)]
     DuplicateAccount(scc::PublicKey),
-    #[fail(display = "Not enough money. Or outputs limit is reached.")]
+    #[fail(display = "Not enough money.")]
     NotEnoughMoney,
+    #[fail(display = "Inputs limit reached. Try to send transaction with smaller amount.")]
+    InputsLimit,
     #[fail(display = "Negative amount: amount={}", _0)]
     NegativeAmount(i64),
-    /// Stake amount is less than fee.
     #[fail(
-        display = "Stake transaction should contain be more than fee: fee={}, got={}.",
+        display = "Transaction should be more than fee: fee={}, got={}.",
         _0, _1
     )]
-    InsufficientStake(i64, i64),
+    InsufficientTransaction(i64, i64),
     /// Enough amount of stake should be unlocked.
     #[fail(
         display = "No enough stake UTXO available: current={}, available={}.",

@@ -29,7 +29,6 @@ pub(crate) fn find_utxo<'a, I, T>(
     unspent_iter: I,
     sum: i64,
     fee: i64,
-    fee_change: i64,
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<T>, i64, i64), WalletError>
 where
@@ -38,14 +37,7 @@ where
 {
     assert!(sum >= 0);
     assert!(fee >= 0);
-    assert!(fee_change >= 0);
-    let mut sorted: Vec<(i64, T)> = Vec::new();
-    for (output, amount) in unspent_iter {
-        if amount == sum + fee {
-            return Ok((vec![output], fee, 0i64));
-        }
-        sorted.push((amount, output));
-    }
+    let mut sorted: Vec<(i64, T)> = unspent_iter.into_iter().map(|(o, a)| (a, o)).collect();
 
     // TODO: brute-force all possible solutions.
 
@@ -57,23 +49,26 @@ where
     sorted.sort_by_key(|(amount, _output)| *amount);
     let mut inputs: VecDeque<(i64, T)> = VecDeque::from(sorted);
 
-    // Try to spend without a change.
+    // Try to spend with a change.
     let mut spent: Vec<T> = Vec::new();
     let mut change: i64 = sum + fee;
-    for (amount, output) in inputs.iter() {
-        change -= *amount;
-        spent.push(output.clone());
-        if change <= 0 || spent.len() >= max_inputs_in_tx {
+
+    // Keep only one input that is more than amount.
+    // Filter rest inputs bigger > sum.
+    // This will force spending of smallest inputs.
+    loop {
+        if inputs.len() < 2 {
             break;
         }
-    }
-    if change == 0 {
-        return Ok((spent, fee, 0));
+        // if second input is bigger than sum, remove first.
+        match inputs.get(inputs.len() - 2) {
+            Some((next_amount, _)) if *next_amount >= change => {
+                let _ = inputs.pop_back();
+            }
+            _ => break,
+        }
     }
 
-    // Try to spend with a change.
-    spent.clear();
-    let mut change: i64 = sum + fee_change;
     loop {
         if spent.len() >= max_inputs_in_tx {
             break;
@@ -98,10 +93,13 @@ where
     }
 
     if change > 0 {
+        if !inputs.is_empty() {
+            return Err(WalletError::InputsLimit);
+        }
         return Err(WalletError::NotEnoughMoney);
     }
 
-    return Ok((spent, fee_change, -change));
+    return Ok((spent, fee, -change));
 }
 
 #[cfg(test)]
@@ -123,65 +121,78 @@ pub mod tests {
         const FEE_CHANGE: i64 = 2 * FEE;
         const MAX_INPUTS_IN_TX: usize = 3;
 
-        // Without change.
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 49, FEE, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
-        assert_eq!(spent, vec![&Hash::digest(&50i64)]);
-        assert_eq!(fee, FEE);
-        assert_eq!(change, 0);
-
-        // Without change.
-        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
-        let (spent, fee, change) =
-            find_utxo(unspent_iter, 13 - FEE, FEE, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
+            find_utxo(unspent_iter, 49, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
         assert_eq!(
             spent,
             vec![
-                &Hash::digest(&1i64),
-                &Hash::digest(&2i64),
-                &Hash::digest(&10i64)
-            ]
-        );
-        assert_eq!(fee, FEE);
-        assert_eq!(change, 0);
-
-        // Without change.
-        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
-        let (spent, fee, change) = find_utxo(unspent_iter, 163 - FEE, FEE, FEE_CHANGE, 10).unwrap();
-        assert_eq!(
-            spent,
-            vec![
-                &Hash::digest(&1i64),
-                &Hash::digest(&2i64),
-                &Hash::digest(&10i64),
-                &Hash::digest(&50i64),
                 &Hash::digest(&100i64),
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64)
             ]
         );
-        assert_eq!(fee, FEE);
+        assert_eq!(fee, FEE_CHANGE);
+        assert_eq!(change, 52);
+
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) =
+            find_utxo(unspent_iter, 13 - FEE_CHANGE, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
+        assert_eq!(
+            spent,
+            vec![
+                &Hash::digest(&50i64),
+                &Hash::digest(&1i64),
+                &Hash::digest(&2i64)
+            ]
+        );
+        assert_eq!(fee, FEE_CHANGE);
+        assert_eq!(change, 40);
+
+        // Without change.
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        let (spent, fee, change) =
+            find_utxo(unspent_iter, 163 - FEE_CHANGE, FEE_CHANGE, amounts.len()).unwrap();
+        assert_eq!(
+            spent,
+            vec![
+                &Hash::digest(&100i64),
+                &Hash::digest(&50i64),
+                &Hash::digest(&10i64),
+                &Hash::digest(&2i64),
+                &Hash::digest(&1i64),
+            ]
+        );
+        assert_eq!(fee, FEE_CHANGE);
         assert_eq!(change, 0);
 
         // With change.
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
         let (spent, fee, change) =
-            find_utxo(unspent_iter, 5, FEE, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
+            find_utxo(unspent_iter, 5, FEE_CHANGE, MAX_INPUTS_IN_TX).unwrap();
         assert_eq!(
             spent,
             vec![
-                &Hash::digest(&100i64),
+                &Hash::digest(&10i64),
                 &Hash::digest(&1i64),
                 &Hash::digest(&2i64),
             ]
         );
         assert_eq!(fee, FEE_CHANGE);
-        assert_eq!(change, 96);
+        assert_eq!(change, 6);
+
+        //InputsLimit
+        let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
+        match find_utxo(unspent_iter, 163, FEE_CHANGE, MAX_INPUTS_IN_TX) {
+            Err(WalletError::InputsLimit) => {}
+            e => panic!("error = {:?}", e),
+        };
 
         // NotEnoughMoney
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
-        match find_utxo(unspent_iter, 164, FEE, FEE_CHANGE, MAX_INPUTS_IN_TX) {
+        match find_utxo(unspent_iter, 164, FEE_CHANGE, unspent.len()) {
             Err(WalletError::NotEnoughMoney) => {}
-            _ => panic!(),
+            e => panic!("error = {:?}", e),
         };
     }
 }

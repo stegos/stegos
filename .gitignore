@@ -12,6 +12,7 @@
 /dev/node*/logs
 /data
 /logs
+/src/Stegos.class
 core
 
 # IDE files

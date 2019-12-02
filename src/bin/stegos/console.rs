@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use stegos_api::*;
-use stegos_blockchain::Timestamp;
+use stegos_blockchain::{chain_to_prefix, Timestamp};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 
@@ -197,7 +197,7 @@ impl ConsoleService {
 
         if let Some(chain) = &chain {
             debug!("Initialising cli for chain = {}", chain);
-            stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&chain))
+            stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
                 .expect("Network prefix not initialised.");
         }
         let stdin_th = if atty::is(atty::Stream::Stdin) {
@@ -1085,7 +1085,7 @@ impl ConsoleService {
                             panic!("Wrong reponse to chain name request = {:?}", response)
                         };
                         debug!("Initialising cli for chain = {}", chain);
-                        stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&chain))
+                        stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
                             .expect("Network prefix not initialised.");
                         self.chain = ChainNameResolver::Set(chain);
                         Ok(Async::Ready(()))

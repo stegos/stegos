@@ -201,6 +201,44 @@ pub fn load_network_keypair(
     info!("Loaded network key pair: pkey={}", network_pkey);
     Ok((network_skey, network_pkey))
 }
+
+/// Load or create network keys.
+pub fn load_network_keys(
+    network_skey_file: &Path,
+    network_pkey_file: &Path,
+) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
+    if !network_skey_file.exists() && !network_pkey_file.exists() {
+        debug!(
+            "Can't find network keys on the disk: skey_file={}, pkey_file={}",
+            network_skey_file.to_string_lossy(),
+            network_pkey_file.to_string_lossy()
+        );
+
+        debug!("Generating a new network key pair...");
+        let (network_skey, network_pkey) = pbc::make_random_keys();
+        info!(
+            "Generated a new network key pair: pkey={}",
+            network_pkey.to_hex()
+        );
+
+        write_network_pkey(&network_pkey_file, &network_pkey)?;
+        write_network_skey(&network_skey_file, &network_skey)?;
+        info!(
+            "Wrote network key pair to the disk: skey_file={}, pkey_file={}",
+            network_skey_file.to_string_lossy(),
+            network_pkey_file.to_string_lossy(),
+        );
+
+        Ok((network_skey, network_pkey))
+    } else {
+        debug!("Loading network keys from the disk...");
+        let (network_skey, network_pkey) =
+            load_network_keypair(&network_skey_file, &network_pkey_file)?;
+
+        Ok((network_skey, network_pkey))
+    }
+}
+
 #[cfg(test)]
 mod test {
 

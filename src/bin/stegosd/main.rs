@@ -45,13 +45,13 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
 use stegos_api::{load_or_create_api_token, WebSocketServer};
-use stegos_blockchain::{Block, Blockchain, ChainConfig, ConsistencyCheck, MacroBlock, Timestamp};
+use stegos_blockchain::{
+    chain_to_prefix, initialize_chain, Blockchain, ConsistencyCheck, Timestamp,
+};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc;
-use stegos_keychain::{self as keychain, KeyError};
+use stegos_keychain::keyfile::load_network_keys;
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-use stegos_serialization::traits::*;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 use tokio_timer::clock;
@@ -167,39 +167,6 @@ fn load_logger_configuration(
         .expect("Failed to initialize logger");
 
     Ok(log4rs::init_config(config)?)
-}
-
-fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error> {
-    let (genesis, chain_cfg): (&[u8], ChainConfig) = match chain {
-        "dev" => (
-            include_bytes!("../../../chains/dev/genesis.bin"),
-            ChainConfig {
-                awards_difficulty: 3,
-                stake_epochs: 1,
-                ..Default::default()
-            },
-        ),
-        "testnet" => (
-            include_bytes!("../../../chains/testnet/genesis.bin"),
-            ChainConfig {
-                ..Default::default()
-            },
-        ),
-        "mainnet" => (
-            include_bytes!("../../../chains/mainnet/genesis.bin"),
-            ChainConfig {
-                ..Default::default()
-            },
-        ),
-        chain @ _ => {
-            return Err(format_err!("Unknown chain: {}", chain));
-        }
-    };
-    let genesis = Block::from_buffer(genesis).expect("Invalid genesis");
-    let genesis = genesis.unwrap_macro();
-    let hash = Hash::digest(&genesis);
-    info!("Using '{}' chain, genesis={}", chain, hash);
-    Ok((genesis, chain_cfg))
 }
 
 fn report_metrics(_req: Request<Body>) -> Response<Body> {
@@ -376,43 +343,6 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     Ok(cfg)
 }
 
-/// Load or create network keys.
-fn load_network_keys(
-    network_skey_file: &Path,
-    network_pkey_file: &Path,
-) -> Result<(pbc::SecretKey, pbc::PublicKey), KeyError> {
-    if !network_skey_file.exists() && !network_pkey_file.exists() {
-        debug!(
-            "Can't find network keys on the disk: skey_file={}, pkey_file={}",
-            network_skey_file.to_string_lossy(),
-            network_pkey_file.to_string_lossy()
-        );
-
-        debug!("Generating a new network key pair...");
-        let (network_skey, network_pkey) = pbc::make_random_keys();
-        info!(
-            "Generated a new network key pair: pkey={}",
-            network_pkey.to_hex()
-        );
-
-        keychain::keyfile::write_network_pkey(&network_pkey_file, &network_pkey)?;
-        keychain::keyfile::write_network_skey(&network_skey_file, &network_skey)?;
-        info!(
-            "Wrote network key pair to the disk: skey_file={}, pkey_file={}",
-            network_skey_file.to_string_lossy(),
-            network_pkey_file.to_string_lossy(),
-        );
-
-        Ok((network_skey, network_pkey))
-    } else {
-        debug!("Loading network keys from the disk...");
-        let (network_skey, network_pkey) =
-            keychain::keyfile::load_network_keypair(&network_skey_file, &network_pkey_file)?;
-
-        Ok((network_skey, network_pkey))
-    }
-}
-
 fn run() -> Result<(), Error> {
     let name = "Stegos Node";
     let version = format!(
@@ -573,7 +503,7 @@ fn run() -> Result<(), Error> {
             .map_err(|e| format_err!("Failed to create {:?}: {}", accounts_dir, e))?
     }
 
-    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(&cfg.general.chain))
+    stegos_crypto::set_network_prefix(chain_to_prefix(&cfg.general.chain))
         .expect("Network prefix not initialised.");
 
     // Initialize keychain
@@ -605,8 +535,12 @@ fn run() -> Result<(), Error> {
 
     // Initialize blockchain
     let (genesis, chain_cfg) = initialize_chain(&cfg.general.chain)?;
+    info!(
+        "Using '{}' chain, genesis={}",
+        cfg.general.chain,
+        Hash::digest(&genesis)
+    );
     let timestamp = Timestamp::now();
-
     let chain = Blockchain::new(
         chain_cfg.clone(),
         &chain_dir,

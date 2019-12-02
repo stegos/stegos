@@ -5,9 +5,6 @@ case $@ in
     *build_script*)
         exec cc $@
         ;;
-     *-shared*)
-        exec cc $@
-        ;;
 esac
 
 # Patch linker arguments for TARGET

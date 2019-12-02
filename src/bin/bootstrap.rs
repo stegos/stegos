@@ -29,8 +29,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
-    create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output, PaymentOutput,
-    PaymentPayloadData, StakeOutput, StakersGroup, Timestamp,
+    chain_to_prefix, create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output,
+    PaymentOutput, PaymentPayloadData, StakeOutput, StakersGroup, Timestamp,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -185,7 +185,7 @@ fn main() {
 
     info!("Generating genesis for chain: {} ...", chain);
 
-    stegos_crypto::set_network_prefix(stegos::chain_to_prefix(chain))
+    stegos_crypto::set_network_prefix(chain_to_prefix(chain))
         .expect("Network prefix not initialised.");
 
     let mut stakers: StakersGroup = Vec::with_capacity(keys as usize);

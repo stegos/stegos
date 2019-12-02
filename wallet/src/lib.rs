@@ -1760,6 +1760,44 @@ impl ReadOnlyAccountService {
         }
     }
 
+    /// Get actual balance.
+    fn balance(&self) -> AccountBalance {
+        let mut balance: AccountBalance = Default::default();
+        for (_hash, val) in &self.utxo {
+            balance.public_payment.current += val.amount;
+            balance.public_payment.available += val.amount;
+        }
+        balance.total.current = balance.public_payment.current;
+        balance.total.available = balance.public_payment.available;
+        balance.is_final = true;
+        balance
+    }
+
+    fn notify_balance_changed(&mut self, balance: AccountBalance) {
+        debug!("Balance changed");
+        let account = String::from(&self.account_pkey);
+        let label = &[account.as_str()];
+        metrics::ACCOUNT_CURRENT_BALANCE
+            .with_label_values(label)
+            .set(balance.total.current);
+        metrics::ACCOUNT_CURRENT_PUBLIC_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.public_payment.current);
+        metrics::ACCOUNT_AVAILABLE_BALANCE
+            .with_label_values(label)
+            .set(balance.total.available);
+        metrics::ACCOUNT_AVAILABLE_PUBLIC_PAYMENT_BALANCE
+            .with_label_values(label)
+            .set(balance.public_payment.available);
+        self.notify(AccountNotification::BalanceChanged(balance));
+    }
+
+    fn notify(&mut self, notification: AccountNotification) {
+        trace!("Created notification = {:?}", notification);
+        self.subscribers
+            .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
+    }
+
     fn load_secret_key(&self, password: &str) -> Result<scc::SecretKey, KeyError> {
         let account_skey_file = self.account_dir.join("account.skey");
         let account_skey = keychain::keyfile::load_account_skey(&account_skey_file, password)?;
@@ -1771,6 +1809,45 @@ impl ReadOnlyAccountService {
             ));
         }
         Ok(account_skey)
+    }
+
+    fn on_output_created<'a, I>(&mut self, outputs: I)
+    where
+        I: Iterator<Item = &'a Output>,
+    {
+        for output in outputs {
+            match output {
+                Output::PublicPaymentOutput(o) if o.recipient == self.account_pkey => {
+                    assert!(self.utxo.insert(Hash::digest(&o), o.clone()).is_none())
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn on_output_pruned<'a, I>(&mut self, inputs: I)
+    where
+        I: Iterator<Item = &'a Hash>,
+    {
+        for input in inputs {
+            self.utxo.remove(input);
+        }
+    }
+
+    fn on_outputs_changed<'a, I, U>(&mut self, inputs: I, outputs: U)
+    where
+        I: Iterator<Item = &'a Hash>,
+        U: Iterator<Item = &'a Output>,
+    {
+        let saved_balance = self.balance();
+
+        self.on_output_created(outputs);
+        self.on_output_pruned(inputs);
+
+        let balance = self.balance();
+        if balance != saved_balance {
+            self.notify_balance_changed(balance)
+        }
     }
 }
 
@@ -1819,6 +1896,7 @@ impl Future for ReadOnlyAccountService {
                                     block.block.header.epoch,
                                     Hash::digest(&block.block)
                                 );
+                                self.on_outputs_changed(block.inputs(), block.outputs());
                             }
                             ChainNotification::MicroBlockPrepared(block) => {
                                 trace!(
@@ -1827,6 +1905,8 @@ impl Future for ReadOnlyAccountService {
                                     block.block.header.offset,
                                     Hash::digest(&block.block)
                                 );
+
+                                self.on_outputs_changed(block.inputs(), block.outputs());
                             }
                             ChainNotification::MicroBlockReverted(block) => {
                                 trace!(
@@ -1844,6 +1924,11 @@ impl Future for ReadOnlyAccountService {
                                         .map(Hash::digest)
                                         .map(|k| k.to_string())
                                         .collect::<Vec<_>>(),
+                                );
+
+                                self.on_outputs_changed(
+                                    block.pruned_outputs(),
+                                    block.recovered_inputs(),
                                 );
                             }
                         },
@@ -1881,6 +1966,10 @@ impl Future for ReadOnlyAccountService {
                             AccountRequest::Disable {} => {
                                 info!("Stopping account for future removing.");
                                 return Ok(Async::Ready(None));
+                            }
+                            AccountRequest::BalanceInfo {} => {
+                                let balance = self.balance();
+                                AccountResponse::BalanceInfo(balance)
                             }
                             _ => AccountResponse::Error {
                                 error: "Account is sealed".to_string(),

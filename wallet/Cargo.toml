@@ -34,6 +34,7 @@ humantime = "1.2.0"
 byteorder = "1.3"
 tempdir = "0.3"
 assert_matches = "1.3.0"
+either = "1.5.3"
 tokio = { version = "0.1", default-features = false, features = []}
 rocksdb = { version = "0.13", default-features = false, features = [ "zstd","snappy", "lz4"] }
 

@@ -41,6 +41,7 @@ use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
 use api::*;
+use either::Either;
 use failure::{bail, format_err, Error};
 use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
@@ -1713,9 +1714,14 @@ struct ReadOnlyAccountService {
     /// Node API (shared).
     node: Node,
 
+    /// Public outputs, for read-only accounts.
+    utxo: HashMap<Hash, PublicPaymentOutput>,
+
     //
     // Api subscribers
     //
+    /// State, Either requesting utxo, or receiving updates.
+    state: Either<oneshot::Receiver<NodeResponse>, ChainSubscription>,
     subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
     /// Incoming events.
     events: mpsc::UnboundedReceiver<AccountEvent>,
@@ -1735,6 +1741,8 @@ impl ReadOnlyAccountService {
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
     ) -> Self {
+        let state = Either::Left(node.request(NodeRequest::PublicOutputs { pkey: account_pkey }));
+        let utxo = HashMap::new();
         ReadOnlyAccountService {
             database_dir,
             account_dir,
@@ -1747,6 +1755,8 @@ impl ReadOnlyAccountService {
             network,
             subscribers,
             events,
+            utxo,
+            state,
         }
     }
 
@@ -1770,6 +1780,80 @@ impl Future for ReadOnlyAccountService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        loop {
+            match &mut self.state {
+                Either::Left(r) => {
+                    let response = r.poll().unwrap();
+                    let response = match response {
+                        Async::NotReady => return Ok(Async::NotReady),
+                        Async::Ready(response) => response,
+                    };
+                    match response {
+                        NodeResponse::PublicOutputs { epoch, list } => {
+                            info!("Subscribe to chain");
+                            for output in list {
+                                assert!(self.utxo.insert(Hash::digest(&output), output).is_none());
+                            }
+                            self.state =
+                                Either::Right(ChainSubscription::new(&self.node, epoch, 0));
+                            continue;
+                        }
+                        NodeResponse::Error { error } => {
+                            error!("Error processing get utxo = {}", error);
+                            return Err(());
+                        }
+                        e => panic!("Wrong response {:?}", e),
+                    }
+                }
+                Either::Right(rx) => {
+                    let rx = match rx.poll_subscribed() {
+                        Ok(Async::Ready(rx)) => rx,
+                        Ok(Async::NotReady) => break,
+                        Err(e) => panic!("Failed to subscribe for chain changes: {:?}", e),
+                    };
+                    match rx.poll().expect("all errors are already handled") {
+                        Async::Ready(Some(notification)) => match notification {
+                            ChainNotification::MacroBlockCommitted(block) => {
+                                trace!(
+                                    "Committed a macro block: epoch={}, block={}",
+                                    block.block.header.epoch,
+                                    Hash::digest(&block.block)
+                                );
+                            }
+                            ChainNotification::MicroBlockPrepared(block) => {
+                                trace!(
+                                    "Prepared a micro block: epoch={}, offset={}, block={}",
+                                    block.block.header.epoch,
+                                    block.block.header.offset,
+                                    Hash::digest(&block.block)
+                                );
+                            }
+                            ChainNotification::MicroBlockReverted(block) => {
+                                trace!(
+                                    "Reverted a micro block: epoch={}, offset={}, block={}, inputs={:?}, outputs={:?}",
+                                    block.block.header.epoch,
+                                    block.block.header.offset,
+                                    Hash::digest(&block.block),
+                                    block
+                                        .pruned_outputs()
+                                        .cloned()
+                                        .map(|k| k.to_string())
+                                        .collect::<Vec<_>>(),
+                                    block
+                                        .recovered_inputs()
+                                        .map(Hash::digest)
+                                        .map(|k| k.to_string())
+                                        .collect::<Vec<_>>(),
+                                );
+                            }
+                        },
+                        Async::Ready(None) => return Ok(Async::Ready(None)), // Shutdown.
+                        Async::NotReady => break,
+                    }
+                }
+            }
+        }
+
         loop {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => match event {
@@ -1829,7 +1913,7 @@ impl Future for AccountService {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         match self {
             AccountService::Invalid => unreachable!("Invalid state"),
-            AccountService::Sealed(sealed) => match sealed.poll().unwrap() {
+            AccountService::Sealed(sealed) => match sealed.poll().expect("s") {
                 Async::Ready(None) => {
                     debug!("Terminated");
                     return Ok(Async::Ready(()));

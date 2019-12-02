@@ -342,6 +342,7 @@ impl ConsoleService {
         eprintln!("subscribe status - subscribe for status changes");
         eprintln!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         eprintln!("net send NETWORK_ADDRESS TOPIC MESSAGE - send a network message via unicast");
+        eprintln!("net peers - show connected peers");
         eprintln!();
     }
 
@@ -547,6 +548,8 @@ impl ConsoleService {
                 to: recipient,
                 data,
             })?;
+        } else if msg.starts_with("net peers") {
+            self.send_network_request(NetworkRequest::ConnectedNodesRequest {})?
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,

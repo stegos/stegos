@@ -22,9 +22,9 @@
 // SOFTWARE.
 #![allow(dead_code)]
 use crate::replication::ReplicationEvent;
-use crate::{Network, NetworkProvider, UnicastMessage};
-use failure::Error;
-use futures::sync::mpsc;
+use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
+use failure::{format_err, Error};
+use futures::sync::{mpsc, oneshot};
 use libp2p_core::identity::ed25519;
 use libp2p_core::{identity, PeerId};
 use log::*;
@@ -94,6 +94,15 @@ impl NetworkProvider for LoopbackNetwork {
 
     fn replication_disconnect(&self, _peer_id: PeerId) -> Result<(), Error> {
         Ok(())
+    }
+
+    fn list_connected_nodes(&self) -> Result<oneshot::Receiver<NetworkResponse>, Error> {
+        let (tx, rx) = oneshot::channel::<NetworkResponse>();
+        if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes: vec![] }) {
+            Err(format_err!("Failed to send reply to oneshot channel"))
+        } else {
+            Ok(rx)
+        }
     }
 
     fn change_network_keys(

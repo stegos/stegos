@@ -26,5 +26,5 @@ mod handler;
 mod proto;
 mod protocol;
 
-pub use self::behavior::{Ncp, NcpOutEvent};
+pub use self::behavior::{Ncp, NcpOutEvent, NodeInfo};
 pub use self::protocol::PeerInfo;

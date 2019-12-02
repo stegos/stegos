@@ -29,6 +29,7 @@ use libp2p_swarm::{
 use log::*;
 use lru_time_cache::LruCache;
 use rand::{thread_rng, Rng};
+use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     collections::VecDeque,
@@ -83,6 +84,17 @@ pub struct Ncp<TSubstream> {
     seed_nodes: Vec<Multiaddr>,
     /// Marker to pin the generics.
     marker: PhantomData<TSubstream>,
+}
+
+/// Node Info struct for passing to API
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NodeInfo {
+    /// Libp2p PeerId of the node
+    peer_id: String,
+    ///Network Public Key of the node
+    network_pkey: pbc::PublicKey,
+    /// Known addresses of the node
+    addresses: Vec<Multiaddr>,
 }
 
 impl<TSubstream> Ncp<TSubstream> {
@@ -147,6 +159,20 @@ impl<TSubstream> Ncp<TSubstream> {
     pub fn terminate(&mut self, peer_id: PeerId) {
         debug!(target: "stegos_network::ncp", "terminating connection with peer: peer_id={}", peer_id);
         self.events.push_back(NcpEvent::Terminate { peer_id });
+    }
+
+    pub fn get_connected_nodes(&self) -> Vec<NodeInfo> {
+        let mut nodes: Vec<NodeInfo> = vec![];
+        for p in self.connected_peers.keys() {
+            if let Some(info) = self.known_peers.peek(p.as_bytes()) {
+                nodes.push(NodeInfo {
+                    peer_id: p.to_base58(),
+                    network_pkey: info.0.clone(),
+                    addresses: info.1.to_vec(),
+                });
+            }
+        }
+        nodes
     }
 }
 

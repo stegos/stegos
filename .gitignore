@@ -9,6 +9,7 @@
 /dev/node*/accounts/*/history
 /dev/node*/api.token
 /dev/node*/stegosd.log
+/dev/node*/stegos.history
 /dev/node*/logs
 /data
 /logs

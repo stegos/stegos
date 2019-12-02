@@ -125,7 +125,7 @@ impl ChainSubscription {
     }
 }
 
-struct UnsealedAccountService {
+struct ReadWriteAccountService {
     //
     // Config
     //
@@ -198,7 +198,7 @@ struct UnsealedAccountService {
     chain_notifications: ChainSubscription,
 }
 
-impl UnsealedAccountService {
+impl ReadWriteAccountService {
     /// Create a new account.
     fn new(
         database_dir: PathBuf,
@@ -254,7 +254,7 @@ impl UnsealedAccountService {
         }
 
         info!("Loaded account {}", account_pkey);
-        UnsealedAccountService {
+        ReadWriteAccountService {
             database_dir,
             account_dir,
             account_skey,
@@ -1361,7 +1361,7 @@ impl PartialEq for UnsealedAccountResult {
 }
 
 // Event loop.
-impl Future for UnsealedAccountService {
+impl Future for ReadWriteAccountService {
     type Item = UnsealedAccountResult;
     type Error = ();
 
@@ -1692,7 +1692,7 @@ impl Future for UnsealedAccountService {
     }
 }
 
-struct SealedAccountService {
+struct ReadOnlyAccountService {
     /// Path to database dir.
     database_dir: PathBuf,
     /// Path to account directory.
@@ -1721,7 +1721,7 @@ struct SealedAccountService {
     events: mpsc::UnboundedReceiver<AccountEvent>,
 }
 
-impl SealedAccountService {
+impl ReadOnlyAccountService {
     fn new(
         database_dir: PathBuf,
         account_dir: PathBuf,
@@ -1735,7 +1735,7 @@ impl SealedAccountService {
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
     ) -> Self {
-        SealedAccountService {
+        ReadOnlyAccountService {
             database_dir,
             account_dir,
             account_pkey,
@@ -1765,7 +1765,7 @@ impl SealedAccountService {
 }
 
 // Event loop.
-impl Future for SealedAccountService {
+impl Future for ReadOnlyAccountService {
     type Item = Option<scc::SecretKey>;
     type Error = ();
 
@@ -1817,8 +1817,8 @@ impl Future for SealedAccountService {
 
 enum AccountService {
     Invalid,
-    Sealed(SealedAccountService),
-    Unsealed(UnsealedAccountService),
+    Sealed(ReadOnlyAccountService),
+    Unsealed(ReadWriteAccountService),
 }
 
 // Event loop.
@@ -1840,7 +1840,7 @@ impl Future for AccountService {
                         _ => unreachable!("Expected Sealed state"),
                     };
                     info!("Unsealed account: address={}", &sealed.account_pkey);
-                    let unsealed = UnsealedAccountService::new(
+                    let unsealed = ReadWriteAccountService::new(
                         sealed.database_dir,
                         sealed.account_dir,
                         account_skey,
@@ -1880,7 +1880,7 @@ impl Future for AccountService {
                         _ => unreachable!("Expected Unsealed state"),
                     };
                     info!("Sealed account: address={}", &unsealed.account_pkey);
-                    let sealed = SealedAccountService::new(
+                    let sealed = ReadOnlyAccountService::new(
                         unsealed.database_dir,
                         unsealed.account_dir,
                         unsealed.account_pkey,
@@ -1919,7 +1919,7 @@ impl AccountService {
         let account_pkey = load_account_pkey(&account_pkey_file)?;
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
-        let service = SealedAccountService::new(
+        let service = ReadOnlyAccountService::new(
             database_dir.to_path_buf(),
             account_dir.to_path_buf(),
             account_pkey,

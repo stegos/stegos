@@ -25,7 +25,7 @@ pub use stegos_node::test::*;
 mod account_transaction;
 use super::Account;
 use crate::{
-    AccountEvent, AccountNotification, AccountResponse, AccountService, UnsealedAccountService,
+    AccountEvent, AccountNotification, AccountResponse, AccountService, ReadWriteAccountService,
 };
 use stegos_blockchain::{Blockchain, ChainConfig};
 use stegos_crypto::scc;
@@ -55,7 +55,7 @@ struct AccountSandbox {
     #[allow(dead_code)]
     network: Loopback,
     account: Account,
-    account_service: UnsealedAccountService,
+    account_service: ReadWriteAccountService,
 }
 
 impl AccountSandbox {
@@ -87,7 +87,7 @@ impl AccountSandbox {
 
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
-        let account_service = UnsealedAccountService::new(
+        let account_service = ReadWriteAccountService::new(
             database_dir,
             temp_path.to_path_buf(),
             account_skey,

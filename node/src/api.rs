@@ -26,6 +26,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
+    ValidatorKeyInfo,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
@@ -53,7 +54,8 @@ pub enum NodeRequest {
     EnableRestaking {},
     DisableRestaking {},
     ChangeUpstream {},
-    StatusInfo,
+    StatusInfo {},
+    ValidatorsInfo {},
     SubscribeStatus {},
     MacroBlockInfo {
         epoch: u64,
@@ -98,6 +100,12 @@ pub enum NodeResponse {
     RestakingDisabled,
     UpstreamChanged,
     StatusInfo(StatusInfo),
+    ValidatorsInfo {
+        epoch: u64,
+        offset: u32,
+        view_change: u32,
+        validators: Vec<ValidatorKeyInfo>,
+    },
     SubscribedStatus {
         #[serde(flatten)]
         status: StatusInfo,

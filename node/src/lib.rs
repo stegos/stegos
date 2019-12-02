@@ -2406,6 +2406,25 @@ impl Future for NodeService {
                                     let status = self.status();
                                     NodeResponse::StatusInfo(status)
                                 }
+                                NodeRequest::ValidatorsInfo {} => {
+                                    let epoch = self.chain.epoch();
+                                    let offset = self.chain.offset();
+                                    let view_change = self.chain.view_change();
+                                    match self.chain.epoch_info(epoch - 1) {
+                                        Ok(info) => {
+                                            let validators = info.unwrap().validators;
+                                            NodeResponse::ValidatorsInfo {
+                                                epoch,
+                                                offset,
+                                                view_change,
+                                                validators,
+                                            }
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: format!("{}", e),
+                                        },
+                                    }
+                                }
                                 NodeRequest::SubscribeStatus {} => {
                                     match self.handle_subscription_to_status() {
                                         Ok(rx) => {

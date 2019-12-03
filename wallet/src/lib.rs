@@ -313,7 +313,7 @@ impl UnsealedAccountService {
     ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
-            return Err(WalletError::NoEnoughPayment(
+            return Err(WalletError::NoEnoughToPay(
                 payment_balance.current,
                 payment_balance.available,
             )
@@ -407,7 +407,7 @@ impl UnsealedAccountService {
     ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
-            return Err(WalletError::NoEnoughPayment(
+            return Err(WalletError::NoEnoughToPay(
                 payment_balance.current,
                 payment_balance.available,
             )
@@ -489,7 +489,7 @@ impl UnsealedAccountService {
         }
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
-            return Err(WalletError::NoEnoughPayment(
+            return Err(WalletError::NoEnoughToPay(
                 payment_balance.current,
                 payment_balance.available,
             )
@@ -552,7 +552,7 @@ impl UnsealedAccountService {
         }
 
         if payment_amount <= payment_fee {
-            return Err(WalletError::InsufficientTransaction(payment_fee, payment_amount).into());
+            return Err(WalletError::AmountTooSmall(payment_fee, payment_amount).into());
         }
 
         info!("Found payment outputs: amount={}", payment_amount);
@@ -569,7 +569,7 @@ impl UnsealedAccountService {
     ) -> Result<TransactionInfo, Error> {
         let payment_balance = self.balance().payment;
         if amount > payment_balance.available {
-            return Err(WalletError::NoEnoughPayment(
+            return Err(WalletError::NoEnoughToPay(
                 payment_balance.current,
                 payment_balance.available,
             )
@@ -630,7 +630,7 @@ impl UnsealedAccountService {
         let stake_balance = self.balance().stake;
         if amount > stake_balance.available {
             return Err(
-                WalletError::NoEnoughStake(stake_balance.current, stake_balance.available).into(),
+                WalletError::NoEnoughToStake(stake_balance.current, stake_balance.available).into(),
             );
         }
 
@@ -668,7 +668,7 @@ impl UnsealedAccountService {
             amount += output.amount;
         }
         if amount <= payment_fee {
-            return Err(WalletError::InsufficientTransaction(payment_fee, amount).into());
+            return Err(WalletError::AmountTooSmall(payment_fee, amount).into());
         }
         self.unstake(amount, payment_fee)
     }
@@ -752,7 +752,7 @@ impl UnsealedAccountService {
         }
         if amount < fee {
             // Don't have enough PublicPaymentUTXO to pay `fee`.
-            return Err(WalletError::NoEnoughPublicPayment(amount).into());
+            return Err(WalletError::NoEnoughToPayPublicly(amount).into());
         }
         amount -= fee;
         assert!(!txins.is_empty());

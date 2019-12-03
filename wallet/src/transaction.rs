@@ -326,7 +326,7 @@ where
         return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientTransaction(payment_fee, amount).into());
+        return Err(WalletError::AmountTooSmall(payment_fee, amount).into());
     }
 
     debug!(
@@ -447,7 +447,7 @@ where
         return Err(WalletError::NegativeAmount(amount).into());
     } else if amount <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientTransaction(payment_fee, amount).into());
+        return Err(WalletError::AmountTooSmall(payment_fee, amount).into());
     }
 
     debug!(
@@ -473,7 +473,7 @@ where
         .collect();
     if change > 0 && change <= payment_fee {
         // Stake must be > PAYMENT_FEE.
-        return Err(WalletError::InsufficientTransaction(payment_fee, change).into());
+        return Err(WalletError::AmountTooSmall(payment_fee, change).into());
     }
 
     debug!(
@@ -701,7 +701,7 @@ pub mod tests {
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::InsufficientTransaction(..) => {}
+            WalletError::AmountTooSmall(..) => {}
             e => panic!("{}", e),
         }
 
@@ -719,7 +719,7 @@ pub mod tests {
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::InsufficientTransaction(..) => {}
+            WalletError::AmountTooSmall(..) => {}
             e => panic!("{}", e),
         }
 
@@ -738,7 +738,7 @@ pub mod tests {
         )
         .unwrap_err();
         match e.downcast::<WalletError>().unwrap() {
-            WalletError::InsufficientTransaction(min, got) => {
+            WalletError::AmountTooSmall(min, got) => {
                 assert_eq!(min, payment_fee);
                 assert_eq!(got, payment_fee);
             }

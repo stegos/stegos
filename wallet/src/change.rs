@@ -94,9 +94,9 @@ where
 
     if change > 0 {
         if !inputs.is_empty() {
-            return Err(WalletError::InputsLimit);
+            return Err(WalletError::TooManyInputs);
         }
-        return Err(WalletError::NotEnoughMoney);
+        return Err(WalletError::NotEnoughTokens);
     }
 
     return Ok((spent, fee, -change));
@@ -181,17 +181,17 @@ pub mod tests {
         assert_eq!(fee, FEE_CHANGE);
         assert_eq!(change, 6);
 
-        //InputsLimit
+        //TooManyInputs
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
         match find_utxo(unspent_iter, 163, FEE_CHANGE, MAX_INPUTS_IN_TX) {
-            Err(WalletError::InputsLimit) => {}
+            Err(WalletError::TooManyInputs) => {}
             e => panic!("error = {:?}", e),
         };
 
-        // NotEnoughMoney
+        // NotEnoughTokens
         let unspent_iter = unspent.iter().map(|(h, a)| (h, *a));
         match find_utxo(unspent_iter, 164, FEE_CHANGE, unspent.len()) {
-            Err(WalletError::NotEnoughMoney) => {}
+            Err(WalletError::NotEnoughTokens) => {}
             e => panic!("error = {:?}", e),
         };
     }

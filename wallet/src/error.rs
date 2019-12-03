@@ -26,32 +26,32 @@ use stegos_crypto::scc;
 
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum WalletError {
-    #[fail(display = "Duplicate account: pkey={}", _0)]
+    #[fail(display = "Duplicate account: public key={}!", _0)]
     DuplicateAccount(scc::PublicKey),
-    #[fail(display = "Not enough money.")]
-    NotEnoughMoney,
-    #[fail(display = "Inputs limit reached. Try to send transaction with smaller amount.")]
-    InputsLimit,
-    #[fail(display = "Negative amount: amount={}", _0)]
+    #[fail(display = "Not enough tokens!")]
+    NotEnoughTokens,
+    #[fail(display = "Too many inputs! Try sending a smaller amount.")]
+    TooManyInputs,
+    #[fail(display = "Negative amount {}!", _0)]
     NegativeAmount(i64),
     #[fail(
-        display = "Transaction should be more than fee: fee={}, got={}.",
+        display = "Amount {} should be greater than transaction fee {}!",
         _0, _1
     )]
-    InsufficientTransaction(i64, i64),
-    /// Enough amount of stake should be unlocked.
+    AmountTooSmall(i64, i64),
+    /// Enough stake should be unlocked.
     #[fail(
-        display = "No enough stake UTXO available: current={}, available={}.",
-        _0, _1
+        display = "{} tokens available out of {}. No enough to stake!",
+        _1, _0
     )]
-    NoEnoughStake(i64, i64),
+    NoEnoughToStake(i64, i64),
     #[fail(
-        display = "No enough payment UTXO available: current={}, available={}.",
-        _0, _1
+        display = "{} tokens available out of {}. Not enough to pay!",
+        _1, _0
     )]
-    NoEnoughPayment(i64, i64),
-    #[fail(display = "No enough public payment UTXO available: available={}", _0)]
-    NoEnoughPublicPayment(i64),
+    NoEnoughToPay(i64, i64),
+    #[fail(display = "{} tokens is not enough for a public payment!", _0)]
+    NoEnoughToPayPublicly(i64),
     #[fail(display = "Incorrect TXIN type")]
     IncorrectTXINType,
     #[fail(display = "Nothing to re-stake")]

@@ -41,7 +41,7 @@ pub enum WalletError {
     AmountTooSmall(i64, i64),
     /// Enough stake should be unlocked.
     #[fail(
-        display = "{} tokens available out of {}. No enough to stake!",
+        display = "{} tokens available out of {}. Not enough to stake!",
         _1, _0
     )]
     NoEnoughToStake(i64, i64),

@@ -1140,7 +1140,7 @@ fn snowball_lock_utxo() {
 
             match response2 {
                 AccountResponse::Error { error } => {
-                    assert!(error.starts_with("No enough payment UTXO available"))
+                    assert!(error.contains("No enough to stake"))
                 }
                 _ => unreachable!(),
             };

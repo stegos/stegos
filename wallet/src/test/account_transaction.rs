@@ -1139,9 +1139,7 @@ fn snowball_lock_utxo() {
             let response2 = get_request(response2);
 
             match response2 {
-                AccountResponse::Error { error } => {
-                    assert!(error.contains("No enough to stake"))
-                }
+                AccountResponse::Error { error } => assert!(error.contains("Not enough to pay")),
                 _ => unreachable!(),
             };
         }

@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// #![deny(warnings)]
+#![deny(warnings)]
 
 pub mod api;
 mod change;
@@ -1620,13 +1620,13 @@ impl Future for UnsealedAccountService {
             match rx.poll().expect("all errors are already handled") {
                 Async::Ready(Some(notification)) => match notification {
                     ChainNotification::MicroBlockPrepared(block) => {
-                        let epoch = block.block.header.epoch;
-                        let offset = block.block.header.offset;
+                        let epoch = block.header.epoch;
+                        let offset = block.header.offset;
                         trace!(
                             "Prepared a micro block: epoch={}, offset={}, block={}",
                             epoch,
                             offset,
-                            Hash::digest(&block.block)
+                            Hash::digest(&block)
                         );
                         let txs = match self.database.prune_txs(block.inputs(), block.outputs()) {
                             Ok(txs) => txs,
@@ -1652,11 +1652,11 @@ impl Future for UnsealedAccountService {
                             .collect();
                         self.on_tx_statuses_changed(&statuses);
                         self.on_outputs_changed(
-                            block.block.header.epoch,
+                            block.header.epoch,
                             block.inputs(),
                             block.outputs(),
                             false,
-                            block.block.header.timestamp,
+                            block.header.timestamp,
                         );
                     }
                     ChainNotification::MacroBlockCommitted(block) => {

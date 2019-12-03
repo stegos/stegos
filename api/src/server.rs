@@ -463,8 +463,8 @@ impl Future for WebSocketHandler {
                             ChainNotification::MicroBlockPrepared(block) => {
                                 trace!(
                                     "Prepared Micro Block: epoch={}, offset={}",
-                                    block.block.header.epoch,
-                                    block.block.header.offset
+                                    block.header.epoch,
+                                    block.header.offset
                                 );
                             }
                             ChainNotification::MicroBlockReverted(block) => {

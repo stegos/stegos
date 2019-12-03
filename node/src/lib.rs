@@ -217,11 +217,7 @@ impl ChainReader {
                     assert_eq!(block.header.epoch, self.epoch);
                     let epoch_info = chain.epoch_info(block.header.epoch)?.unwrap().clone();
                     let next_epoch = block.header.epoch + 1;
-                    let msg = ExtendedMacroBlock {
-                        block,
-                        epoch_info,
-                        transaction_statuses: HashMap::new(),
-                    };
+                    let msg = ExtendedMacroBlock { block, epoch_info };
                     let msg = ChainNotification::MacroBlockCommitted(msg);
                     (msg, next_epoch, 0)
                 }
@@ -234,24 +230,7 @@ impl ChainReader {
                         } else {
                             (block.header.epoch + 1, 0)
                         };
-                    let transaction_statuses = block
-                        .transactions
-                        .iter()
-                        .map(|tx| {
-                            (
-                                Hash::digest(&tx),
-                                TransactionStatus::Prepared {
-                                    epoch: block.header.epoch,
-                                    offset: block.header.offset,
-                                },
-                            )
-                        })
-                        .collect();
-                    let msg = ExtendedMicroBlock {
-                        block,
-                        transaction_statuses,
-                    };
-                    let msg = ChainNotification::MicroBlockPrepared(msg);
+                    let msg = ChainNotification::MicroBlockPrepared(block);
                     (msg, next_epoch, next_offset)
                 }
             };
@@ -1120,35 +1099,15 @@ impl NodeService {
 
         let (inputs, outputs) = self.chain.push_macro_block(block.clone(), timestamp)?;
 
-        let mut transaction_statuses = HashMap::new();
-        let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
-        for (tx_hash, (tx, full)) in tx_info {
-            let status = if full {
-                TransactionStatus::Committed { epoch }
-            } else {
-                TransactionStatus::Conflicted {
-                    epoch,
-                    offset: None,
-                }
-            };
-            assert!(transaction_statuses.insert(tx_hash, status).is_none());
-            assert!(transactions.insert(tx_hash, tx).is_none());
-        }
-
-        assert_eq!(transaction_statuses.len(), transactions.len());
+        self.mempool.prune(inputs.iter(), outputs.keys());
 
         let epoch_info = self
             .chain
             .epoch_info(epoch)?
             .expect("Expect epoch info for last macroblock.")
             .clone();
-        let notification = ExtendedMacroBlock {
-            block,
-            epoch_info,
-            transaction_statuses,
-        };
+        let notification = ExtendedMacroBlock { block, epoch_info };
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
         self.on_block_added(block_timestamp, notification.into(), was_synchronized);
@@ -1233,38 +1192,14 @@ impl NodeService {
         }
 
         // Apply Micro Block.
-        let (inputs, outputs, block_transactions) =
+        let (inputs, outputs, _block_transactions) =
             self.chain.push_micro_block(block.clone(), timestamp)?;
 
-        let mut transaction_statuses = HashMap::new();
-        let mut transactions = HashMap::new();
         // Remove conflict transactions from the mempool.
-        let mut tx_info = self.mempool.prune(inputs.iter(), outputs.keys());
-        tx_info.extend(
-            block_transactions
-                .clone()
-                .into_iter()
-                .map(|(h, tx)| (h, (tx, true))),
-        );
-        for (tx_hash, (tx, full)) in tx_info {
-            let status = if full && block_transactions.contains_key(&tx_hash) {
-                TransactionStatus::Prepared { epoch, offset }
-            } else {
-                TransactionStatus::Conflicted {
-                    epoch,
-                    offset: offset.into(),
-                }
-            };
-            assert!(transaction_statuses.insert(tx_hash, status).is_none());
-            assert!(transactions.insert(tx_hash, tx).is_none());
-        }
-        assert_eq!(transaction_statuses.len(), transactions.len());
-        assert!(transactions.len() >= block_transactions.len());
-        let notification = ExtendedMicroBlock {
-            block,
-            transaction_statuses,
-        };
-        self.on_block_added(block_timestamp, notification.into(), was_synchronized);
+        self.mempool.prune(inputs.iter(), outputs.keys());
+
+        // Update metrics.
+        self.on_block_added(block_timestamp, block.into(), was_synchronized);
         Ok(())
     }
 
@@ -1294,7 +1229,7 @@ impl NodeService {
                 metrics::MACRO_BLOCK_LAG_HG.observe(lag);
                 notification.block.clone().into()
             }
-            ChainNotification::MicroBlockPrepared(notification) => {
+            ChainNotification::MicroBlockPrepared(block) => {
                 metrics::MICRO_BLOCK_LAG.set(lag);
                 metrics::MICRO_BLOCK_LAG_HG.observe(lag);
                 let interval = self.last_block_clock.duration_since(last_block_clock);
@@ -1302,7 +1237,7 @@ impl NodeService {
                     (interval.as_secs() as f64) + (interval.subsec_nanos() as f64) * 1e-9;
                 metrics::MICRO_BLOCK_INTERVAL.set(interval);
                 metrics::MICRO_BLOCK_INTERVAL_HG.observe(interval);
-                notification.block.clone().into()
+                block.clone().into()
             }
             _ => unreachable!(),
         };
@@ -1416,18 +1351,6 @@ impl NodeService {
     fn pop_micro_block(&mut self) -> Result<(), Error> {
         let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
         self.last_block_clock = clock::now();
-        let transaction_statuses = txs
-            .iter()
-            .map(|tx| {
-                (
-                    Hash::digest(&tx),
-                    TransactionStatus::Rollback {
-                        epoch: self.chain.epoch(),
-                        offset: self.chain.offset(),
-                    },
-                )
-            })
-            .collect();
         self.mempool.pop_micro_block(txs);
 
         // Update validation status.
@@ -1439,7 +1362,6 @@ impl NodeService {
         // Send ChainNotification.
         let msg = RevertedMicroBlock {
             block,
-            transaction_statuses,
             pruned_outputs,
             recovered_inputs,
         };
@@ -2176,19 +2098,11 @@ impl NodeService {
 
         let block = self.chain.macro_block(epoch)?.into_owned();
         let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
-        let msg = ExtendedMacroBlock {
-            block,
-            epoch_info,
-            transaction_statuses: HashMap::new(),
-        };
+        let msg = ExtendedMacroBlock { block, epoch_info };
         Ok(msg)
     }
 
-    fn handle_micro_block_info(
-        &self,
-        epoch: u64,
-        offset: u32,
-    ) -> Result<ExtendedMicroBlock, Error> {
+    fn handle_micro_block_info(&self, epoch: u64, offset: u32) -> Result<MicroBlock, Error> {
         if epoch != self.chain.epoch() || offset >= self.chain.offset() {
             return Err(format_err!(
                 "Micro block doesn't exists: epoch={}, offset={}",
@@ -2197,11 +2111,7 @@ impl NodeService {
             ));
         }
         let block = self.chain.micro_block(epoch, offset)?.into_owned();
-        let msg = ExtendedMicroBlock {
-            block,
-            transaction_statuses: HashMap::new(),
-        };
-        Ok(msg)
+        Ok(block)
     }
 }
 

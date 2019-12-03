@@ -262,10 +262,9 @@ fn process_tx(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>) -> Hash {
     let mut notification = accounts[0].account.subscribe();
     let rx = accounts[0].account.request(AccountRequest::Payment {
         recipient,
-        amount: balance.payment.current - PAYMENT_FEE,
+        amount: balance.payment.current - 2 * PAYMENT_FEE,
         payment_fee: PAYMENT_FEE,
         comment: "Test".to_string(),
-        locked_timestamp: None,
         with_certificate: false,
     });
 

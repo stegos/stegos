@@ -22,11 +22,15 @@
 // SOFTWARE.
 
 pub use crate::snowball::State as SnowballStatus;
+use crate::storage::RawTransaction;
+use stegos_crypto::utils::{deserialize_protobuf_from_hex, serialize_protobuf_to_hex};
+
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+use stegos_blockchain::Transaction;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
@@ -177,16 +181,33 @@ pub enum AccountRequest {
         comment: String,
         with_certificate: bool,
     },
-    PublicPayment {
+    PaymentToPublic {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
+    },
+    PaymentFromPublic {
+        recipient: scc::PublicKey,
+        amount: i64,
+        payment_fee: i64,
+        #[serde(default)]
+        raw: bool,
     },
     SecurePayment {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
         comment: String,
+    },
+    SignTransaction {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: RawTransaction,
+    },
+    SendTransaction {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: RawTransaction,
     },
     StakeAll {
         payment_fee: i64,
@@ -278,16 +299,31 @@ pub enum AccountResponse {
     Unsealed,
     #[serde(skip)]
     Disabled,
+    /// Deprecated fields.
     PublicAddressCreated {
         public_address: scc::PublicKey,
         public_address_id: u32,
     },
-    TransactionCreated(TransactionInfo),
-    BalanceInfo(AccountBalance),
-    AccountInfo(AccountInfo),
+    /// Deprecated fields.
     PublicAddressesInfo {
         public_addresses: BTreeMap<String, PublicAddressInfo>,
     },
+    TransactionCreated(TransactionInfo),
+    RawTransactionCreated {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: RawTransaction,
+    },
+    TransactionSent {
+        hash: Hash,
+    },
+    TransactionSigned {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
+    BalanceInfo(AccountBalance),
+    AccountInfo(AccountInfo),
     UnspentInfo {
         public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,

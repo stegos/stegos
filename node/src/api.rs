@@ -30,6 +30,7 @@ use stegos_blockchain::{
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
+use stegos_crypto::utils::{deserialize_protobuf_from_hex, serialize_protobuf_to_hex};
 
 ///
 /// RPC requests.
@@ -43,11 +44,14 @@ pub enum NodeRequest {
     ReplicationInfo {},
     PopMicroBlock {},
     ChainName {},
+    BroadcastTransaction {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
     PublicOutputs {
         pkey: scc::PublicKey,
     },
-    #[serde(skip)]
-    AddTransaction(Transaction),
     ValidateCertificate {
         output_hash: Hash,
         spender: scc::PublicKey,
@@ -88,7 +92,7 @@ pub enum NodeResponse {
         name: String,
     },
     #[serde(skip)]
-    AddTransaction {
+    BroadcastTransaction {
         hash: Hash,
         status: TransactionStatus,
     },

@@ -321,8 +321,6 @@ impl ConsoleService {
         eprintln!("restake - restake all available stakes");
         eprintln!("enable restaking - enable automatic re-staking (default)");
         eprintln!("disable restaking - disable automatic re-staking");
-        eprintln!("create public address - create a new public address");
-        eprintln!("show public addresses - show created public addresses");
         eprintln!("cloak - exchange all available public outputs");
         eprintln!("show version - print version information");
         eprintln!("show validators - print active epoch validators list.");
@@ -644,7 +642,7 @@ impl ConsoleService {
                     comment,
                 }
             } else if public {
-                AccountRequest::PublicPayment {
+                AccountRequest::PaymentToPublic {
                     recipient,
                     amount,
                     payment_fee,
@@ -826,12 +824,6 @@ impl ConsoleService {
             self.send_account_request(request)?
         } else if msg == "restake" {
             let request = AccountRequest::RestakeAll {};
-            self.send_account_request(request)?
-        } else if msg == "create public address" {
-            let request = AccountRequest::CreatePublicAddress {};
-            self.send_account_request(request)?
-        } else if msg == "show public addresses" {
-            let request = AccountRequest::PublicAddressesInfo {};
             self.send_account_request(request)?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;

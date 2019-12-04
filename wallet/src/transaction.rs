@@ -162,7 +162,7 @@ where
 }
 
 /// Create a new payment transaction.
-pub(crate) fn create_payment_transaction<'a, UnspentIter>(
+pub(crate) fn create_payment_transaction<'a, UnspentIter, T>(
     certificate_skey: Option<&SecretKey>,
     sender_pkey: &PublicKey,
     recipient: &PublicKey,
@@ -173,7 +173,8 @@ pub(crate) fn create_payment_transaction<'a, UnspentIter>(
     max_inputs_in_tx: usize,
 ) -> Result<(Vec<Output>, Vec<Output>, Fr, Vec<OutputValue>, i64), Error>
 where
-    UnspentIter: Iterator<Item = (PaymentOutput, i64)>,
+    UnspentIter: Iterator<Item = (T, i64)>,
+    T: Into<Output> + Clone,
 {
     if amount < 0 {
         return Err(WalletError::NegativeAmount(amount).into());
@@ -192,10 +193,7 @@ where
     let fee = payment_fee;
     let fee_change = fee + payment_fee;
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, fee_change, max_inputs_in_tx)?;
-    let inputs: Vec<Output> = inputs
-        .into_iter()
-        .map(|o| Output::PaymentOutput(o.clone()))
-        .collect();
+    let inputs: Vec<Output> = inputs.into_iter().map(|o| o.into()).collect();
     assert!(!inputs.is_empty());
 
     debug!(

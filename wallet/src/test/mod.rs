@@ -25,7 +25,8 @@ pub use stegos_node::test::*;
 mod account_transaction;
 use super::Account;
 use crate::{
-    AccountEvent, AccountNotification, AccountResponse, AccountService, ReadWriteAccountService,
+    AccountEvent, AccountNotification, AccountResponse, AccountService, ReadOnlyAccountService,
+    ReadWriteAccountService,
 };
 use stegos_blockchain::{Blockchain, ChainConfig};
 use stegos_crypto::scc;
@@ -43,7 +44,7 @@ const PASSWORD: &str = "1234";
 fn genesis_accounts(s: &mut Sandbox) -> Vec<AccountSandbox> {
     let mut accounts = Vec::new();
     for i in 0..s.nodes.len() {
-        let mut account = AccountSandbox::new_genesis(s, i, None);
+        let mut account = AccountSandbox::new_genesis(s, i, None, false);
         accounts.push(account);
     }
     accounts
@@ -55,7 +56,7 @@ struct AccountSandbox {
     #[allow(dead_code)]
     network: Loopback,
     account: Account,
-    account_service: ReadWriteAccountService,
+    account_service: AccountService,
 }
 
 impl AccountSandbox {
@@ -67,6 +68,7 @@ impl AccountSandbox {
         network_service: Loopback,
         network: Network,
         path: Option<TempDir>,
+        read_only: bool,
     ) -> AccountSandbox {
         let temp_dir = path.unwrap_or(TempDir::new("account").unwrap());
         let temp_path = temp_dir.path();
@@ -87,20 +89,37 @@ impl AccountSandbox {
 
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
-        let account_service = ReadWriteAccountService::new(
-            database_dir,
-            temp_path.to_path_buf(),
-            account_skey,
-            account_pkey,
-            network_skey,
-            network_pkey,
-            network,
-            node.node.clone(),
-            stake_epochs,
-            max_inputs_in_tx,
-            subscribers,
-            events,
-        );
+
+        let account_service = if read_only {
+            AccountService::Sealed(ReadOnlyAccountService::new(
+                database_dir,
+                temp_path.to_path_buf(),
+                account_pkey,
+                network_skey,
+                network_pkey,
+                network,
+                node.node.clone(),
+                stake_epochs,
+                max_inputs_in_tx,
+                subscribers,
+                events,
+            ))
+        } else {
+            AccountService::Unsealed(ReadWriteAccountService::new(
+                database_dir,
+                temp_path.to_path_buf(),
+                account_skey,
+                account_pkey,
+                network_skey,
+                network_pkey,
+                network,
+                node.node.clone(),
+                stake_epochs,
+                max_inputs_in_tx,
+                subscribers,
+                events,
+            ))
+        };
         let account = Account { outbox };
 
         let mut account = AccountSandbox {
@@ -120,7 +139,12 @@ impl AccountSandbox {
         account
     }
 
-    pub fn new_genesis(s: &mut Sandbox, node_id: usize, path: Option<TempDir>) -> AccountSandbox {
+    pub fn new_genesis(
+        s: &mut Sandbox,
+        node_id: usize,
+        path: Option<TempDir>,
+        read_only: bool,
+    ) -> AccountSandbox {
         let stake_epochs = s.config.chain.stake_epochs;
         let max_inputs_in_tx = s.config.node.max_inputs_in_tx;
         let keys = s.keychains[node_id].clone();
@@ -137,14 +161,38 @@ impl AccountSandbox {
             network_service,
             network,
             path,
+            read_only,
         )
     }
 
+    pub fn write_account_mut(&mut self) -> &mut ReadWriteAccountService {
+        match &mut self.account_service {
+            AccountService::Unsealed(ref mut s) => s,
+            a => panic!("Account in invalid state"),
+        }
+    }
+
+    pub fn write_account(&self) -> &ReadWriteAccountService {
+        match &self.account_service {
+            AccountService::Unsealed(ref s) => s,
+            a => panic!("Account in invalid state"),
+        }
+    }
+
+    pub fn read_account(&mut self) -> &mut ReadOnlyAccountService {
+        match &mut self.account_service {
+            AccountService::Sealed(ref mut s) => s,
+            a => panic!("Account in invalid state"),
+        }
+    }
+
     pub fn poll(&mut self) {
-        futures_testing::execute(
-            format!("node:{}", self.account_service.network_pkey),
-            |_| self.account_service.poll(),
-        );
+        let pk = match &self.account_service {
+            AccountService::Sealed(s) => s.network_pkey,
+            AccountService::Unsealed(s) => s.network_pkey,
+            AccountService::Invalid => panic!(),
+        };
+        futures_testing::execute(format!("node:{}", pk), |_| self.account_service.poll());
     }
 }
 

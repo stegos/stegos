@@ -30,15 +30,50 @@ use stegos_serialization::traits::*;
 use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-use super::storage::{LogEntry, OutputValue, PaymentValue, TransactionValue};
+use super::storage::{LogEntry, OutputValue, PaymentValue, RawTransaction, TransactionValue};
 use crate::storage::{PublicPaymentValue, StakeValue};
 use stegos_blockchain::{
-    PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
+    Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
 };
 use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 
 // -----------------------------------------------------------
+
+impl ProtoConvert for RawTransaction {
+    type Proto = account_log::RawTransaction;
+    fn into_proto(&self) -> Self::Proto {
+        let mut msg = account_log::RawTransaction::new();
+        for input in &self.inputs {
+            msg.inputs.push(input.into_proto())
+        }
+        for output in &self.outputs {
+            msg.outputs.push(output.into_proto())
+        }
+        msg.set_outputs_gamma(self.outputs_gamma.into_proto());
+        msg.set_fee(self.fee);
+        msg
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let mut outputs = Vec::new();
+        for output in proto.outputs.iter() {
+            outputs.push(OutputValue::from_proto(output)?);
+        }
+        let mut inputs = Vec::new();
+        for input in proto.inputs.iter() {
+            inputs.push(Output::from_proto(input)?);
+        }
+        let outputs_gamma = Fr::from_proto(proto.get_outputs_gamma())?;
+        let fee = proto.get_fee();
+        Ok(Self {
+            outputs,
+            inputs,
+            outputs_gamma,
+            fee,
+        })
+    }
+}
 
 impl ProtoConvert for LogEntry {
     type Proto = account_log::LogEntry;

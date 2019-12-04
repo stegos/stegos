@@ -83,7 +83,7 @@ impl Node {
     /// Send transaction to node and to the network.
     pub fn send_transaction(&self, transaction: Transaction) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
-        let request = NodeRequest::AddTransaction(transaction);
+        let request = NodeRequest::BroadcastTransaction { data: transaction };
         let msg = NodeMessage::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
@@ -1385,7 +1385,7 @@ impl NodeService {
         Ok(rx)
     }
 
-    /// Handler for NodeRequest::AddTransaction
+    /// Handler for NodeRequest::BroadcastTransaction
     fn handle_add_tx(&mut self, tx: Transaction) -> TransactionStatus {
         match self.send_transaction(tx.clone()) {
             Ok(()) => {}
@@ -2341,9 +2341,9 @@ impl Future for NodeService {
                                         },
                                     }
                                 }
-                                NodeRequest::AddTransaction(tx) => {
+                                NodeRequest::BroadcastTransaction { data: tx } => {
                                     let hash = Hash::digest(&tx);
-                                    NodeResponse::AddTransaction {
+                                    NodeResponse::BroadcastTransaction {
                                         hash,
                                         status: self.handle_add_tx(tx),
                                     }

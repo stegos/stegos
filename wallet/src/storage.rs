@@ -37,7 +37,7 @@ use stegos_blockchain::{
     RestakeTransaction, StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
-use stegos_crypto::scc::{Fr, PublicKey};
+use stegos_crypto::scc::{self, Fr, PublicKey};
 use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
@@ -60,6 +60,7 @@ pub enum LogEntry {
 
 /// Currently we support only transaction that have 2 outputs,
 /// one for recipient, and one for change.
+#[derive(Debug)]
 pub struct AccountDatabase {
     /// Guard object for temporary directory.
     _temp_dir: Option<TempDir>,
@@ -615,6 +616,38 @@ pub struct TransactionValue {
     pub tx: PaymentTransaction,
     pub status: TransactionStatus,
     pub outputs: Vec<OutputValue>,
+}
+
+/// Raw unsigned transaction
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RawTransaction {
+    pub inputs: Vec<Output>,
+    pub outputs: Vec<OutputValue>,
+    pub outputs_gamma: Fr,
+    pub fee: i64,
+}
+
+impl RawTransaction {
+    /// Create new unsigned transaction.
+    pub fn new(
+        inputs: Vec<Output>,
+        outputs: Vec<OutputValue>,
+        outputs_gamma: Fr,
+        fee: i64,
+    ) -> Self {
+        RawTransaction {
+            inputs,
+            outputs,
+            outputs_gamma,
+            fee,
+        }
+    }
+
+    /// Sign new transaction.
+    pub fn sign(self, skey: &scc::SecretKey) -> Result<PaymentTransaction, Error> {
+        let outputs: Vec<_> = self.outputs.into_iter().map(|o| o.to_output()).collect();
+        PaymentTransaction::new(skey, &self.inputs, &outputs, &self.outputs_gamma, self.fee)
+    }
 }
 
 /// Represents Outputs created by account.

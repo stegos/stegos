@@ -61,7 +61,7 @@ fn create_tx() {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
@@ -124,7 +124,10 @@ fn create_tx() {
             let output = unwrap_payment(outputs[1].clone());
             assert!(output.is_change);
             assert!(output.rvalue.is_none());
-            assert_eq!(output.recipient, accounts[0].account_service.account_pkey);
+            assert_eq!(
+                output.recipient,
+                accounts[0].write_account_mut().account_pkey
+            );
         } else {
             unreachable!();
         }
@@ -144,7 +147,7 @@ fn create_tx_with_certificate() {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
@@ -170,12 +173,12 @@ fn create_tx_with_certificate() {
                 // TODO: Get transaction from the node using api.
                 {
                     let timestamp = accounts[0]
-                        .account_service
+                        .write_account_mut()
                         .database
                         .tx_entry(tx.tx_hash)
                         .unwrap();
                     let tx_entry = accounts[0]
-                        .account_service
+                        .write_account_mut()
                         .database
                         .iter_range(timestamp, 1)
                         .next()
@@ -192,13 +195,13 @@ fn create_tx_with_certificate() {
 
                     assert!(output
                         .decrypt_payload(
-                            &accounts[0].account_service.account_pkey,
-                            &accounts[0].account_service.account_skey
+                            &accounts[0].write_account().account_pkey,
+                            &accounts[0].write_account().account_skey
                         )
                         .is_err());
                     let amount = output
                         .validate_certificate(
-                            &accounts[0].account_service.account_pkey,
+                            &accounts[0].write_account_mut().account_pkey,
                             &recipient,
                             &output_info.rvalue.unwrap(),
                         )
@@ -261,7 +264,7 @@ fn full_transfer() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         let balance = balance_request(&mut accounts[0]);
 
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
@@ -318,7 +321,7 @@ fn create_tx_invalid() {
         let balance = balance_request(&mut accounts[0]);
         info!("{:?}", balance);
 
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         // invalid amount
         let rx = accounts[0].account.request(AccountRequest::Payment {
@@ -379,7 +382,7 @@ fn get_recovery_key() {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::GetRecovery {});
@@ -404,7 +407,7 @@ fn wait_for_epoch_end_with_tx() {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
@@ -477,15 +480,18 @@ fn create_public_tx() {
     Sandbox::start(Default::default(), |mut s| {
         let mut accounts = genesis_accounts(&mut s);
 
+        const AMOUNT: i64 = 10 + PAYMENT_FEE * 2;
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
-        let rx = accounts[0].account.request(AccountRequest::PublicPayment {
-            recipient,
-            amount: 10,
-            payment_fee: PAYMENT_FEE,
-        });
+        let rx = accounts[0]
+            .account
+            .request(AccountRequest::PaymentToPublic {
+                recipient,
+                amount: AMOUNT,
+                payment_fee: PAYMENT_FEE,
+            });
 
         assert_eq!(notification.poll(), Ok(Async::NotReady));
         accounts[0].poll();
@@ -526,7 +532,7 @@ fn create_public_tx() {
             _ => panic!(" not expeceted output"),
         };
 
-        assert_eq!(our_output.amount, 10);
+        assert_eq!(our_output.amount, AMOUNT);
         assert_eq!(our_output.recipient, recipient);
         let output = our_output.clone();
 
@@ -544,30 +550,358 @@ fn create_public_tx() {
         s.poll();
 
         match get_request(req) {
-            NodeResponse::PublicOutputs { list } => assert_eq!(list, vec![output]),
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![output]),
             _ => unreachable!(),
         }
 
         let request = NodeRequest::PublicOutputs {
-            pkey: accounts[0].account_service.account_pkey,
+            pkey: accounts[0].write_account_mut().account_pkey,
         };
         let req = s.nodes[0].node.request(request);
         s.poll();
 
         match get_request(req) {
-            NodeResponse::PublicOutputs { list } => assert_eq!(list, vec![]),
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![]),
             _ => unreachable!(),
         }
+
+        accounts[1].poll();
+        let balance = balance_request(&mut accounts[1]);
+        assert_eq!(balance.public_payment.available, AMOUNT);
     });
 }
 
+// In this test, we send public output to some exchange account,
+// This account should be unsealed, but still can process incomming utxo.
+// Then exchange account should produce unsigned raw tx, and sign it with cold keys, later.
+#[test]
+fn exchange_api() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        const AMOUNT: i64 = 10 + PAYMENT_FEE * 2;
+        s.poll();
+        let recipient = accounts[1].write_account_mut().account_pkey;
+        // create a readonly copy of account[1]
+        let mut read_only = AccountSandbox::new_genesis(&mut s, 1, None, true);
+        assert_eq!(recipient, read_only.read_account().account_pkey);
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0]
+            .account
+            .request(AccountRequest::PaymentToPublic {
+                recipient,
+                amount: AMOUNT,
+                payment_fee: PAYMENT_FEE,
+            });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        let epoch = s.first().chain().epoch();
+        let offset = s.first().chain().offset();
+        let microblock = s.first().chain().micro_block(epoch, offset - 1).unwrap();
+        let our_tx = microblock.transactions.last();
+        let our_tx = match our_tx {
+            Some(Transaction::PaymentTransaction(tx)) => tx,
+            _ => panic!(" not expeceted tx"),
+        };
+
+        let our_output = match our_tx.txouts.first() {
+            Some(Output::PublicPaymentOutput(p)) => p,
+            _ => panic!(" not expeceted output"),
+        };
+
+        assert_eq!(our_output.amount, AMOUNT);
+        assert_eq!(our_output.recipient, recipient);
+        let output = our_output.clone();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepared { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        let request = NodeRequest::PublicOutputs { pkey: recipient };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![output]),
+            _ => unreachable!(),
+        }
+
+        let request = NodeRequest::PublicOutputs {
+            pkey: accounts[0].write_account_mut().account_pkey,
+        };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![]),
+            _ => unreachable!(),
+        }
+
+        accounts[1].poll();
+        let balance = balance_request(&mut accounts[1]);
+        assert_eq!(balance.public_payment.available, AMOUNT);
+        let balance = balance_request(&mut read_only);
+        assert_eq!(balance.public_payment.available, AMOUNT);
+        let request = AccountRequest::PaymentFromPublic {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            raw: true,
+        };
+        let req = read_only.account.request(request);
+        read_only.poll();
+        let tx;
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::RawTransactionCreated { data } => {
+                tx = data;
+            }
+            e => panic!("Expected RawTransactionCreated, got={:?}", e),
+        }
+        let sign_request = AccountRequest::SignTransaction { data: tx.clone() };
+
+        let req = read_only.account.request(sign_request.clone());
+        read_only.poll();
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::Error { error } => assert_eq!(error, "Account is sealed"),
+            e => panic!("Expected RawTransactionCreated, got={:?}", e),
+        }
+        let req = accounts[1].account.request(sign_request);
+        accounts[1].poll();
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::TransactionSigned { data } => {}
+            e => panic!("Expected TransactionSigned, got={:?}", e),
+        }
+
+        // Now let's try to send transaction after signing.
+        let send_request = AccountRequest::SendTransaction { data: tx.clone() };
+        let req = read_only.account.request(send_request.clone());
+        read_only.poll();
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::Error { error } => assert_eq!(error, "Account is sealed"),
+            e => panic!("Expected RawTransactionCreated, got={:?}", e),
+        }
+
+        let req = accounts[1].account.request(send_request);
+        accounts[1].poll();
+        let tx_hash;
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::TransactionSent { hash } => tx_hash = hash,
+            e => panic!("Expected TransactionSigned, got={:?}", e),
+        }
+        s.nodes[1].poll();
+
+        let tx: Transaction = s.nodes[1]
+            .network_service
+            .get_broadcast(stegos_node::TX_TOPIC);
+        assert_eq!(Hash::digest(&tx), tx_hash);
+    });
+}
+
+#[test]
+fn exchange_external_broadcast() {
+    Sandbox::start(Default::default(), |mut s| {
+        let mut accounts = genesis_accounts(&mut s);
+
+        const AMOUNT: i64 = 10 + PAYMENT_FEE * 2;
+        s.poll();
+        let recipient = accounts[1].write_account_mut().account_pkey;
+        // create a readonly copy of account[1]
+        let mut read_only = AccountSandbox::new_genesis(&mut s, 1, None, true);
+        assert_eq!(recipient, read_only.read_account().account_pkey);
+
+        let mut notification = accounts[0].account.subscribe();
+        let rx = accounts[0]
+            .account
+            .request(AccountRequest::PaymentToPublic {
+                recipient,
+                amount: AMOUNT,
+                payment_fee: PAYMENT_FEE,
+            });
+
+        assert_eq!(notification.poll(), Ok(Async::NotReady));
+        accounts[0].poll();
+        let response = get_request(rx);
+        info!("{:?}", response);
+        let my_tx = match response {
+            AccountResponse::TransactionCreated(tx) => tx.tx_hash,
+            _ => panic!("Wrong respnse to payment request"),
+        };
+
+        s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
+
+        // poll sandbox, to process transaction.
+        s.poll();
+        // rebroadcast transaction to each node
+        s.broadcast(stegos_node::TX_TOPIC);
+        accounts[0].poll();
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Accepted {},
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        s.skip_micro_block();
+
+        let epoch = s.first().chain().epoch();
+        let offset = s.first().chain().offset();
+        let microblock = s.first().chain().micro_block(epoch, offset - 1).unwrap();
+        let our_tx = microblock.transactions.last();
+        let our_tx = match our_tx {
+            Some(Transaction::PaymentTransaction(tx)) => tx,
+            _ => panic!(" not expeceted tx"),
+        };
+
+        let our_output = match our_tx.txouts.first() {
+            Some(Output::PublicPaymentOutput(p)) => p,
+            _ => panic!(" not expeceted output"),
+        };
+
+        assert_eq!(our_output.amount, AMOUNT);
+        assert_eq!(our_output.recipient, recipient);
+        let output = our_output.clone();
+
+        accounts[0].poll();
+
+        match get_notification(&mut notification) {
+            AccountNotification::TransactionStatus {
+                tx_hash,
+                status: TransactionStatus::Prepared { .. },
+            } => assert_eq!(tx_hash, my_tx),
+            _ => unreachable!(),
+        }
+        let request = NodeRequest::PublicOutputs { pkey: recipient };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![output]),
+            _ => unreachable!(),
+        }
+
+        let request = NodeRequest::PublicOutputs {
+            pkey: accounts[0].write_account_mut().account_pkey,
+        };
+        let req = s.nodes[0].node.request(request);
+        s.poll();
+
+        match get_request(req) {
+            NodeResponse::PublicOutputs {
+                list,
+                epoch: _epoch,
+            } => assert_eq!(list, vec![]),
+            _ => unreachable!(),
+        }
+
+        accounts[1].poll();
+        let balance = balance_request(&mut accounts[1]);
+        assert_eq!(balance.public_payment.available, AMOUNT);
+        let balance = balance_request(&mut read_only);
+        assert_eq!(balance.public_payment.available, AMOUNT);
+        let request = AccountRequest::PaymentFromPublic {
+            recipient,
+            amount: 10,
+            payment_fee: PAYMENT_FEE,
+            raw: true,
+        };
+        let req = read_only.account.request(request);
+        read_only.poll();
+        let tx;
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::RawTransactionCreated { data } => {
+                tx = data;
+            }
+            e => panic!("Expected RawTransactionCreated, got={:?}", e),
+        }
+        let sign_request = AccountRequest::SignTransaction { data: tx.clone() };
+
+        let req = read_only.account.request(sign_request.clone());
+        read_only.poll();
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::Error { error } => assert_eq!(error, "Account is sealed"),
+            e => panic!("Expected RawTransactionCreated, got={:?}", e),
+        }
+        let req = accounts[1].account.request(sign_request);
+        accounts[1].poll();
+        let tx;
+        match get_request::<AccountResponse>(req) {
+            AccountResponse::TransactionSigned { data } => tx = data,
+            e => panic!("Expected TransactionSigned, got={:?}", e),
+        }
+
+        let tx_hash = Hash::digest(&tx);
+        let request = NodeRequest::BroadcastTransaction { data: tx };
+
+        let req = s.first_mut().node.request(request);
+
+        s.poll();
+
+        match get_request::<NodeResponse>(req) {
+            NodeResponse::BroadcastTransaction { status, hash } => {
+                assert_eq!(hash, tx_hash);
+                assert_eq!(status, TransactionStatus::Accepted {});
+            }
+            e => panic!("Expected TransactionSigned, got={:?}", e),
+        }
+        let tx: Transaction = s
+            .first_mut()
+            .network_service
+            .get_broadcast(stegos_node::TX_TOPIC);
+        assert_eq!(Hash::digest(&tx), tx_hash);
+    });
+}
 #[test]
 fn recovery_acount_after_tx() {
     Sandbox::start(Default::default(), |mut s| {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         accounts[0].poll();
 
@@ -628,7 +962,7 @@ fn recovery_acount_after_tx() {
 
         let mut accounts = Vec::new();
         for (i, path) in (0..s.nodes.len()).zip(dirs) {
-            let account = AccountSandbox::new_genesis(&mut s, i, path.into());
+            let account = AccountSandbox::new_genesis(&mut s, i, path.into(), false);
             accounts.push(account);
         }
         s.poll();
@@ -646,7 +980,7 @@ fn send_node_duplicate_tx() {
         let mut accounts = genesis_accounts(&mut s);
 
         s.poll();
-        let recipient = accounts[1].account_service.account_pkey;
+        let recipient = accounts[1].write_account_mut().account_pkey;
 
         accounts[0].poll();
 
@@ -700,7 +1034,7 @@ fn send_node_duplicate_tx() {
 
         let mut accounts = Vec::new();
         for (i, path) in (0..s.nodes.len()).zip(dirs) {
-            let account = AccountSandbox::new_genesis(&mut s, i, path.into());
+            let account = AccountSandbox::new_genesis(&mut s, i, path.into(), false);
             accounts.push(account);
         }
         s.poll();
@@ -759,7 +1093,7 @@ fn precondition_each_account_has_tokens(
 ) {
     for new_account in accounts.iter() {
         let rx = genesis_account.account.request(AccountRequest::Payment {
-            recipient: new_account.account_service.account_pkey,
+            recipient: new_account.write_account().account_pkey,
             amount,
             payment_fee: PAYMENT_FEE,
             comment: "Test".to_string(),
@@ -847,7 +1181,7 @@ fn create_snowball_tx() {
         let num_nodes = accounts.len() - 1;
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -915,10 +1249,10 @@ fn create_snowball_tx() {
         for account in accounts.iter_mut().take(num_nodes) {
             debug!(
                 "Receiving msg to peer = {}",
-                account.account_service.network_pkey
+                account.write_account_mut().network_pkey
             );
             for msg in shared_keying
-                .get(&account.account_service.network_pkey)
+                .get(&account.write_account_mut().network_pkey)
                 .unwrap()
             {
                 account.network.receive_unicast(
@@ -958,7 +1292,7 @@ fn create_snowball_tx() {
 
         for account in accounts.iter_mut().take(num_nodes) {
             for msg in commitments
-                .get(&account.account_service.network_pkey)
+                .get(&account.write_account_mut().network_pkey)
                 .unwrap()
             {
                 account.network.receive_unicast(
@@ -998,7 +1332,7 @@ fn create_snowball_tx() {
 
         for account in accounts.iter_mut().take(num_nodes) {
             for msg in cloaked_vals
-                .get(&account.account_service.network_pkey)
+                .get(&account.write_account_mut().network_pkey)
                 .unwrap()
             {
                 account.network.receive_unicast(
@@ -1038,7 +1372,7 @@ fn create_snowball_tx() {
 
         for account in accounts.iter_mut().take(num_nodes) {
             for msg in signatures
-                .get(&account.account_service.network_pkey)
+                .get(&account.write_account_mut().network_pkey)
                 .unwrap()
             {
                 account.network.receive_unicast(
@@ -1128,7 +1462,7 @@ fn snowball_lock_utxo() {
         let num_nodes = accounts.len() - 1;
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let balance = balance_request(&mut accounts[0]);
         assert!(balance.payment.available > 0);
@@ -1216,13 +1550,13 @@ fn snowball_failed_join() {
         let num_nodes = accounts.len() - 1;
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
-        assert!(accounts[0].account_service.snowball.is_some());
-        assert!(!accounts[0].account_service.pending_payments.is_empty());
+        assert!(accounts[0].write_account_mut().snowball.is_some());
+        assert!(!accounts[0].write_account_mut().pending_payments.is_empty());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1235,8 +1569,8 @@ fn snowball_failed_join() {
         s.poll();
 
         accounts[0].poll();
-        assert!(accounts[0].account_service.pending_payments.is_empty());
-        assert!(accounts[0].account_service.snowball.is_none());
+        assert!(accounts[0].write_account_mut().pending_payments.is_empty());
+        assert!(accounts[0].write_account_mut().snowball.is_none());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1258,7 +1592,7 @@ fn annihilation() {
     Sandbox::start(config, |mut s| {
         let mut accounts = genesis_accounts(&mut s);
         for _offset in 0..s.config.chain.micro_blocks_in_epoch - 1 {
-            let recipient = accounts[0].account_service.account_pkey;
+            let recipient = accounts[0].write_account_mut().account_pkey;
             let rx = accounts[0].account.request(AccountRequest::Payment {
                 recipient,
                 amount: 1,
@@ -1305,12 +1639,12 @@ fn snowball_with_wrong_facilitator_pool() {
         let num_nodes = accounts.len() - 1;
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notification = accounts[0].account.subscribe();
         let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
-        assert!(accounts[0].account_service.snowball.is_some());
+        assert!(accounts[0].write_account_mut().snowball.is_some());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1326,7 +1660,7 @@ fn snowball_with_wrong_facilitator_pool() {
             .network
             .receive_unicast(key, txpool::POOL_ANNOUNCE_TOPIC, msg);
         accounts[0].poll();
-        assert!(accounts[0].account_service.snowball.is_some());
+        assert!(accounts[0].write_account_mut().snowball.is_some());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
@@ -1358,7 +1692,7 @@ fn create_snowball_simple() {
         let num_nodes = accounts.len();
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -1477,7 +1811,7 @@ fn create_snowball_fail_share_key() {
         let num_nodes = accounts.len();
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -1601,7 +1935,7 @@ fn create_snowball_fail_commitment() {
         let num_nodes = accounts.len();
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -1736,7 +2070,7 @@ fn create_snowball_fail_cloacked_vals() {
         let num_nodes = accounts.len();
         assert!(num_nodes >= 3);
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -1882,7 +2216,7 @@ fn random_drops(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>, dropout_cfg
                 if *random_node_id == node_id && *random_msg_id == msg_id {
                     trace!(
                         "Perform random dropouts of msg from={}, to={}",
-                        account.account_service.network_pkey,
+                        account.write_account_mut().network_pkey,
                         peer
                     );
                     continue 'msg;
@@ -1896,7 +2230,10 @@ fn random_drops(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>, dropout_cfg
     // see deliver_with_restart method
     s.wait(crate::snowball::SNOWBALL_TIMER / 2);
     for account in accounts.iter_mut().take(num_nodes) {
-        for msg in messages.get(&account.account_service.network_pkey).unwrap() {
+        for msg in messages
+            .get(&account.write_account_mut().network_pkey)
+            .unwrap()
+        {
             account.network.receive_unicast(
                 msg.source.pkey,
                 crate::snowball::SNOWBALL_TOPIC,
@@ -1969,7 +2306,7 @@ fn create_snowball_asymetric_dropouts_sharing() {
         assert!(num_nodes >= 3);
         assert!(num_nodes <= accounts.len());
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -2047,7 +2384,7 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
         assert!(num_nodes >= 3);
         assert!(num_nodes <= accounts.len());
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {
@@ -2129,7 +2466,7 @@ fn create_snowball_asymetric_dropouts_commitment() {
         assert!(num_nodes >= 3);
         assert!(num_nodes <= accounts.len());
 
-        let recipient = accounts[3].account_service.account_pkey;
+        let recipient = accounts[3].write_account_mut().account_pkey;
 
         let mut notifications = Vec::new();
         for i in 0..num_nodes {

@@ -43,7 +43,7 @@ pub const VERSION: u64 = 1;
 //--------------------------------------------------------------------------------------------------
 
 /// Micro Block Header.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct MicroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -100,7 +100,7 @@ pub struct MicroBlockHeader {
 }
 
 /// Micro Block.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(from = "crate::api::MicroBlockInfo")]
 #[serde(into = "crate::api::MicroBlockInfo")]
 pub struct MicroBlock {

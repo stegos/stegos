@@ -5,75 +5,77 @@ import "crypto.proto";
 import "blockchain.proto";
 
 message PaymentValue {
-    stegos.blockchain.PaymentOutput output = 1;
-    int64 amount = 2;
-    stegos.blockchain.PaymentPayloadData payload = 3;
-    stegos.crypto.PublicKey recipient = 4;
-    stegos.crypto.Fr rvalue = 5;
-    bool is_change = 6;
+  stegos.blockchain.PaymentOutput output = 1;
+  int64 amount = 2;
+  stegos.blockchain.PaymentPayloadData payload = 3;
+  stegos.crypto.PublicKey recipient = 4;
+  stegos.crypto.Fr rvalue = 5;
+  bool is_change = 6;
 }
 
 message PublicPaymentValue {
-    stegos.blockchain.PublicPaymentOutput output = 1;
-    oneof option {
-        uint32 public_address_id = 2;
-    }
+  stegos.blockchain.PublicPaymentOutput output = 1;
+  oneof option { uint32 public_address_id = 2; }
 }
 
 message StakeValue {
-    stegos.blockchain.StakeOutput output = 1;
-    uint64 active_until_epoch = 2;
+  stegos.blockchain.StakeOutput output = 1;
+  uint64 active_until_epoch = 2;
 }
 
 // Possible outputs
 // (Copy of stegos.blockchain.Output, but without stake,
 // and with additional info about PaymentPayload of PaymentOutput)
 message OutputValue {
-    oneof enum_value {
-        PaymentValue payment = 1;
-        PublicPaymentValue public_payment = 2;
-        StakeValue stake = 3;
-    }
+  oneof enum_value {
+    PaymentValue payment = 1;
+    PublicPaymentValue public_payment = 2;
+    StakeValue stake = 3;
+  }
 }
 
 // Information about created transactions
 message PaymentTransactionValue {
-    stegos.blockchain.PaymentTransaction tx = 1;
-    TransactionStatus status = 2;
-    repeated OutputValue outputs = 3;
+  stegos.blockchain.PaymentTransaction tx = 1;
+  TransactionStatus status = 2;
+  repeated OutputValue outputs = 3;
+}
+
+// Unsigned raw transaction
+message RawTransaction {
+  repeated stegos.blockchain.Output inputs = 1;
+  repeated OutputValue outputs = 2;
+  stegos.crypto.Fr outputs_gamma = 3;
+  int64 fee = 4;
 }
 
 // Incoming event
-message Incoming {
-    OutputValue output = 1;
-}
+message Incoming { OutputValue output = 1; }
 
 // Outgoing event
-message Outgoing {
-    PaymentTransactionValue value = 1;
-}
+message Outgoing { PaymentTransactionValue value = 1; }
 
 // Log entry
 message LogEntry {
-    oneof enum_value {
-        Incoming incoming = 1;
-        Outgoing outgoing = 2;
-    }
+  oneof enum_value {
+    Incoming incoming = 1;
+    Outgoing outgoing = 2;
+  }
 }
 
 message EpochWithOffset {
-    uint64 epoch = 1;
-    uint32 offset = 2;
+  uint64 epoch = 1;
+  uint32 offset = 2;
 }
 
 message TransactionStatus {
-    oneof enum_value {
-        bytes created = 1;
-        bytes accepted = 2;
-        string rejected = 3;
-        EpochWithOffset prepare = 4;
-        EpochWithOffset rollback = 5;
-        EpochWithOffset committed = 6;
-        EpochWithOffset conflicted = 7;
-    }
+  oneof enum_value {
+    bytes created = 1;
+    bytes accepted = 2;
+    string rejected = 3;
+    EpochWithOffset prepare = 4;
+    EpochWithOffset rollback = 5;
+    EpochWithOffset committed = 6;
+    EpochWithOffset conflicted = 7;
+  }
 }

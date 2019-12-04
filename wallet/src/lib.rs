@@ -303,6 +303,33 @@ impl ReadWriteAccountService {
         }
     }
 
+    fn handle_raw_transaction(&mut self, data: RawTransaction, broadcast: bool) -> AccountResponse {
+        let inputs = data.inputs;
+        let gamma = data.outputs_gamma;
+        let fee = data.fee;
+        let outputs: Vec<_> = data.outputs.into_iter().map(|o| o.to_output()).collect();
+        // Transaction TXINs can generally have different keying for each one
+        match PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee) {
+            Ok(tx) => {
+                let tx: Transaction = tx.into();
+                if broadcast {
+                    let hash = Hash::digest(&tx);
+                    match self.send_transaction(tx) {
+                        Ok(()) => AccountResponse::TransactionSent { hash },
+                        Err(e) => AccountResponse::Error {
+                            error: e.to_string(),
+                        },
+                    }
+                } else {
+                    AccountResponse::TransactionSigned { data: tx }
+                }
+            }
+            Err(e) => AccountResponse::Error {
+                error: e.to_string(),
+            },
+        }
+    }
+
     /// Send money.
     fn payment(
         &mut self,
@@ -399,8 +426,68 @@ impl ReadWriteAccountService {
             .map(|(o, _e)| o)
     }
 
+    /// Pay public utxo to some cloaked address.
+    fn payment_from_public(
+        &mut self,
+        recipient: &scc::PublicKey,
+        amount: i64,
+        payment_fee: i64,
+        raw: bool,
+    ) -> Result<Either<TransactionInfo, RawTransaction>, Error> {
+        let payment_balance = self.balance().public_payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPublicPayment(payment_balance.available).into());
+        }
+
+        let unspent_iter = self.available_public_payment_outputs().map(|(o, _)| {
+            let amount = o.amount;
+            (o, amount)
+        });
+        let (inputs, outputs, gamma, extended_outputs, fee) = create_payment_transaction(
+            None,
+            &self.account_pkey,
+            recipient,
+            unspent_iter,
+            amount,
+            payment_fee,
+            TransactionType::Public,
+            self.max_inputs_in_tx,
+        )?;
+        if raw {
+            return Ok(Either::Right(RawTransaction::new(
+                inputs,
+                extended_outputs,
+                gamma,
+                fee,
+            )));
+        }
+
+        // Transaction TXINs can generally have different keying for each one
+        let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
+        let payment_info = TransactionValue::new_payment(tx.clone(), extended_outputs);
+
+        self.database
+            .push_outgoing(Timestamp::now(), payment_info.clone())?;
+
+        let time = clock::now();
+        for input in &tx.txins {
+            assert!(self
+                .pending_payments
+                .insert(*input, PendingOutput { time })
+                .is_none());
+        }
+
+        let tx: Transaction = tx.into();
+        self.send_transaction(tx.clone())?;
+        metrics::WALLET_CREATEAD_PAYMENTS
+            .with_label_values(&[&String::from(&self.account_pkey)])
+            .inc();
+
+        Ok(Either::Left(payment_info.to_info(self.epoch)))
+    }
+
     /// Send money public.
-    fn public_payment(
+    fn payment_to_public(
         &mut self,
         recipient: &scc::PublicKey,
         amount: i64,
@@ -1333,6 +1420,29 @@ impl From<Result<TransactionInfo, Error>> for AccountResponse {
     }
 }
 
+impl From<Result<Either<TransactionInfo, RawTransaction>, Error>> for AccountResponse {
+    fn from(r: Result<Either<TransactionInfo, RawTransaction>, Error>) -> Self {
+        match r {
+            Ok(Either::Left(info)) => AccountResponse::TransactionCreated(info),
+            Ok(Either::Right(data)) => AccountResponse::RawTransactionCreated { data },
+            Err(e) => AccountResponse::Error {
+                error: format!("{}", e),
+            },
+        }
+    }
+}
+
+impl From<Result<RawTransaction, Error>> for AccountResponse {
+    fn from(r: Result<RawTransaction, Error>) -> Self {
+        match r {
+            Ok(data) => AccountResponse::RawTransactionCreated { data },
+            Err(e) => AccountResponse::Error {
+                error: format!("{}", e),
+            },
+        }
+    }
+}
+
 impl From<Vec<LogEntryInfo>> for AccountResponse {
     fn from(log: Vec<LogEntryInfo>) -> Self {
         AccountResponse::HistoryInfo { log }
@@ -1371,14 +1481,14 @@ impl Future for ReadWriteAccountService {
             match transaction_response.poll().expect("connected") {
                 Async::Ready(response) => {
                     match response {
-                        NodeResponse::AddTransaction { hash, status } => {
+                        NodeResponse::BroadcastTransaction { hash, status } => {
                             // Recover state.
                             self.on_tx_status(&hash, &status);
                         }
                         NodeResponse::Error { error } => {
                             error!("Failed to get transaction status: {:?}", error);
                         }
-                        _ => unreachable!("Expected AddTransaction|Error response"),
+                        _ => unreachable!("Expected BroadcastTransaction|Error response"),
                     };
                 }
                 Async::NotReady => self.transaction_response = Some(transaction_response),
@@ -1481,6 +1591,12 @@ impl Future for ReadWriteAccountService {
                                     },
                                 }
                             }
+                            AccountRequest::SendTransaction { data } => {
+                                self.handle_raw_transaction(data, true)
+                            }
+                            AccountRequest::SignTransaction { data } => {
+                                self.handle_raw_transaction(data, false)
+                            }
                             AccountRequest::Payment {
                                 recipient,
                                 amount,
@@ -1490,11 +1606,21 @@ impl Future for ReadWriteAccountService {
                             } => self
                                 .payment(&recipient, amount, payment_fee, comment, with_certificate)
                                 .into(),
-                            AccountRequest::PublicPayment {
+                            AccountRequest::PaymentToPublic {
                                 recipient,
                                 amount,
                                 payment_fee,
-                            } => self.public_payment(&recipient, amount, payment_fee).into(),
+                            } => self
+                                .payment_to_public(&recipient, amount, payment_fee)
+                                .into(),
+                            AccountRequest::PaymentFromPublic {
+                                recipient,
+                                amount,
+                                payment_fee,
+                                raw,
+                            } => self
+                                .payment_from_public(&recipient, amount, payment_fee, raw)
+                                .into(),
                             AccountRequest::StakeAll { payment_fee } => {
                                 self.stake_all(payment_fee).into()
                             }
@@ -1849,6 +1975,40 @@ impl ReadOnlyAccountService {
             self.notify_balance_changed(balance)
         }
     }
+    /// Pay public utxo to some cloaked address.
+    fn payment_from_public(
+        &mut self,
+        recipient: &scc::PublicKey,
+        amount: i64,
+        payment_fee: i64,
+        raw: bool,
+    ) -> Result<RawTransaction, Error> {
+        let payment_balance = self.balance().public_payment;
+        if amount > payment_balance.available {
+            return Err(WalletError::NoEnoughPublicPayment(payment_balance.available).into());
+        }
+
+        if !raw {
+            bail!("Only raw transaction is allowed to create in ReadOnly accounts.")
+        }
+
+        let unspent_iter = self.utxo.iter().map(|(_, o)| {
+            let amount = o.amount;
+            (o.clone(), amount)
+        });
+        let (inputs, _outputs, gamma, extended_outputs, fee) = create_payment_transaction(
+            None,
+            &self.account_pkey,
+            recipient,
+            unspent_iter,
+            amount,
+            payment_fee,
+            TransactionType::Public,
+            self.max_inputs_in_tx,
+        )?;
+
+        return Ok(RawTransaction::new(inputs, extended_outputs, gamma, fee));
+    }
 }
 
 // Event loop.
@@ -1971,6 +2131,14 @@ impl Future for ReadOnlyAccountService {
                                 let balance = self.balance();
                                 AccountResponse::BalanceInfo(balance)
                             }
+                            AccountRequest::PaymentFromPublic {
+                                recipient,
+                                amount,
+                                payment_fee,
+                                raw,
+                            } => self
+                                .payment_from_public(&recipient, amount, payment_fee, raw)
+                                .into(),
                             _ => AccountResponse::Error {
                                 error: "Account is sealed".to_string(),
                             },

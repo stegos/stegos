@@ -15,9 +15,6 @@ message PaymentValue {
 
 message PublicPaymentValue {
     stegos.blockchain.PublicPaymentOutput output = 1;
-    oneof option {
-        uint32 public_address_id = 2;
-    }
 }
 
 message StakeValue {

@@ -113,7 +113,7 @@ pub enum NodeResponse {
         rx: Option<mpsc::Receiver<StatusNotification>>, // Option is needed for serde.
     },
     MacroBlockInfo(ExtendedMacroBlock),
-    MicroBlockInfo(ExtendedMicroBlock),
+    MicroBlockInfo(MicroBlock),
     SubscribedChain {
         current_epoch: u64,
         current_offset: u32,
@@ -157,7 +157,7 @@ impl From<StatusInfo> for StatusNotification {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum ChainNotification {
-    MicroBlockPrepared(ExtendedMicroBlock),
+    MicroBlockPrepared(MicroBlock),
     MicroBlockReverted(RevertedMicroBlock),
     MacroBlockCommitted(ExtendedMacroBlock),
 }
@@ -171,9 +171,6 @@ pub struct ExtendedMacroBlock {
     /// Collected information about epoch.
     #[serde(flatten)]
     pub epoch_info: EpochInfo,
-    // Transaction statuses.
-    #[serde(skip)] // internal API for wallet.
-    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
 }
 
 impl ExtendedMacroBlock {
@@ -190,8 +187,6 @@ impl ExtendedMacroBlock {
 pub struct RevertedMicroBlock {
     #[serde(flatten)]
     pub block: MicroBlock,
-    #[serde(skip)] // internal API for wallet
-    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
     #[serde(skip)] // internal API for wallet
     pub recovered_inputs: HashMap<Hash, Output>,
     #[serde(skip)] // internal API for wallet
@@ -212,17 +207,6 @@ impl RevertedMicroBlock {
 pub struct ExtendedMicroBlock {
     #[serde(flatten)]
     pub block: MicroBlock,
-    #[serde(skip)] // internal API for wallet.
-    pub transaction_statuses: HashMap<Hash, TransactionStatus>,
-}
-
-impl ExtendedMicroBlock {
-    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
-        self.block.transactions.iter().flat_map(|tx| tx.txins())
-    }
-    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
-        self.block.transactions.iter().flat_map(|tx| tx.txouts())
-    }
 }
 
 impl From<ExtendedMacroBlock> for ChainNotification {
@@ -231,8 +215,8 @@ impl From<ExtendedMacroBlock> for ChainNotification {
     }
 }
 
-impl From<ExtendedMicroBlock> for ChainNotification {
-    fn from(block: ExtendedMicroBlock) -> ChainNotification {
+impl From<MicroBlock> for ChainNotification {
+    fn from(block: MicroBlock) -> ChainNotification {
         ChainNotification::MicroBlockPrepared(block)
     }
 }

@@ -271,6 +271,14 @@ impl MicroBlock {
             canary_hashes,
         )
     }
+
+    pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
+        self.transactions.iter().flat_map(|tx| tx.txins())
+    }
+
+    pub fn outputs(&self) -> impl Iterator<Item = &Output> {
+        self.transactions.iter().flat_map(|tx| tx.txouts())
+    }
 }
 
 impl Hashable for MicroBlock {

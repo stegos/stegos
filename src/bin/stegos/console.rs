@@ -30,7 +30,7 @@ use rpassword::prompt_password_stdout;
 use rustyline as rl;
 use serde::ser::Serialize;
 use std::fmt;
-use std::io::{stdin, stdout, Write};
+use std::io::stdin;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -76,8 +76,6 @@ const RECOVERY_PROMPT: &'static str = "Enter 24-word recovery phrase: ";
 const PASSWORD_PROMPT: &'static str = "Enter password: ";
 const PASSWORD_PROMPT1: &'static str = "Enter new password: ";
 const PASSWORD_PROMPT2: &'static str = "Enter same password again: ";
-const LAST_PUBLIC_ADDRESS_ID_PROMPT: &'static str =
-    "Enter last used public address id (empty to skip): ";
 // The number of records in `show history`.
 const CONSOLE_HISTORY_LIMIT: u64 = 50;
 
@@ -930,28 +928,8 @@ impl ConsoleService {
                 }
             };
             let password = read_password_with_confirmation()?;
-            let last_public_address_id = loop {
-                if atty::is(atty::Stream::Stdin) {
-                    let stdout = stdout();
-                    let mut writer = stdout.lock();
-                    writer.write(LAST_PUBLIC_ADDRESS_ID_PROMPT.as_bytes()).ok();
-                    writer.flush().ok();
-                }
-                match read_line()? {
-                    Some(s) => match s.parse::<u32>() {
-                        Ok(r) => break r,
-                        Err(e) => {
-                            eprintln!("Invalid public address id: {}", e);
-                        }
-                    },
-                    None => break 0u32,
-                }
-            };
             let request = WalletControlRequest::RecoverAccount {
-                recovery: AccountRecovery {
-                    recovery,
-                    last_public_address_id,
-                },
+                recovery: AccountRecovery { recovery },
                 password,
             };
             self.send_wallet_control_request(request)?;

@@ -13,10 +13,7 @@ message PaymentValue {
   bool is_change = 6;
 }
 
-message PublicPaymentValue {
-  stegos.blockchain.PublicPaymentOutput output = 1;
-  oneof option { uint32 public_address_id = 2; }
-}
+message PublicPaymentValue { stegos.blockchain.PublicPaymentOutput output = 1; }
 
 message StakeValue {
   stegos.blockchain.StakeOutput output = 1;

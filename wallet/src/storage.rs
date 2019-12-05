@@ -50,7 +50,6 @@ const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
 
 // Keys in meta cf
 const EPOCH_KEY: &[u8; 9] = b"epoch_key";
-const LAST_PUBLIC_ADDRESS_ID_KEY: &[u8; 22] = b"last_public_address_id";
 
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -522,43 +521,10 @@ impl AccountDatabase {
         Ok(())
     }
 
-    /// Get the last public address ID.
-    pub fn last_public_address_id(&mut self) -> Result<u32, Error> {
-        let meta_cf = self.database.cf_handle(META).expect("cf created");
-        Ok(self
-            .database
-            .get_cf(meta_cf, LAST_PUBLIC_ADDRESS_ID_KEY)?
-            .and_then(|b| Self::u32_from_bytes(&b))
-            .unwrap_or(0))
-    }
-
-    /// Update the last public address ID.
-    pub fn update_last_public_address_id(
-        &mut self,
-        last_public_address_id: u32,
-    ) -> Result<(), Error> {
-        let meta_cf = self.database.cf_handle(META).expect("cf created");
-        let mut batch = WriteBatch::default();
-        batch.put_cf(
-            meta_cf,
-            LAST_PUBLIC_ADDRESS_ID_KEY,
-            &Self::bytes_from_u32(last_public_address_id),
-        )?;
-        self.database.write(batch)?;
-        Ok(())
-    }
-
     /// Convert timestamp to bytearray.
     fn bytes_from_timestamp(timestamp: Timestamp) -> [u8; 8] {
         let mut bytes = [0u8; 8];
         BigEndian::write_u64(&mut bytes[0..8], timestamp.into());
-        bytes
-    }
-
-    /// Convert u32 to bytearray.
-    fn bytes_from_u32(val: u32) -> [u8; 4] {
-        let mut bytes = [0u8; 4];
-        BigEndian::write_u32(&mut bytes[0..4], val);
         bytes
     }
 
@@ -574,16 +540,6 @@ impl AccountDatabase {
         if bytes.len() == 8 {
             let millis = BigEndian::read_u64(&bytes[0..8]);
             Some(millis.into())
-        } else {
-            None
-        }
-    }
-
-    /// Convert bytearray to u32.
-    fn u32_from_bytes(bytes: &[u8]) -> Option<u32> {
-        if bytes.len() == 4 {
-            let idx = BigEndian::read_u32(&bytes[0..4]);
-            Some(idx)
         } else {
             None
         }
@@ -673,7 +629,6 @@ pub struct PaymentValue {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PublicPaymentValue {
     pub output: PublicPaymentOutput,
-    pub public_address_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -839,7 +794,6 @@ impl PublicPaymentValue {
             amount: self.output.amount,
             pending_timestamp,
             recipient: self.output.recipient,
-            public_address_id: self.public_address_id,
         }
     }
 }
@@ -937,7 +891,6 @@ impl Hashable for PaymentValue {
 impl Hashable for PublicPaymentValue {
     fn hash(&self, hasher: &mut Hasher) {
         self.output.hash(hasher);
-        self.public_address_id.hash(hasher);
     }
 }
 
@@ -957,10 +910,7 @@ mod test {
         fn testing_stub(id: usize) -> LogEntry {
             let (_s, p) = make_random_keys();
             let output = PublicPaymentOutput::new(&p, id as i64);
-            let public = PublicPaymentValue {
-                output,
-                public_address_id: None,
-            };
+            let public = PublicPaymentValue { output };
 
             LogEntry::Incoming {
                 output: OutputValue::PublicPayment(public),
@@ -991,10 +941,7 @@ mod test {
             amount: 10,
             recipient: PublicKey::zero(),
         };
-        let value = PublicPaymentValue {
-            output,
-            public_address_id: None,
-        };
+        let value = PublicPaymentValue { output };
         OutputValue::PublicPayment(value)
     }
 

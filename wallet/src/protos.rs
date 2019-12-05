@@ -158,23 +158,12 @@ impl ProtoConvert for PublicPaymentValue {
     fn into_proto(&self) -> Self::Proto {
         let mut msg = account_log::PublicPaymentValue::new();
         msg.set_output(self.output.into_proto());
-        if let Some(public_address_id) = &self.public_address_id {
-            msg.set_public_address_id(*public_address_id);
-        }
         msg
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let output = PublicPaymentOutput::from_proto(proto.get_output())?;
-        let public_address_id = if proto.has_public_address_id() {
-            Some(proto.get_public_address_id())
-        } else {
-            None
-        };
-        let value = PublicPaymentValue {
-            output,
-            public_address_id,
-        };
+        let value = PublicPaymentValue { output };
 
         Ok(value)
     }

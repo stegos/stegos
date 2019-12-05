@@ -2329,8 +2329,13 @@ impl Future for NodeService {
                                     }
                                 }
                                 NodeRequest::PublicOutputs { pkey } => {
+                                    sinfo!(self, "Starting to recover account = {}", pkey);
+                                    let time = Timestamp::now();
                                     let result: Result<Vec<_>, _> =
                                         self.chain.get_public_unspent(pkey).collect();
+
+                                    let duration = Timestamp::now().duration_since(time);
+                                    sinfo!(self, "Ending recover account in = {:?}", duration);
                                     match result {
                                         Ok(list) => NodeResponse::PublicOutputs {
                                             list,

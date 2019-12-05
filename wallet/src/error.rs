@@ -57,4 +57,6 @@ pub enum WalletError {
     NothingToRestake,
     #[fail(display = "Snowball is busy")]
     SnowballBusy,
+    #[fail(display = "Accont with this id already exist: id={}", _0)]
+    DuplicateId(crate::AccountId),
 }

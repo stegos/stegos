@@ -253,10 +253,8 @@ where
                 output1_hash, recipient, amount
             );
 
-            // TODO: support public addresses.
             let extended_output = PublicPaymentValue {
                 output: output1.clone(),
-                public_address_id: None,
             };
 
             (output1.clone().into(), gamma1, extended_output.into())

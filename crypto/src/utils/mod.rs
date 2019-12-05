@@ -26,9 +26,10 @@ use crate::CryptoError;
 use bit_vec::BitVec;
 use hex;
 use ristretto_bulletproofs::RangeProof;
-use serde::{de, Deserialize, Deserializer, Serializer};
+use serde::{de, ser, Deserialize, Deserializer, Serializer};
 use std::cmp::Ordering;
 use std::fmt::Write;
+use stegos_serialization::traits::ProtoConvert;
 
 // -------------------------------------------------------------------
 // general utility functions
@@ -236,6 +237,24 @@ pub fn trim_bitvec(vec: &mut BitVec) {
             break;
         }
     }
+}
+
+pub fn deserialize_protobuf_from_hex<'de, T, D>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: ProtoConvert,
+{
+    let buffer = vec_deserialize_from_hex(deserializer)?;
+    <T as ProtoConvert>::from_buffer(&buffer).map_err(de::Error::custom)
+}
+
+pub fn serialize_protobuf_to_hex<T, S>(data: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: ProtoConvert,
+{
+    let buffer = data.into_buffer().map_err(ser::Error::custom)?;
+    vec_serialize_to_hex(&buffer, serializer)
 }
 
 pub fn vec_deserialize_from_hex<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>

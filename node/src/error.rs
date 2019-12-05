@@ -50,6 +50,11 @@ pub enum NodeTransactionError {
     TooManyOutputs(Hash, usize, usize),
     #[fail(display = "Can't process transaction - mempool is full: tx={}", _0)]
     MempoolIsFull(Hash),
+    #[fail(
+        display = "Can't process transaction - node is not synchronized: tx={}",
+        _0
+    )]
+    NotSynchronized(Hash),
 }
 
 #[derive(Debug, Fail)]

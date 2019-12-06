@@ -23,6 +23,7 @@
 
 pub mod aont;
 pub mod bulletproofs;
+#[cfg(feature = "flint")]
 pub mod dicemix;
 pub mod hash;
 pub mod keying;

@@ -19,6 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#[cfg(feature = "old_crypto")]
 use base58check::{FromBase58Check, ToBase58Check};
 use bech32::{FromBase32, ToBase32};
 use clap::{App, Arg, ArgMatches};
@@ -28,6 +29,7 @@ use stegos_crypto::scc::{Pt, PublicKey};
 
 enum Format {
     Hex,
+    #[cfg(feature = "old_crypto")]
     Base58(u8),
     Bech32(String),
 }
@@ -40,6 +42,7 @@ impl Format {
                 stegos_crypto::utils::hexstr_to_lev_u8(source, &mut bytes)?;
                 bytes.to_vec()
             }
+            #[cfg(feature = "old_crypto")]
             Format::Base58(v) => {
                 let (version, raw_bytes) = source
                     .from_base58check()
@@ -71,6 +74,7 @@ impl Format {
     fn serialize(&self, data: &PublicKey) -> Result<String, Error> {
         let res = match self {
             Format::Hex => data.to_hex(),
+            #[cfg(feature = "old_crypto")]
             Format::Base58(v) => {
                 let bytes = data.to_bytes();
                 bytes.to_base58check(*v)
@@ -95,6 +99,7 @@ fn parse_format(input: &str, args: &ArgMatches<'_>) -> Result<Format, Error> {
             });
             Ok(Format::Bech32(prefix.to_string()))
         }
+        #[cfg(feature = "old_crypto")]
         "base58" | "b58" => {
             let version = args
                 .value_of("base58-version")

@@ -25,7 +25,10 @@ use crate::hash::*;
 use crate::CryptoError;
 use std::iter::repeat;
 
-use crypto::aes;
+use aes_ctr::{
+    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
 use rand::thread_rng;
 use rand::Rng;
 
@@ -35,9 +38,8 @@ pub fn aont_encrypt(msg: &[u8]) -> Vec<u8> {
     let mut rng = thread_rng();
     let mut key = rng.gen::<[u8; 32]>();
 
-    let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, &key[..16], &key[16..]);
+    let mut aes_enc = Aes128Ctr::new_var(&key[..16], &key[16..]).unwrap();
     let nel = msg.len();
-    let cnel = nel + 16;
     let mut xmsg = Vec::<u8>::new();
     for ix in 0..nel {
         xmsg.push(msg[ix]);
@@ -45,20 +47,17 @@ pub fn aont_encrypt(msg: &[u8]) -> Vec<u8> {
     for ix in 0..16 {
         xmsg.push(CANARY[ix]);
     }
-    let mut ctxt: Vec<u8> = repeat(0).take(cnel).collect();
-    aes_enc.process(&xmsg, &mut ctxt);
-    for ix in 0..cnel {
-        xmsg[ix] = 0;
-    }
-    let h = Hash::digest(&ctxt).bits();
+    aes_enc.apply_keystream(&mut xmsg);
+
+    let h = Hash::digest(&xmsg).bits();
     for ix in 0..32 {
-        ctxt.push(h[ix] ^ key[ix]);
+        xmsg.push(h[ix] ^ key[ix]);
         key[ix] = 0;
     }
-    ctxt
+    xmsg
 }
 
-pub fn aont_decrypt(ctxt: &[u8], msg: &mut Vec<u8>) -> Result<(), CryptoError> {
+pub fn aont_decrypt(ctxt: &mut Vec<u8>) -> Result<(), CryptoError> {
     // caller must provide destination vector so that we can
     // zap intermediate result after transfer
     let tnel = ctxt.len();
@@ -69,22 +68,18 @@ pub fn aont_decrypt(ctxt: &[u8], msg: &mut Vec<u8>) -> Result<(), CryptoError> {
     for ix in 0..32 {
         key[ix] = ctxt[cnel + ix] ^ h[ix];
     }
-    let mut aes_enc = aes::ctr(aes::KeySize::KeySize128, &key[..16], &key[16..]);
-    let mut cmsg: Vec<u8> = repeat(0).take(cnel).collect();
-    aes_enc.process(&ctxt[..cnel], &mut cmsg);
+    let mut aes_enc = Aes128Ctr::new_var(&key[..16], &key[16..]).unwrap();
+    aes_enc.apply_keystream(&mut ctxt[..cnel]);
     for ix in 0..32 {
         key[ix] = 0;
+        ctxt[cnel + ix] = 0;
     }
     for ix in 0..16 {
-        if cmsg[nel + ix] != CANARY[ix] {
+        if ctxt[nel + ix] != CANARY[ix] {
             return Err(CryptoError::InvalidAontDecryption.into());
         }
     }
-    msg.clear();
-    for ix in 0..nel {
-        msg.push(cmsg[ix]);
-        cmsg[ix] = 0;
-    }
+    ctxt.resize(nel, 0);
     Ok(())
 }
 
@@ -96,13 +91,12 @@ pub mod tests {
     fn aont() {
         let msg = b"Test message";
         println!("msg = {:?}", msg);
-        let ctxt = aont_encrypt(msg);
+        let mut ctxt = aont_encrypt(msg);
         println!("ctxt = {:?}", ctxt);
-        let mut dmsg = Vec::<u8>::new();
-        aont_decrypt(&ctxt, &mut dmsg).expect("Good decryption");
-        println!("dmsg = {:?}", dmsg);
+        aont_decrypt(&mut ctxt).expect("Good decryption");
+        println!("dmsg = {:?}", ctxt);
         for ix in 0..msg.len() {
-            assert!(msg[ix] == dmsg[ix]);
+            assert!(msg[ix] == ctxt[ix]);
         }
     }
 }

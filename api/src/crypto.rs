@@ -24,8 +24,10 @@
 // SOFTWARE.
 
 use crate::error::KeyError;
-use crypto::aes::{self, KeySize};
-use crypto::symmetriccipher::SynchronousStreamCipher;
+use aes_ctr::{
+    stream_cipher::{NewStreamCipher, SyncStreamCipher},
+    Aes128Ctr,
+};
 use log::info;
 use rand::{thread_rng, RngCore};
 use std::fs;
@@ -63,19 +65,21 @@ pub fn encrypt(key: &ApiToken, plaintext: &[u8]) -> Vec<u8> {
     let mut gen = thread_rng();
     let mut nonce: Vec<u8> = repeat(0u8).take(16).collect();
     gen.fill_bytes(&mut nonce[..]);
-    let mut cipher = aes::ctr(KeySize::KeySize128, &key.0[..], &nonce);
+    let mut aes_enc = Aes128Ctr::new_var(&key.0[..], &nonce).unwrap();
+
     let mut output: Vec<u8> = repeat(0u8).take(16 + plaintext.len()).collect();
     output[..16].copy_from_slice(&nonce[..]);
-    cipher.process(&plaintext, &mut output[16..]);
+    output[16..].copy_from_slice(plaintext);
+    aes_enc.apply_keystream(&mut output[16..]);
     output
 }
 
 pub fn decrypt(key: &ApiToken, ciphertext: &[u8]) -> Vec<u8> {
     let mut iv: Vec<u8> = repeat(0u8).take(16).collect();
     iv[..].copy_from_slice(&ciphertext[..16]);
-    let mut cipher = aes::ctr(KeySize::KeySize128, &key.0[..], &iv);
-    let mut output: Vec<u8> = repeat(0u8).take(ciphertext.len() - 16).collect();
-    cipher.process(&ciphertext[16..], &mut output);
+    let mut aes_enc = Aes128Ctr::new_var(&key.0[..], &iv).unwrap();
+    let mut output: Vec<u8> = ciphertext[16..].to_vec();
+    aes_enc.apply_keystream(&mut output);
     output
 }
 

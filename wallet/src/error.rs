@@ -45,10 +45,7 @@ pub enum WalletError {
         _1, _0
     )]
     NoEnoughToStake(i64, i64),
-    #[fail(
-        display = "{} tokens available out of {}. Not enough to pay!",
-        _1, _0
-    )]
+    #[fail(display = "{} tokens available out of {}. Not enough to pay!", _1, _0)]
     NoEnoughToPay(i64, i64),
     #[fail(display = "{} tokens is not enough for a public payment!", _0)]
     NoEnoughToPayPublicly(i64),

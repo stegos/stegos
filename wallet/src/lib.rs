@@ -629,9 +629,11 @@ impl UnsealedAccountService {
     fn unstake(&mut self, amount: i64, payment_fee: i64) -> Result<TransactionInfo, Error> {
         let stake_balance = self.balance().stake;
         if amount > stake_balance.available {
-            return Err(
-                WalletError::NoEnoughToStake(stake_balance.current, stake_balance.available).into(),
-            );
+            return Err(WalletError::NoEnoughToStake(
+                stake_balance.current,
+                stake_balance.available,
+            )
+            .into());
         }
 
         let unspent_iter = self.available_stake_outputs();

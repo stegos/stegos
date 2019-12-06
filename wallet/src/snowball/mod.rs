@@ -1522,12 +1522,23 @@ impl Snowball {
         });
         sdebug!(self, "txouts hash: {}", state.result());
         // --------------------------------------------------------
-        // for debugging - ensure that all of our txouts made it
+        // It is entirely possible that two shared UTXOs will hash to the
+        // same 24-bit fragment prefix, causing them to merge into a too-long
+        // UTXO byte pre-image. That will cause two UTXOs to drop out as one
+        // is rejected for deserialization problems and the other never shows
+        // up because it was tacked onto the tail of the other pre-image.
+        //
+        // Not much we can do about that, so just detect and restart if it happens.
+        //
+        sdebug!(self, "nbr txouts = {}", all_utxos.len());
+        // check that all of my UTXOs made it across DiceMix sharing
+        if self
+            .my_utxos
+            .iter()
+            .any(|ucmt| !all_utxo_cmts.contains(ucmt))
         {
-            sdebug!(self, "nbr txouts = {}", all_utxos.len());
-            self.my_utxos
-                .iter()
-                .for_each(|ucmt| assert!(all_utxo_cmts.contains(ucmt)));
+            swarn!(self, "DiceMix Hash Collisions");
+            return self.start();
         }
         // --------------------------------------------------------
         let gamma_adj = dc_scalar_open(

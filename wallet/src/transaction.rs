@@ -339,7 +339,7 @@ where
     //
 
     trace!("Checking for available funds in the account...");
-    let fee = 2 * stake_fee;
+    let fee = payment_fee + stake_fee;
     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, max_inputs_in_tx)?;
     let inputs: Vec<Output> = inputs
         .into_iter()

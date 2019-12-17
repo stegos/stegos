@@ -48,16 +48,19 @@ pub const CHAT_MESSAGE_LIFETIME: Duration = Duration::from_secs(30 * 86400);
 // Assumed overhead of  248 bytes
 pub const BYTES_PER_MESSAGE: usize = 1739;
 pub const PTS_PER_CHAIN_LIST: usize = 54; // = Floor((BYTES_PER_MESSAGE-2)/32)
+pub const PAIRS_PER_MEMBER_LIST: usize = 27; // = Floor(PTS_PER_CHAIN_LIST / 2)
 
 enum SubMsgType {
     Evictions = 0,
-    RawMsg = 1,
+    NewMembers = 1,
+    RawMsg = 2,
 }
 
 impl SubMsgType {
     fn decoding(byte: u8) -> Self {
         match byte {
             0u8 => SubMsgType::Evictions,
+            1u8 => SubMsgType::NewMembers,
             _ => SubMsgType::RawMsg,
         }
     }
@@ -230,6 +233,8 @@ impl PartialEq<MessagePayload> for MessagePayload {
 pub enum OutgoingChatPayload {
     // payload was decrypted into a list of evicted members
     Evictions(Vec<PublicKey>),
+    // payload for telling group about new member (pkey,chain) info
+    NewMembers(Vec<(PublicKey, Hash)>),
     // payload has been decrypted into plaintext of whatever content
     // leave room for 1 byte of SubMsgType info in encrypted payload
     PlainText(Vec<u8>),
@@ -238,6 +243,7 @@ pub enum OutgoingChatPayload {
 #[derive(Clone)]
 pub enum IncomingChatPayload {
     Evictions(Vec<PublicKey>),
+    NewMembers(Vec<(PublicKey, Hash)>),
     PlainText(Vec<u8>),
     Rekeying(Hash),
 }
@@ -392,6 +398,20 @@ impl ChatMessageOutput {
                     pos += 32;
                 }
             }
+            OutgoingChatPayload::NewMembers(mems) => {
+                let ct = mems.len();
+                payload_bytes[0] = SubMsgType::NewMembers as u8;
+                payload_bytes[1] = ct as u8;
+                let mut pos = 2;
+                for (pkey, chain) in mems {
+                    let pkey_bytes = pkey.to_bytes();
+                    payload_bytes[pos..pos + 32].copy_from_slice(&pkey_bytes[..]);
+                    pos += 32;
+                    let chain_bytes = chain.to_bytes();
+                    payload_bytes[pos..pos + 32].copy_from_slice(&chain_bytes[..]);
+                    pos += 32;
+                }
+            }
         }
         let cypher_text = aes_encrypt_with_key(&payload_bytes, &key.bits());
         MessagePayload::EncryptedMessage(cypher_text)
@@ -405,6 +425,27 @@ impl ChatMessageOutput {
         }
         match SubMsgType::decoding(plain_text[0]) {
             SubMsgType::RawMsg => Ok(IncomingChatPayload::PlainText(plain_text[1..].to_vec())),
+            SubMsgType::NewMembers => {
+                let mut pairs = Vec::<(PublicKey, Hash)>::new();
+                if nb > 1 {
+                    let ct = plain_text[1] as usize;
+                    if (ct * 32 * 2 + 2) > nb {
+                        return Err(CryptoError::InvalidDecryption);
+                    }
+                    let mut pos = 2;
+                    for _ in 0..ct {
+                        let mut bytes = [0u8; 32];
+                        bytes.copy_from_slice(&plain_text[pos..pos + 32]);
+                        pos += 32;
+                        let pkey = PublicKey::try_from_bytes(&bytes)?;
+                        bytes.copy_from_slice(&plain_text[pos..pos + 32]);
+                        pos += 32;
+                        let chain = Hash::try_from_bytes(&bytes)?;
+                        pairs.push((pkey, chain));
+                    }
+                }
+                Ok(IncomingChatPayload::NewMembers(pairs))
+            }
             SubMsgType::Evictions => {
                 let mut pkeys = Vec::<PublicKey>::new();
                 if nb > 1 {

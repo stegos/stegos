@@ -549,7 +549,7 @@ fn run() -> Result<(), Error> {
         timestamp,
     )?;
 
-    let epoch = chain.epoch();
+    let epoch = chain.epoch() - 1;
     // Initialize node
     let (mut node_service, node) = NodeService::new(
         cfg.node.clone(),

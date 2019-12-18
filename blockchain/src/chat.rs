@@ -478,8 +478,8 @@ pub fn make_chat_message(
     message: &[u8],
 ) -> ChatMessageOutput {
     let mut msg = ChatMessageOutput::new();
-    let r_owner = Fr::random();
-    let r_sender = Fr::random();
+    let r_owner = detrand(owner_pkey, owner_chain);
+    let r_sender = detrand(sender_pkey, sender_chain);
     msg.cloak_recipient(owner_pkey, owner_chain, &r_owner, sender_chain);
     msg.cloak_sender(sender_pkey, sender_chain, &r_sender, owner_chain);
     let mut payload_bytes = [0u8; BYTES_PER_MESSAGE];
@@ -494,15 +494,20 @@ pub fn make_chat_message(
     msg
 }
 
-pub fn new_chain_code(pkey: &PublicKey, chain: &Hash) -> (Fr, Hash) {
-    // Use deterministic randomness based on hash of pkey, chain, random Fr
+pub fn detrand(pkey: &PublicKey, chain: &Hash) -> Fr {
+    // make a deterministic random Fr value
     let mut hasher = Hasher::new();
     pkey.hash(&mut hasher);
     chain.hash(&mut hasher);
     let x = Fr::random();
     x.hash(&mut hasher);
     let h = hasher.result().rshift(4);
-    let c = Fr::from(h);
+    Fr::from(h)
+}
+
+pub fn new_chain_code(pkey: &PublicKey, chain: &Hash) -> (Fr, Hash) {
+    // Use deterministic randomness based on hash of pkey, chain, random Fr
+    let c = detrand(pkey, chain);
     let pt = c * Pt::one();
     let chain = Hash::digest(&pt).rshift(4); // ensure fits in Fr
     (c, chain)

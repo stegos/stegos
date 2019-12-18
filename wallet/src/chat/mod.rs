@@ -25,7 +25,7 @@
 #![allow(dead_code)]
 // use stegos_blockchain::timestamp::Timestamp;
 use stegos_blockchain::{
-    make_chat_message, new_chain_code, ChatError, ChatMessageOutput, IncomingChatPayload,
+    detrand, make_chat_message, new_chain_code, ChatError, ChatMessageOutput, IncomingChatPayload,
     MessagePayload, OutgoingChatPayload, Timestamp, PAIRS_PER_MEMBER_LIST, PTS_PER_CHAIN_LIST,
 };
 use stegos_crypto::hash::Hash;
@@ -204,8 +204,8 @@ impl MemberRoster {
             msg.msg_nbr = msg_nbr;
             msg.msg_tot = msg_tot;
             msg.payload = MessagePayload::EncryptedChainCodes(cloaked_pkeys.clone());
-            let r_owner = Fr::random();
-            let r_sender = Fr::random();
+            let r_owner = detrand(owner_pkey, owner_chain);
+            let r_sender = detrand(sender_pkey, sender_chain);
             msg.cloak_recipient(owner_pkey, owner_chain, &r_owner, sender_chain);
             msg.cloak_sender(sender_pkey, sender_chain, &r_sender, owner_chain);
             msg.sign(sender_skey, sender_chain, &r_sender);
@@ -489,14 +489,14 @@ impl GroupOwnerInfo {
             msg_ser: u64,
             msg_nbr: u32,
             msg_tot: u32,
+            r_owner: Fr,
+            r_sender: Fr,
             evicted: &Vec<PublicKey>,
         ) -> ChatMessageOutput {
             let mut msg = ChatMessageOutput::new();
             msg.sequence = msg_ser;
             msg.msg_nbr = msg_nbr;
             msg.msg_tot = msg_tot;
-            let r_owner = Fr::random();
-            let r_sender = Fr::random();
             msg.cloak_recipient(
                 &info.owner_pkey,
                 &info.owner_chain,
@@ -524,14 +524,22 @@ impl GroupOwnerInfo {
             evicted.push(*m);
             mem_nbr += 1;
             if mem_nbr >= PTS_PER_CHAIN_LIST {
-                msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &evicted));
+                let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+                let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
+                msgs.push(generate_message(
+                    self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &evicted,
+                ));
                 msg_nbr += 1;
                 mem_nbr = 0;
                 evicted = Vec::<PublicKey>::new();
             }
         });
         if mem_nbr > 0 {
-            msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &evicted));
+            let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+            let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
+            msgs.push(generate_message(
+                self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &evicted,
+            ));
         }
         msgs
     }
@@ -646,14 +654,14 @@ impl GroupOwnerInfo {
             msg_ser: u64,
             msg_nbr: u32,
             msg_tot: u32,
+            r_owner: Fr,
+            r_sender: Fr,
             joined: &Vec<(PublicKey, Hash)>,
         ) -> ChatMessageOutput {
             let mut msg = ChatMessageOutput::new();
             msg.sequence = msg_ser;
             msg.msg_nbr = msg_nbr;
             msg.msg_tot = msg_tot;
-            let r_owner = Fr::random();
-            let r_sender = Fr::random();
             msg.cloak_recipient(
                 &info.owner_pkey,
                 &info.owner_chain,
@@ -681,14 +689,22 @@ impl GroupOwnerInfo {
             joined.push(pair.clone());
             mem_nbr += 1;
             if mem_nbr >= PAIRS_PER_MEMBER_LIST {
-                msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &joined));
+                let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+                let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
+                msgs.push(generate_message(
+                    self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &joined,
+                ));
                 msg_nbr += 1;
                 mem_nbr = 0;
                 joined = Vec::<(PublicKey, Hash)>::new();
             }
         });
         if mem_nbr > 0 {
-            msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &joined));
+            let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+            let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
+            msgs.push(generate_message(
+                self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &joined,
+            ));
         }
         (pairs, msgs)
     }

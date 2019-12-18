@@ -494,8 +494,15 @@ pub fn make_chat_message(
     msg
 }
 
-pub fn new_chain_code() -> (Fr, Hash) {
-    let c = Fr::random();
+pub fn new_chain_code(pkey: &PublicKey, chain: &Hash) -> (Fr, Hash) {
+    // Use deterministic randomness based on hash of pkey, chain, random Fr
+    let mut hasher = Hasher::new();
+    pkey.hash(&mut hasher);
+    chain.hash(&mut hasher);
+    let x = Fr::random();
+    x.hash(&mut hasher);
+    let h = hasher.result().rshift(4);
+    let c = Fr::from(h);
     let pt = c * Pt::one();
     let chain = Hash::digest(&pt).rshift(4); // ensure fits in Fr
     (c, chain)
@@ -513,8 +520,10 @@ mod tests {
     fn check_chat_message_size() {
         let (_owner_skey, owner_pkey) = scc::make_random_keys();
         let (sender_skey, sender_pkey) = scc::make_random_keys();
-        let (_owner_c, owner_chain) = new_chain_code();
-        let (_sender_c, sender_chain) = new_chain_code();
+        let initial_owner_chain = Hash::digest(&owner_pkey);
+        let (_owner_c, owner_chain) = new_chain_code(&owner_pkey, &initial_owner_chain);
+        let initial_sender_chain = Hash::digest(&sender_pkey);
+        let (_sender_c, sender_chain) = new_chain_code(&sender_pkey, &initial_sender_chain);
         let txt = b"This is a test";
         // Check that we can construct an encrypted group message UTXO
         let utxo = make_chat_message(

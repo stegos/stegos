@@ -26,7 +26,7 @@
 // use stegos_blockchain::timestamp::Timestamp;
 use stegos_blockchain::{
     make_chat_message, new_chain_code, ChatError, ChatMessageOutput, IncomingChatPayload,
-    MessagePayload, OutgoingChatPayload, Timestamp, PTS_PER_CHAIN_LIST,
+    MessagePayload, OutgoingChatPayload, Timestamp, PAIRS_PER_MEMBER_LIST, PTS_PER_CHAIN_LIST,
 };
 use stegos_crypto::hash::Hash;
 // use crate::{BlockchainError, OutputError};
@@ -72,7 +72,14 @@ macro_rules! serror {
 // --------------------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub struct MemberRoster(Vec<(PublicKey, Hash)>);
+pub struct GroupMember {
+    pub pkey: PublicKey,
+    pub chain: Hash,
+    pub epoch: Timestamp,
+}
+
+#[derive(Clone)]
+pub struct MemberRoster(Vec<GroupMember>);
 
 #[derive(Clone)]
 pub struct GroupOwnerInfo {
@@ -84,8 +91,8 @@ pub struct GroupOwnerInfo {
     pub owner_skey: SecretKey,
     // current chain code
     pub owner_chain: Hash,
-    // chain from immediately prior epoch
-    pub owner_prior_chain: Hash,
+    // chain for use in group rekeyings
+    pub owner_rekeying_chain: Hash,
     // list of members / subscribers
     pub members: MemberRoster,
     // list of ignored members
@@ -102,8 +109,8 @@ pub struct ChatSession {
     pub owner_pkey: PublicKey,
     // owner chain code for session
     pub owner_chain: Hash,
-    // owner chain code for immediately prior epoch
-    pub owner_prior_chain: Hash,
+    // owner chain code for rekeying purposes
+    pub owner_rekeying_chain: Hash,
     // my public key for group chat purposees
     pub my_pkey: PublicKey,
     // my secret key for group chat purposes
@@ -153,10 +160,10 @@ pub enum ChatMessage {
 impl MemberRoster {
     pub fn evict(&mut self, evicted_members: &Vec<PublicKey>) {
         // remove indicated members from our roster
-        let remaining: Vec<(PublicKey, Hash)> = self
+        let remaining: Vec<GroupMember> = self
             .0
             .iter()
-            .filter(|&(pkey, _)| !evicted_members.contains(pkey))
+            .filter(|&mem| !evicted_members.contains(&mem.pkey))
             .cloned()
             .collect();
         self.0 = remaining;
@@ -205,8 +212,8 @@ impl MemberRoster {
             msg
         }
 
-        self.0.iter().for_each(|(mpkey, _)| {
-            let cpt = *new_chain_seed * Pt::from(*mpkey);
+        self.0.iter().for_each(|mem| {
+            let cpt = *new_chain_seed * Pt::from(mem.pkey);
             cloaked_pkeys.push(cpt);
             mem_nbr += 1;
             if mem_nbr >= PTS_PER_CHAIN_LIST {
@@ -242,11 +249,11 @@ impl MemberRoster {
         msgs
     }
 
-    pub fn find_sender_chain(&self, utxo: &ChatMessageOutput) -> Option<&(PublicKey, Hash)> {
+    pub fn find_sender_chain(&self, utxo: &ChatMessageOutput) -> Option<&GroupMember> {
         // for use on general group messages
         self.0
             .iter()
-            .find(|(_pkey, chain)| utxo.sender == utxo.sender_keying_hint * Fr::from(*chain))
+            .find(|mem| utxo.sender == utxo.sender_keying_hint * Fr::from(mem.chain))
     }
 
     pub fn decrypt_chat_message(
@@ -259,10 +266,15 @@ impl MemberRoster {
         // for use on general group messages
         match self.find_sender_chain(utxo) {
             None => None,
-            Some((pkey, chain)) => {
-                let key = utxo.compute_encryption_key(owner_pkey, owner_chain, &pkey, &chain);
+            Some(member) => {
+                let key = utxo.compute_encryption_key(
+                    owner_pkey,
+                    owner_chain,
+                    &member.pkey,
+                    &member.chain,
+                );
                 match utxo.decrypt(&key, ctxt) {
-                    Ok(m) => Some((pkey.clone(), m)),
+                    Ok(m) => Some((member.pkey.clone(), m)),
                     Err(_) => None,
                 }
             }
@@ -275,7 +287,7 @@ impl MemberRoster {
         owner_chain: &Hash,
         utxo: &ChatMessageOutput,
         pts: &Vec<Pt>,
-    ) -> Option<(PublicKey, Hash)> {
+    ) -> Option<(PublicKey, Hash, Timestamp)> {
         // utxo is expected to carry cloaked chain codes
         let sf = Fr::one() / Fr::from(*skey);
         let sfk = utxo.sender_cloaking_hint / Fr::from(*owner_chain);
@@ -284,9 +296,9 @@ impl MemberRoster {
             let cg = sf * pt;
             let chain = Hash::digest(&cg).rshift(4);
             let fr = Fr::from(chain);
-            self.0.iter().find(|(pkey, _)| {
-                if utxo.sender_keying_hint == sfk * Pt::from(*pkey) {
-                    ans = Some((pkey.clone(), chain.clone()));
+            self.0.iter().find(|mem| {
+                if utxo.sender_keying_hint == sfk * Pt::from(mem.pkey) {
+                    ans = Some((mem.pkey.clone(), chain.clone(), mem.epoch));
                     true
                 } else {
                     false
@@ -307,17 +319,21 @@ impl MemberRoster {
     ) -> Option<(PublicKey, Hash)> {
         // when utxo is a rekeying message
         match self.find_sender_newchain(my_skey, owner_chain, utxo, pts) {
-            Some((pkey, chain)) => {
-                // ignore unless pkey was in our member roster
-                if self.0.iter().find(|(pk, _)| *pk == pkey).is_some() {
-                    let trimmed: Vec<(PublicKey, Hash)> = self
+            Some((pkey, chain, epoch)) => {
+                // ignore stale rekeying UTXOs
+                if utxo.created > epoch {
+                    let trimmed: Vec<GroupMember> = self
                         .0
                         .iter()
-                        .filter(|(pk, _)| *pk != pkey)
+                        .filter(|mem| mem.pkey != pkey)
                         .cloned()
                         .collect();
                     self.0 = trimmed;
-                    self.0.push((pkey, chain));
+                    self.0.push(GroupMember {
+                        pkey,
+                        chain,
+                        epoch: utxo.created,
+                    });
                     Some((pkey, chain))
                 } else {
                     None
@@ -369,6 +385,39 @@ impl MemberRoster {
             }
         }
     }
+
+    pub fn add_members_to_roster(&mut self, vec: &Vec<(PublicKey, Hash)>, epoch: Timestamp) {
+        let mut members = Vec::<GroupMember>::new();
+        for (pkey, chain) in vec.iter() {
+            // the following test weeds out duplicate entries by pkey
+            if !members
+                .clone()
+                .iter()
+                .find(|mem| mem.pkey == *pkey)
+                .is_some()
+            {
+                members.push(GroupMember {
+                    pkey: pkey.clone(),
+                    chain: chain.clone(),
+                    epoch,
+                });
+            }
+        }
+        for mem in self.0.iter() {
+            // if we already have a member our old roster,
+            // then delete our existing entry, and accept owner's suggestion
+            // as definitive.
+            if !members
+                .clone()
+                .iter()
+                .find(|existing| mem.pkey == existing.pkey)
+                .is_some()
+            {
+                members.push(mem.clone());
+            }
+        }
+        self.0 = members;
+    }
 }
 
 impl ChannelOwnerInfo {
@@ -412,13 +461,11 @@ impl GroupOwnerInfo {
         // all for use in a Transaction
         self.members.evict(evicted_members);
         let mut msgs = self.generate_eviction_notice(evicted_members);
-        let old_chain = self.owner_chain;
         let (chain_seed, new_chain) = new_chain_code();
         self.owner_chain = new_chain;
-        self.owner_prior_chain = old_chain.clone();
         let mut more_msgs = self.members.generate_rekeying_messages(
             &self.owner_pkey,
-            &old_chain,
+            &self.owner_rekeying_chain,
             &self.owner_skey,
             &self.owner_pkey,
             &self.owner_chain,
@@ -489,14 +536,20 @@ impl GroupOwnerInfo {
         msgs
     }
 
-    fn record_utxo(&mut self, chat: &mut Chat, utxo: &ChatMessageOutput, sender: PublicKey) {
+    fn record_utxo(
+        &mut self,
+        chat: &mut Chat,
+        utxo: &ChatMessageOutput,
+        owner_chain: &Hash,
+        sender: PublicKey,
+    ) {
         match self.members.find_sender_chain(utxo) {
-            Some((sender, sender_chain)) => {
+            Some(member) => {
                 chat.my_utxos.push(UtxoInfo {
                     id: Hash::digest(utxo),
                     created: utxo.created,
-                    keying: utxo.recipient_cloaking_hint * Fr::from(self.owner_chain)
-                        / Fr::from(*sender_chain)
+                    keying: utxo.recipient_cloaking_hint * Fr::from(*owner_chain)
+                        / Fr::from(member.chain)
                         * Fr::from(self.owner_skey),
                 });
             }
@@ -521,7 +574,7 @@ impl GroupOwnerInfo {
             None => ChatMessage::None,
             Some((sender, msg)) => {
                 // All chat messages belong to me...
-                self.record_utxo(chat, utxo, sender);
+                self.record_utxo(chat, utxo, owner_chain, sender);
                 if sender == self.owner_pkey {
                     // was my own message
                     ChatMessage::None
@@ -533,6 +586,11 @@ impl GroupOwnerInfo {
                         }
                         IncomingChatPayload::Rekeying(chain) => {
                             // rekeying was already handled by side effect of get_decrypted_message
+                            ChatMessage::None
+                        }
+                        IncomingChatPayload::NewMembers(_) => {
+                            // only I ever send these messages, when legitimate.
+                            // if someone else sent one of these, just ignore it.
                             ChatMessage::None
                         }
                         IncomingChatPayload::PlainText(m) => ChatMessage::Text((sender, m)),
@@ -556,8 +614,83 @@ impl GroupOwnerInfo {
     fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Hash {
         match msg.payload {
             MessagePayload::EncryptedMessage(_) => self.owner_chain,
-            MessagePayload::EncryptedChainCodes(_) => self.owner_prior_chain,
+            MessagePayload::EncryptedChainCodes(_) => self.owner_rekeying_chain,
         }
+    }
+
+    // GUI Alert -- call this after you have a list of one or more new member PublicKeys.
+    pub fn add_new_members(
+        &mut self,
+        new_members: Vec<PublicKey>,
+    ) -> (Vec<(PublicKey, Hash)>, Vec<ChatMessageOutput>) {
+        // Accept a list of new member PublicKeys
+        // Add them with new chain codes to our own roster,
+        // then send one or more NewMember messages to the group
+        let mut pairs = Vec::<(PublicKey, Hash)>::new();
+        for pkey in new_members.iter() {
+            let (_, chain) = new_chain_code();
+            pairs.push((pkey.clone(), chain.clone()));
+        }
+        let epoch = Timestamp::now();
+        self.members.add_members_to_roster(&mut pairs, epoch);
+
+        let msg_ser: u64 = rand::thread_rng().gen();
+        let msg_tot = ((pairs.len() + PAIRS_PER_MEMBER_LIST - 1) / PAIRS_PER_MEMBER_LIST) as u32;
+        let mut msg_nbr = 0u32;
+        let mut mem_nbr = 0;
+        let mut msgs = Vec::<ChatMessageOutput>::new();
+        let mut joined = Vec::<(PublicKey, Hash)>::new();
+
+        fn generate_message(
+            info: &GroupOwnerInfo,
+            msg_ser: u64,
+            msg_nbr: u32,
+            msg_tot: u32,
+            joined: &Vec<(PublicKey, Hash)>,
+        ) -> ChatMessageOutput {
+            let mut msg = ChatMessageOutput::new();
+            msg.sequence = msg_ser;
+            msg.msg_nbr = msg_nbr;
+            msg.msg_tot = msg_tot;
+            let r_owner = Fr::random();
+            let r_sender = Fr::random();
+            msg.cloak_recipient(
+                &info.owner_pkey,
+                &info.owner_chain,
+                &r_owner,
+                &info.owner_chain,
+            );
+            msg.cloak_sender(
+                &info.owner_pkey,
+                &info.owner_chain,
+                &r_sender,
+                &info.owner_chain,
+            );
+            let key = msg.compute_encryption_key(
+                &info.owner_pkey,
+                &info.owner_chain,
+                &info.owner_pkey,
+                &info.owner_chain,
+            );
+            msg.payload = msg.encrypt(&OutgoingChatPayload::NewMembers(joined.clone()), &key);
+            msg.sign(&info.owner_skey, &info.owner_chain, &r_sender);
+            msg
+        }
+
+        pairs.iter().for_each(|pair| {
+            joined.push(pair.clone());
+            mem_nbr += 1;
+            if mem_nbr >= PAIRS_PER_MEMBER_LIST {
+                msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &joined));
+                msg_nbr += 1;
+                mem_nbr = 0;
+                joined = Vec::<(PublicKey, Hash)>::new();
+            }
+        });
+        if mem_nbr > 0 {
+            msgs.push(generate_message(self, msg_ser, msg_nbr, msg_tot, &joined));
+        }
+        (pairs, msgs)
     }
 }
 
@@ -577,7 +710,7 @@ impl ChatSession {
         self.my_chain = new_chain;
         self.members.generate_rekeying_messages(
             &self.owner_pkey,
-            &self.owner_chain,
+            &self.owner_rekeying_chain,
             &self.my_skey,
             &self.my_pkey,
             &self.my_chain,
@@ -609,7 +742,6 @@ impl ChatSession {
                         IncomingChatPayload::Evictions(evicted_members) => {
                             if sender == self.owner_pkey {
                                 // form and send a transaction with rekeying messages0
-                                self.owner_prior_chain = self.owner_chain;
                                 let rekeying_msgs = self.evict_members(&evicted_members);
                                 ChatMessage::Rekeying(rekeying_msgs)
                             } else {
@@ -619,6 +751,13 @@ impl ChatSession {
                         }
                         IncomingChatPayload::Rekeying(_) => {
                             // already handled
+                            ChatMessage::None
+                        }
+                        IncomingChatPayload::NewMembers(vec) => {
+                            if sender == self.owner_pkey {
+                                // just ignore if from anyone other than group owner
+                                self.members.add_members_to_roster(&vec, utxo.created);
+                            }
                             ChatMessage::None
                         }
                         IncomingChatPayload::PlainText(m) => ChatMessage::Text((sender, m)),
@@ -642,7 +781,7 @@ impl ChatSession {
     fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Hash {
         match msg.payload {
             MessagePayload::EncryptedMessage(_) => self.owner_chain,
-            MessagePayload::EncryptedChainCodes(_) => self.owner_prior_chain,
+            MessagePayload::EncryptedChainCodes(_) => self.owner_rekeying_chain,
         }
     }
 }
@@ -676,6 +815,8 @@ impl ChannelSession {
 
                     // ignore these - they shouldn't exist for Channels
                     IncomingChatPayload::Evictions(_) => None,
+                    // ignore these - they shouldn't exist for Channels
+                    IncomingChatPayload::NewMembers(_) => None,
                     // no reason for channel owner to ever switch chain codes
                     IncomingChatPayload::Rekeying(_) => unreachable!(),
                 }
@@ -831,6 +972,8 @@ impl Chat {
     }
 
     pub fn add_subscribed_group(&mut self, info: ChatSession) -> Result<(), ChatError> {
+        // the ChatSession contains the current member roster and my initial chain code
+        // (assigned initially by group owner)
         if self.is_unique_id(info.group_id.clone()) {
             self.subscribed_groups.push(info);
             Ok(())
@@ -845,30 +988,6 @@ impl Chat {
             Ok(())
         } else {
             Err(ChatError::DuplicateID)
-        }
-    }
-
-    pub fn subscribe_to_group(
-        &mut self,
-        info: ChatSession,
-    ) -> Result<Vec<ChatMessageOutput>, ChatError> {
-        // Should only be called on initial joining.
-        // Returns a vector of rekeying message UTXOs for caller
-        // to package up into a Transaction.
-        match self.add_subscribed_group(info.clone()) {
-            Ok(_) => {
-                // other members (pkey, chain) should already be known to us in info
-                let pos = self
-                    .subscribed_groups
-                    .iter()
-                    .position(|g| g.group_id == info.group_id)
-                    .expect("Can't happen");
-                let mut grp = self.subscribed_groups.remove(pos);
-                let msgs = grp.tell_rekeying();
-                self.subscribed_groups.push(grp);
-                Ok(msgs)
-            }
-            Err(e) => Err(e),
         }
     }
 
@@ -1120,7 +1239,7 @@ impl Chat {
         let owner_hint = msg.recipient_keying_hint;
         let mut owner_chain = Hash::zero();
         // Look for messages from owned groups.
-        // Rekeying messages will arrive on prior chain code.
+        // Rekeying messages will arrive on rekeying chain code.
         if let Some(pos) = self.owned_groups.iter().position(|g| {
             owner_chain = g.get_owner_chain(msg);
             owner_pt == Fr::from(owner_chain) * owner_hint
@@ -1130,7 +1249,7 @@ impl Chat {
             self.owned_groups.push(info);
 
         // Look for incoming messages on subscribed groups.
-        // Rekeying messages will arrive on prior chain code.
+        // Rekeying messages will arrive on rekeying chain code.
         } else if let Some(pos) = self.subscribed_groups.iter().position(|g| {
             owner_chain = g.get_owner_chain(msg);
             owner_pt == Fr::from(owner_chain) * owner_hint

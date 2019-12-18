@@ -461,7 +461,7 @@ impl GroupOwnerInfo {
         // all for use in a Transaction
         self.members.evict(evicted_members);
         let mut msgs = self.generate_eviction_notice(evicted_members);
-        let (chain_seed, new_chain) = new_chain_code();
+        let (chain_seed, new_chain) = new_chain_code(&self.owner_pkey, &self.owner_chain);
         self.owner_chain = new_chain;
         let mut more_msgs = self.members.generate_rekeying_messages(
             &self.owner_pkey,
@@ -628,7 +628,7 @@ impl GroupOwnerInfo {
         // then send one or more NewMember messages to the group
         let mut pairs = Vec::<(PublicKey, Hash)>::new();
         for pkey in new_members.iter() {
-            let (_, chain) = new_chain_code();
+            let (_, chain) = new_chain_code(&pkey, &self.owner_chain);
             pairs.push((pkey.clone(), chain.clone()));
         }
         let epoch = Timestamp::now();
@@ -706,7 +706,7 @@ impl ChatSession {
 
     pub fn tell_rekeying(&mut self) -> Vec<ChatMessageOutput> {
         // Make one or more Rekeying messages for a Transaction.
-        let (chain_seed, new_chain) = new_chain_code();
+        let (chain_seed, new_chain) = new_chain_code(&self.my_pkey, &self.my_chain);
         self.my_chain = new_chain;
         self.members.generate_rekeying_messages(
             &self.owner_pkey,

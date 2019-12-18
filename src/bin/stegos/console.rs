@@ -1078,14 +1078,14 @@ impl ConsoleService {
                 debug!("ChainNameResolver::Resolving");
                 match self.client.poll().unwrap() {
                     Async::Ready(response) => {
-                        let chain = if let Response {
-                            kind: ResponseKind::NodeResponse(NodeResponse::ChainName { name }),
-                            ..
-                        } = response
-                        {
-                            name
-                        } else {
-                            panic!("Wrong reponse to chain name request = {:?}", response)
+                        let chain = match response.unwrap() {
+                            Response {
+                                kind: ResponseKind::NodeResponse(NodeResponse::ChainName { name }),
+                                ..
+                            } => name,
+                            response => {
+                                panic!("Wrong reponse to chain name request = {:?}", response)
+                            }
                         };
                         debug!("Initialising cli for chain = {}", chain);
                         stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
@@ -1112,7 +1112,7 @@ impl Future for ConsoleService {
         loop {
             match self.client.poll() {
                 Ok(Async::Ready(response)) => {
-                    self.on_response(response);
+                    self.on_response(response.unwrap());
                 }
                 Ok(Async::NotReady) => {
                     break;

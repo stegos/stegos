@@ -412,6 +412,9 @@ impl ProtoConvert for PaymentPayloadData {
             PaymentPayloadData::ContentHash(ref h) => {
                 msg.set_hash(h.into_proto());
             }
+            PaymentPayloadData::Data(ref d) => {
+                msg.set_data(d.clone());
+            }
         }
         msg
     }
@@ -424,6 +427,9 @@ impl ProtoConvert for PaymentPayloadData {
             Some(blockchain::PaymentPayloadData_oneof_data::hash(ref msg)) => {
                 let hash = Hash::from_proto(msg)?;
                 PaymentPayloadData::ContentHash(hash)
+            }
+            Some(blockchain::PaymentPayloadData_oneof_data::data(ref msg)) => {
+                PaymentPayloadData::Data(msg.clone())
             }
             None => {
                 return Err(

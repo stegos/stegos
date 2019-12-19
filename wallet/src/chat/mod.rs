@@ -26,7 +26,8 @@
 // use stegos_blockchain::timestamp::Timestamp;
 use stegos_blockchain::{
     detrand, make_chat_message, new_chain_code, ChatError, ChatMessageOutput, IncomingChatPayload,
-    MessagePayload, OutgoingChatPayload, Timestamp, PAIRS_PER_MEMBER_LIST, PTS_PER_CHAIN_LIST,
+    MessagePayload, OutgoingChatPayload, PaymentOutput, PaymentPayloadData, Timestamp,
+    PAIRS_PER_MEMBER_LIST, PAYMENT_DATA_LEN, PTS_PER_CHAIN_LIST,
 };
 use stegos_crypto::hash::Hash;
 // use crate::{BlockchainError, OutputError};
@@ -247,6 +248,10 @@ impl MemberRoster {
             ));
         };
         msgs
+    }
+
+    pub fn find_member(&self, pkey: &PublicKey) -> Option<&GroupMember> {
+        self.0.iter().find(|mem| *pkey == mem.pkey)
     }
 
     pub fn find_sender_chain(&self, utxo: &ChatMessageOutput) -> Option<&GroupMember> {
@@ -627,15 +632,15 @@ impl GroupOwnerInfo {
     }
 
     // GUI Alert -- call this after you have a list of one or more new member PublicKeys.
-    pub fn add_new_members(
-        &mut self,
-        new_members: Vec<PublicKey>,
-    ) -> (Vec<(PublicKey, Hash)>, Vec<ChatMessageOutput>) {
+    pub fn add_new_members(&mut self, new_members: Vec<PublicKey>) -> Vec<NewMemberMessage> {
         // Accept a list of new member PublicKeys
         // Add them with new chain codes to our own roster,
         // then send one or more NewMember messages to the group
+        let mut new_mems = new_members.clone();
+        new_mems.sort();
+        new_mems.dedup();
         let mut pairs = Vec::<(PublicKey, Hash)>::new();
-        for pkey in new_members.iter() {
+        for pkey in new_mems.iter() {
             let (_, chain) = new_chain_code(&pkey, &self.owner_chain);
             pairs.push((pkey.clone(), chain.clone()));
         }
@@ -646,7 +651,7 @@ impl GroupOwnerInfo {
         let msg_tot = ((pairs.len() + PAIRS_PER_MEMBER_LIST - 1) / PAIRS_PER_MEMBER_LIST) as u32;
         let mut msg_nbr = 0u32;
         let mut mem_nbr = 0;
-        let mut msgs = Vec::<ChatMessageOutput>::new();
+        let mut msgs = Vec::<NewMemberMessage>::new();
         let mut joined = Vec::<(PublicKey, Hash)>::new();
 
         fn generate_message(
@@ -657,7 +662,7 @@ impl GroupOwnerInfo {
             r_owner: Fr,
             r_sender: Fr,
             joined: &Vec<(PublicKey, Hash)>,
-        ) -> ChatMessageOutput {
+        ) -> NewMemberMessage {
             let mut msg = ChatMessageOutput::new();
             msg.sequence = msg_ser;
             msg.msg_nbr = msg_nbr;
@@ -682,7 +687,7 @@ impl GroupOwnerInfo {
             );
             msg.payload = msg.encrypt(&OutgoingChatPayload::NewMembers(joined.clone()), &key);
             msg.sign(&info.owner_skey, &info.owner_chain, &r_sender);
-            msg
+            NewMemberMessage::GroupMessage(msg)
         }
 
         pairs.iter().for_each(|pair| {
@@ -706,9 +711,181 @@ impl GroupOwnerInfo {
                 self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &joined,
             ));
         }
-        (pairs, msgs)
+        for mem in new_mems.iter() {
+            let mut utxos = self.new_member_info_private_msg(mem);
+            msgs.append(&mut utxos);
+        }
+        msgs
+    }
+
+    fn new_member_info_private_msg(&self, mem: &PublicKey) -> Vec<NewMemberMessage> {
+        let mut msgs = Vec::<NewMemberMessage>::new();
+        let grpinfo = self.members.find_member(mem).expect("ok");
+        let num_members = self.members.0.len();
+        let initial_count = if num_members > 11 { 11 } else { num_members };
+        let initial_list = self.members.0.clone()[0..initial_count]
+            .iter()
+            .map(|g| (g.pkey.clone(), g.chain.clone()))
+            .collect();
+        let info = PrivateMessage::NewMemberInfo(NewMemberInfo {
+            owner_pkey: self.owner_pkey.clone(),
+            owner_chain: self.owner_chain.clone(),
+            rekeying_chain: self.owner_rekeying_chain.clone(),
+            my_initial_chain: grpinfo.chain.clone(),
+            num_members: num_members as u32,
+            members: initial_list,
+        });
+        let raw_info = info.encode().expect("ok");
+        let data = PaymentPayloadData::Data(raw_info);
+        let msg_stuff =
+            PaymentOutput::with_payload(Some(&self.owner_skey), mem, 0, data).expect("okay");
+        msgs.push(NewMemberMessage::PrivateMessage(msg_stuff));
+
+        if num_members > 11 {
+            let mut index = 11;
+            while index < num_members {
+                let remaining = self.members.0.len() - index;
+                let nel = if remaining > 13 { 13 } else { remaining };
+                let sublist = self.members.0.clone()[index..index + nel]
+                    .iter()
+                    .map(|g| (g.pkey.clone(), g.chain.clone()))
+                    .collect();
+                let info = PrivateMessage::NewMemberInfoCont(NewMemberInfoCont {
+                    owner_pkey: self.owner_pkey.clone(),
+                    num_members: num_members as u32,
+                    member_index: index as u32,
+                    members: sublist,
+                });
+                let raw_info = info.encode().expect("ok");
+                let data = PaymentPayloadData::Data(raw_info);
+                let msg_stuff = PaymentOutput::with_payload(Some(&self.owner_skey), mem, 0, data)
+                    .expect("okay");
+                msgs.push(NewMemberMessage::PrivateMessage(msg_stuff));
+                index += nel;
+            }
+        }
+        msgs
     }
 }
+
+#[derive(Clone)]
+pub enum NewMemberMessage {
+    GroupMessage(ChatMessageOutput),
+    PrivateMessage((PaymentOutput, Fr, Fr)),
+}
+
+#[derive(Clone)]
+pub struct NewMemberInfo {
+    // Payload is max of 882 bytes, including the initial type prefix byte
+    // Owner PubKey identifies which group
+    pub owner_pkey: PublicKey,
+    // current keying
+    pub owner_chain: Hash,
+    // emergency rekeying chain
+    pub rekeying_chain: Hash,
+    // my initial chain code
+    pub my_initial_chain: Hash,
+    // total number of members, including self,
+    pub num_members: u32,
+    // members [0..11) (Pubkey, Chain)
+    pub members: Vec<(PublicKey, Hash)>,
+}
+
+#[derive(Clone)]
+pub struct NewMemberInfoCont {
+    owner_pkey: PublicKey,
+    num_members: u32,
+    member_index: u32,
+    // up to 13 more members (Pubkey, chain)
+    members: Vec<(PublicKey, Hash)>,
+}
+
+#[derive(Clone)]
+pub enum PrivateMessage {
+    NewMemberInfo(NewMemberInfo),
+    NewMemberInfoCont(NewMemberInfoCont),
+    OtherData(Vec<u8>),
+}
+
+impl PrivateMessage {
+    pub fn encode(&self) -> Result<Vec<u8>, ChatError> {
+        let mut enc = [0u8; PAYMENT_DATA_LEN - 2];
+        match self {
+            PrivateMessage::NewMemberInfo(data) => {
+                if data.members.len() > 11 {
+                    return Err(ChatError::DataTooLong);
+                }
+                enc[0] = 0u8;
+                let bytes = data.owner_pkey.to_bytes();
+                enc[1..33].copy_from_slice(&bytes[..]);
+                let bytes = data.owner_chain.to_bytes();
+                enc[33..65].copy_from_slice(&bytes[..]);
+                let bytes = data.rekeying_chain.to_bytes();
+                enc[65..97].copy_from_slice(&bytes[..]);
+                let bytes = data.my_initial_chain.to_bytes();
+                enc[97..129].copy_from_slice(&bytes[..]);
+                let mut bytes = [0u8; 4];
+                let mut val = data.num_members;
+                for ix in 0..4 {
+                    bytes[ix] = (val & 0xff) as u8;
+                    val >>= 8;
+                }
+                enc[129..133].copy_from_slice(&bytes[..]);
+                let mut pos = 133;
+                for (pkey, chain) in data.members.iter() {
+                    let bytes = pkey.to_bytes();
+                    enc[pos..pos + 32].copy_from_slice(&bytes[..]);
+                    pos += 32;
+                    let bytes = chain.to_bytes();
+                    enc[pos..pos + 32].copy_from_slice(&bytes[..]);
+                    pos += 32;
+                }
+                Ok(enc.to_vec())
+            }
+            PrivateMessage::NewMemberInfoCont(data) => {
+                if data.members.len() > 13 {
+                    return Err(ChatError::DataTooLong);
+                }
+                enc[0] = 1u8;
+                let bytes = data.owner_pkey.to_bytes();
+                enc[1..33].copy_from_slice(&bytes[..]);
+                let mut bytes = [0u8; 4];
+                let mut val = data.num_members;
+                for ix in 0..4 {
+                    bytes[ix] = (val & 0xff) as u8;
+                    val >>= 8;
+                }
+                enc[33..37].copy_from_slice(&bytes[..]);
+                let mut val = data.member_index;
+                for ix in 0..4 {
+                    bytes[ix] = (val & 0xff) as u8;
+                    val >>= 8;
+                }
+                enc[37..41].copy_from_slice(&bytes[..]);
+                let mut pos = 41;
+                for (pkey, chain) in data.members.iter() {
+                    let bytes = pkey.to_bytes();
+                    enc[pos..pos + 32].copy_from_slice(&bytes[..]);
+                    pos += 32;
+                    let bytes = chain.to_bytes();
+                    enc[pos..pos + 32].copy_from_slice(&bytes[..]);
+                    pos += 32;
+                }
+                Ok(enc.to_vec())
+            }
+            PrivateMessage::OtherData(data) => {
+                if data.len() > PAYMENT_DATA_LEN - 3 {
+                    return Err(ChatError::DataTooLong);
+                }
+                enc[0] = 2u8;
+                enc[1..data.len() + 1].copy_from_slice(&data[..]);
+                Ok(enc.to_vec())
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------
 
 impl ChatSession {
     // one of these for every member of a group, except owner

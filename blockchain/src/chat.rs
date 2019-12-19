@@ -112,6 +112,8 @@ pub enum ChatError {
     DuplicateID,
     #[fail(display = "Invalid Group or Channel ID: {}", _0)]
     InvalidGroup(String),
+    #[fail(display = "Private Message Data Too Long")]
+    DataTooLong,
 }
 
 impl Hashable for ChatMessageOutput {

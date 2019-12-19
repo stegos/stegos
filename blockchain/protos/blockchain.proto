@@ -8,6 +8,7 @@ message PaymentPayloadData {
     oneof data {
         stegos.crypto.Hash hash = 1;
         string comment = 2;
+        bytes data = 3;
     }
 }
 

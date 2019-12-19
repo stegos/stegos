@@ -221,6 +221,8 @@ pub enum PaymentPayloadData {
     Comment(String),
     /// A hash of secret content.
     ContentHash(Hash),
+    // binary data of len <= PAYLOAD_DATA_LEN - 2 bytes
+    Data(Vec<u8>),
 }
 
 impl Hashable for PaymentPayloadData {
@@ -229,6 +231,7 @@ impl Hashable for PaymentPayloadData {
         match self {
             PaymentPayloadData::Comment(s) => s.hash(hasher),
             PaymentPayloadData::ContentHash(h) => h.hash(hasher),
+            PaymentPayloadData::Data(d) => d.hash(hasher),
         }
     }
 }
@@ -238,6 +241,7 @@ impl PaymentPayloadData {
         match self {
             PaymentPayloadData::Comment(_) => 0,
             PaymentPayloadData::ContentHash(_) => 1,
+            PaymentPayloadData::Data(_) => 2,
         }
     }
 
@@ -252,6 +256,11 @@ impl PaymentPayloadData {
                 }
             }
             PaymentPayloadData::ContentHash(_hash) => {}
+            PaymentPayloadData::Data(data) => {
+                if data.len() > PAYMENT_DATA_LEN - 2 {
+                    return Err(OutputError::DataIsTooLong(PAYMENT_DATA_LEN - 2, data.len()).into());
+                }
+            }
         }
         Ok(())
     }
@@ -344,6 +353,11 @@ impl PaymentPayload {
                 let data_bytes = &hash.to_bytes();
                 payload[pos..pos + data_bytes.len()].copy_from_slice(data_bytes);
                 pos += data_bytes.len();
+            }
+            PaymentPayloadData::Data(data) => {
+                assert!(data.len() <= PAYMENT_DATA_LEN - 2);
+                payload[pos..pos + data.len()].copy_from_slice(data);
+                pos += data.len();
             }
         }
         // The rest is zeros.

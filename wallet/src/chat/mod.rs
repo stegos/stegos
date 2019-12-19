@@ -524,7 +524,7 @@ impl GroupOwnerInfo {
             evicted.push(*m);
             mem_nbr += 1;
             if mem_nbr >= PTS_PER_CHAIN_LIST {
-                let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+                let r_owner = detrand(&self.owner_pkey, &self.owner_chain);
                 let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
                 msgs.push(generate_message(
                     self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &evicted,
@@ -535,7 +535,7 @@ impl GroupOwnerInfo {
             }
         });
         if mem_nbr > 0 {
-            let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+            let r_owner = detrand(&self.owner_pkey, &self.owner_chain);
             let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
             msgs.push(generate_message(
                 self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &evicted,
@@ -689,7 +689,7 @@ impl GroupOwnerInfo {
             joined.push(pair.clone());
             mem_nbr += 1;
             if mem_nbr >= PAIRS_PER_MEMBER_LIST {
-                let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+                let r_owner = detrand(&self.owner_pkey, &self.owner_chain);
                 let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
                 msgs.push(generate_message(
                     self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &joined,
@@ -700,7 +700,7 @@ impl GroupOwnerInfo {
             }
         });
         if mem_nbr > 0 {
-            let r_owner = detrand(&self.owner_pkey, &self.owner_rekeying_chain);
+            let r_owner = detrand(&self.owner_pkey, &self.owner_chain);
             let r_sender = detrand(&self.owner_pkey, &self.owner_chain);
             msgs.push(generate_message(
                 self, msg_ser, msg_nbr, msg_tot, r_owner, r_sender, &joined,

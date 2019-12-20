@@ -162,8 +162,6 @@ struct UnsealedAccountService {
     pending_payments: HashMap<Hash, PendingOutput>,
     /// Persistent part of the state.
     database: AccountDatabase,
-    /// Map of public addresses to address id.
-    public_addresses: HashMap<scc::PublicKey, u32>,
 
     /// Network API (shared).
     network: Network,
@@ -224,34 +222,13 @@ impl UnsealedAccountService {
 
         debug!("Loading account {}", account_pkey);
         // TODO: add proper handling for I/O errors.
-        let (mut database, epoch) = AccountDatabase::open(&database_dir);
-        let last_public_address_id = database.last_public_address_id().expect("I/O error");
-        debug!(
-            "Opened database: epoch={}, last_public_address_id={}",
-            epoch, last_public_address_id
-        );
+        let (database, epoch) = AccountDatabase::open(&database_dir);
+        debug!("Opened database: epoch={}", epoch);
         let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
         let current_epoch_balance_changed = false;
-
-        // Recover public addresses.
-        let mut public_addresses: HashMap<scc::PublicKey, u32> = HashMap::new();
-        for public_address_id in 1..=last_public_address_id {
-            match account_pkey.subkey(public_address_id) {
-                Ok(public_address) => {
-                    debug!(
-                        "Adding public address #{} {}",
-                        public_address_id,
-                        public_address.to_string()
-                    );
-                    let prev = public_addresses.insert(public_address, public_address_id);
-                    assert!(prev.is_none());
-                }
-                Err(_e) => continue, // skip this account_id.
-            }
-        }
 
         info!("Loaded account {}", account_pkey);
         UnsealedAccountService {
@@ -262,7 +239,6 @@ impl UnsealedAccountService {
             network_skey,
             network_pkey,
             database,
-            public_addresses,
             epoch,
             current_epoch_balance_changed,
             facilitator_pkey,
@@ -279,26 +255,6 @@ impl UnsealedAccountService {
             events,
             chain_notifications,
             transaction_response,
-        }
-    }
-
-    /// Create a new address.
-    fn new_public_address(&mut self) -> Result<(scc::PublicKey, u32), Error> {
-        let mut last_public_address_id = self.database.last_public_address_id()?;
-        loop {
-            last_public_address_id += 1;
-            match self.account_pkey.subkey(last_public_address_id) {
-                Ok(public_address) => {
-                    self.database
-                        .update_last_public_address_id(last_public_address_id)?;
-                    let prev = self
-                        .public_addresses
-                        .insert(public_address.clone(), last_public_address_id);
-                    assert!(prev.is_none());
-                    break Ok((public_address, last_public_address_id));
-                }
-                Err(_e) => continue,
-            }
         }
     }
 
@@ -378,13 +334,13 @@ impl UnsealedAccountService {
     /// Returns an iterator over available public payment outputs.
     fn available_public_payment_outputs<'a>(
         &'a self,
-    ) -> impl Iterator<Item = (PublicPaymentOutput, Option<u32>)> + 'a {
+    ) -> impl Iterator<Item = PublicPaymentOutput> + 'a {
         self.database
             .iter_unspent()
             .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
             .filter(move |(h, _)| self.pending_payments.get(h).is_none())
             .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
-            .map(|(_, v)| (v.output, v.public_address_id))
+            .map(|(_, v)| v.output)
     }
 
     /// Returns an iterator over available stake outputs.
@@ -711,7 +667,7 @@ impl UnsealedAccountService {
         let mut txouts: Vec<Output> = Vec::new();
 
         let mut outputs: Vec<_> = self.available_public_payment_outputs().collect();
-        outputs.sort_by_key(|o| o.0.amount);
+        outputs.sort_by_key(|o| o.amount);
         if outputs.len() > self.max_inputs_in_tx {
             warn!(
                 "Found too many public outputs, \
@@ -724,33 +680,16 @@ impl UnsealedAccountService {
         // Get inputs.
         //
         let mut amount = 0;
-        for (input, address_id) in outputs.into_iter().rev().take(self.max_inputs_in_tx) {
+        for input in outputs.into_iter().rev().take(self.max_inputs_in_tx) {
             let input_hash = Hash::digest(&input);
             debug!(
                 "Using PublicUTXO: utxo={}, amount={}",
                 input_hash, input.amount
             );
-            let skey = match address_id {
-                Some(address_id) => {
-                    // PublicPayment to a subkey.
-                    let pkey = self
-                        .account_pkey
-                        .subkey(address_id)
-                        .expect("address id is valid");
-                    assert_eq!(input.recipient, pkey, "corrupted UTXO database");
-                    self.account_skey
-                        .subkey(address_id)
-                        .expect("address id is valid")
-                }
-                None => {
-                    // PublicPayment to the primary key.
-                    self.account_skey.clone()
-                }
-            };
             amount += input.amount;
             txins.push(input_hash);
             txins_expanded.push(input.into());
-            sign_skey += scc::Fr::from(skey);
+            sign_skey += scc::Fr::from(self.account_skey);
         }
         if amount < fee {
             // Don't have enough PublicPaymentUTXO to pay `fee`.
@@ -845,12 +784,8 @@ impl UnsealedAccountService {
 
     /// Return recovery codes.
     fn get_recovery(&mut self) -> Result<AccountRecovery, Error> {
-        let last_public_address_id = self.database.last_public_address_id()?;
         let recovery = crate::recovery::account_skey_to_recovery(&self.account_skey);
-        Ok(AccountRecovery {
-            recovery,
-            last_public_address_id,
-        })
+        Ok(AccountRecovery { recovery })
     }
 
     /// Get actual balance.
@@ -982,21 +917,11 @@ impl UnsealedAccountService {
                 }
             }
             Output::PublicPaymentOutput(o) => {
-                let public_address_id = if o.recipient == self.account_pkey {
-                    None
-                } else if let Some(id) = self.public_addresses.get(&o.recipient) {
-                    Some(*id)
-                } else {
-                    return;
-                };
                 let PublicPaymentOutput { ref amount, .. } = &o;
                 assert!(*amount >= 0);
                 info!("Received public payment: utxo={}, amount={}", hash, amount);
                 self.current_epoch_balance_changed = true;
-                let value = PublicPaymentValue {
-                    output: o.clone(),
-                    public_address_id,
-                };
+                let value = PublicPaymentValue { output: o.clone() };
 
                 if let Err(e) = self
                     .database
@@ -1080,11 +1005,7 @@ impl UnsealedAccountService {
             }
             OutputValue::PublicPayment(p) => {
                 let o = &p.output;
-                assert!(
-                    o.recipient == self.account_pkey
-                        || self.public_addresses.contains_key(&o.recipient),
-                    "is my utxo"
-                );
+                assert!(o.recipient == self.account_pkey, "is my utxo");
                 info!("Spent public payment: utxo={}, amount={}", hash, o.amount);
                 match self
                     .database
@@ -1469,19 +1390,6 @@ impl Future for UnsealedAccountService {
                                 // Finish this future.
                                 return Ok(Async::Ready(UnsealedAccountResult::Sealed));
                             }
-                            AccountRequest::CreatePublicAddress => {
-                                match self.new_public_address() {
-                                    Ok((public_address, public_address_id)) => {
-                                        AccountResponse::PublicAddressCreated {
-                                            public_address,
-                                            public_address_id,
-                                        }
-                                    }
-                                    Err(e) => AccountResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                }
-                            }
                             AccountRequest::Payment {
                                 recipient,
                                 amount,
@@ -1524,21 +1432,6 @@ impl Future for UnsealedAccountService {
                                     network_pkey: self.network_pkey.clone(),
                                 };
                                 AccountResponse::AccountInfo(account_info)
-                            }
-                            AccountRequest::PublicAddressesInfo {} => {
-                                let public_addresses = self
-                                    .public_addresses
-                                    .iter()
-                                    .map(|(address, id)| {
-                                        (
-                                            id.to_string(),
-                                            PublicAddressInfo {
-                                                address: address.clone(),
-                                            },
-                                        )
-                                    })
-                                    .collect();
-                                AccountResponse::PublicAddressesInfo { public_addresses }
                             }
                             AccountRequest::BalanceInfo {} => {
                                 let balance = self.balance();
@@ -2122,7 +2015,7 @@ impl WalletService {
                 }
             };
 
-            service.open_account(&account_id, false, None)?;
+            service.open_account(&account_id, false)?;
         }
 
         info!("Recovered {} account(s)", service.accounts.len());
@@ -2133,12 +2026,7 @@ impl WalletService {
     ///
     /// Open existing account.
     ///
-    fn open_account(
-        &mut self,
-        account_id: &str,
-        is_new: bool,
-        last_public_address_id: Option<u32>,
-    ) -> Result<(), Error> {
+    fn open_account(&mut self, account_id: &str, is_new: bool) -> Result<(), Error> {
         let account_dir = self.accounts_dir.join(account_id);
         let account_database_dir = account_dir.join("history");
         let account_pkey_file = account_dir.join("account.pkey");
@@ -2159,9 +2047,6 @@ impl WalletService {
             // Save the last finalized epoch to skip recovery for the new fresh account.
             assert_eq!(epoch, 0, "account is not recovered");
             database.finalize_epoch(self.last_epoch)?;
-            if let Some(last_public_address_id) = last_public_address_id {
-                database.update_last_public_address_id(last_public_address_id)?;
-            }
             drop(database);
         }
 
@@ -2244,15 +2129,11 @@ impl WalletService {
                 let (account_skey, account_pkey) = scc::make_random_keys();
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 info!("Created a new account {}", account_pkey);
-                self.open_account(&account_id, true, Some(0))?;
+                self.open_account(&account_id, true)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::RecoverAccount {
-                recovery:
-                    AccountRecovery {
-                        recovery,
-                        last_public_address_id,
-                    },
+                recovery: AccountRecovery { recovery },
                 password,
             } => {
                 let account_skey = recovery_to_account_skey(&recovery)?;
@@ -2265,7 +2146,7 @@ impl WalletService {
                 }
                 let account_id = self.create_account(account_skey, account_pkey, &password)?;
                 info!("Restored account from 24-word phrase {}", account_pkey);
-                self.open_account(&account_id, false, Some(last_public_address_id))?;
+                self.open_account(&account_id, false)?;
                 Ok(WalletControlResponse::AccountCreated { account_id })
             }
             WalletControlRequest::DeleteAccount { .. } => {

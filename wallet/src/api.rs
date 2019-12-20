@@ -79,8 +79,6 @@ pub struct PublicPaymentInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_timestamp: Option<Timestamp>,
     pub recipient: scc::PublicKey,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub public_address_id: Option<u32>,
 }
 
 ///
@@ -119,9 +117,6 @@ pub struct AccountBalance {
 pub struct AccountRecovery {
     /// 24-word recovery phrase.
     pub recovery: String,
-    /// ID of the last used public address (optional).
-    #[serde(default)]
-    pub last_public_address_id: u32,
 }
 
 ///
@@ -169,7 +164,6 @@ pub enum AccountRequest {
     Unseal {
         password: String,
     },
-    CreatePublicAddress,
     Payment {
         recipient: scc::PublicKey,
         amount: i64,
@@ -212,7 +206,6 @@ pub enum AccountRequest {
     },
     AccountInfo {},
     BalanceInfo {},
-    PublicAddressesInfo,
     UnspentInfo {},
     HistoryInfo {
         starting_from: Timestamp,
@@ -278,16 +271,9 @@ pub enum AccountResponse {
     Unsealed,
     #[serde(skip)]
     Disabled,
-    PublicAddressCreated {
-        public_address: scc::PublicKey,
-        public_address_id: u32,
-    },
     TransactionCreated(TransactionInfo),
     BalanceInfo(AccountBalance),
     AccountInfo(AccountInfo),
-    PublicAddressesInfo {
-        public_addresses: BTreeMap<String, PublicAddressInfo>,
-    },
     UnspentInfo {
         public_payments: Vec<PublicPaymentInfo>,
         payments: Vec<PaymentInfo>,
@@ -308,12 +294,6 @@ pub enum AccountResponse {
 pub struct AccountInfo {
     pub account_pkey: scc::PublicKey,
     pub network_pkey: pbc::PublicKey,
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct PublicAddressInfo {
-    pub address: scc::PublicKey,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]

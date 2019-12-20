@@ -489,6 +489,11 @@ impl PaymentPayload {
                 pos += HASH_SIZE;
                 PaymentPayloadData::ContentHash(hash)
             }
+            2 => {
+                let mut data = [0u8; PAYMENT_DATA_LEN - 2];
+                data.copy_from_slice(&payload[pos..pos + PAYMENT_DATA_LEN - 2]);
+                PaymentPayloadData::Data(data.to_vec())
+            }
             code @ _ => return Err(OutputError::UnsupportedDataType(output_hash, code).into()),
         };
 

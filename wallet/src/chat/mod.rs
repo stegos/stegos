@@ -24,6 +24,7 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 // use stegos_blockchain::timestamp::Timestamp;
+use failure::Error;
 use stegos_blockchain::{
     detrand, make_chat_message, new_chain_code, ChatError, ChatMessageOutput, IncomingChatPayload,
     MessagePayload, OutgoingChatPayload, PaymentOutput, PaymentPayloadData, Timestamp,
@@ -778,7 +779,6 @@ pub enum NewMemberMessage {
 
 #[derive(Clone)]
 pub struct NewMemberInfo {
-    // Payload is max of 882 bytes, including the initial type prefix byte
     // Owner PubKey identifies which group
     pub owner_pkey: PublicKey,
     // current keying
@@ -804,9 +804,31 @@ pub struct NewMemberInfoCont {
 
 #[derive(Clone)]
 pub enum PrivateMessage {
+    // Payload is max of 882 bytes, including the initial type prefix byte
     NewMemberInfo(NewMemberInfo),
     NewMemberInfoCont(NewMemberInfoCont),
     OtherData(Vec<u8>),
+}
+
+// GUI Alert - call this function to produce general purpose secret messages
+// with binary encoding in the payload = PaymentPayloadData::Data(Vec<u8>).
+// Otherwise, use PaymentPayloadData subtypes Comment(String) or ContentHash(Hash)
+// and make your own UTXO.
+pub fn make_private_message(
+    from_skey: &SecretKey,
+    to_pkey: &PublicKey,
+    amount: i64,
+    msg: Vec<u8>,
+) -> Result<(PaymentOutput, Fr, Fr), Error> {
+    // Return a Paymnent UTXO and gamma, delta factors,
+    // Max of 881 bytes in msg.
+    // Secret messages can also transfer tokens.
+    let data = PrivateMessage::OtherData(msg.clone()).encode()?;
+    let payload = PaymentPayloadData::Data(data);
+    match PaymentOutput::with_payload(Some(from_skey), to_pkey, amount, payload) {
+        Ok(triple) => Ok(triple),
+        Err(err) => Err(err.into()),
+    }
 }
 
 impl PrivateMessage {
@@ -829,7 +851,8 @@ impl PrivateMessage {
                 let mut bytes = [0u8; 4];
                 LittleEndian::write_u32(&mut bytes, data.num_members);
                 enc[129..133].copy_from_slice(&bytes[..]);
-                let mut pos = 133;
+                enc[133] = data.members.len() as u8;
+                let mut pos = 134;
                 for (pkey, chain) in data.members.iter() {
                     let bytes = pkey.to_bytes();
                     enc[pos..pos + 32].copy_from_slice(&bytes[..]);
@@ -852,7 +875,8 @@ impl PrivateMessage {
                 enc[33..37].copy_from_slice(&bytes[..]);
                 LittleEndian::write_u32(&mut bytes, data.member_index);
                 enc[37..41].copy_from_slice(&bytes[..]);
-                let mut pos = 41;
+                enc[41] = data.members.len() as u8;
+                let mut pos = 42;
                 for (pkey, chain) in data.members.iter() {
                     let bytes = pkey.to_bytes();
                     enc[pos..pos + 32].copy_from_slice(&bytes[..]);
@@ -871,6 +895,71 @@ impl PrivateMessage {
                 enc[1..data.len() + 1].copy_from_slice(&data[..]);
                 Ok(enc.to_vec())
             }
+        }
+    }
+
+    // GUI Alert - when you want to decipher the PaymentPayloadData::Data from
+    // a PaymentOutput UTXO that carries a private message...
+    pub fn from_bytes(bytes: &Vec<u8>) -> Result<PrivateMessage, Error> {
+        let nel = bytes.len();
+        if nel < PAYMENT_DATA_LEN - 2 {
+            return Err(ChatError::DataTooShort.into());
+        }
+        match bytes[0] {
+            0 => {
+                let owner_pkey = PublicKey::try_from_bytes(&bytes[1..33])?;
+                let owner_chain = Hash::try_from_bytes(&bytes[33..65])?;
+                let rekeying_chain = Hash::try_from_bytes(&bytes[65..97])?;
+                let my_initial_chain = Hash::try_from_bytes(&bytes[97..129])?;
+                let num_members = LittleEndian::read_u32(&bytes[129..133]);
+                let mut members = Vec::<(PublicKey, Hash)>::new();
+                let nmem = bytes[133] as usize;
+                let mut pos = 134;
+                for _ in 0..nmem {
+                    let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
+                    pos += 32;
+                    let chain = Hash::try_from_bytes(&bytes[pos..pos + 32])?;
+                    pos += 32;
+                    members.push((pkey, chain));
+                }
+                let info = NewMemberInfo {
+                    owner_pkey,
+                    owner_chain,
+                    rekeying_chain,
+                    my_initial_chain,
+                    num_members,
+                    members,
+                };
+                Ok(PrivateMessage::NewMemberInfo(info))
+            }
+            1 => {
+                let owner_pkey = PublicKey::try_from_bytes(&bytes[1..33])?;
+                let num_members = LittleEndian::read_u32(&bytes[33..37]);
+                let member_index = LittleEndian::read_u32(&bytes[37..41]);
+                let mut members = Vec::<(PublicKey, Hash)>::new();
+                let nmem = bytes[41] as usize;
+                let mut pos = 42;
+                for _ in 0..nmem {
+                    let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
+                    pos += 32;
+                    let chain = Hash::try_from_bytes(&bytes[pos..pos + 32])?;
+                    pos += 32;
+                    members.push((pkey, chain));
+                }
+                let info = NewMemberInfoCont {
+                    owner_pkey,
+                    num_members,
+                    member_index,
+                    members,
+                };
+                Ok(PrivateMessage::NewMemberInfoCont(info))
+            }
+            2 => {
+                let mut msg = [0u8; PAYMENT_DATA_LEN - 3];
+                msg.copy_from_slice(&bytes[1..]);
+                Ok(PrivateMessage::OtherData(msg.to_vec()))
+            }
+            _ => Err(ChatError::UnknownChatPayload(bytes[0]).into()),
         }
     }
 }

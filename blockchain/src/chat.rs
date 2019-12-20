@@ -114,6 +114,8 @@ pub enum ChatError {
     InvalidGroup(String),
     #[fail(display = "Private Message Data Too Long")]
     DataTooLong,
+    #[fail(display = "Private Message Data Too Short")]
+    DataTooShort,
 }
 
 impl Hashable for ChatMessageOutput {

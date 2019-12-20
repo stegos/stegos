@@ -34,7 +34,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
-    RestakeTransaction, StakeOutput, Timestamp,
+    StakeOutput, Timestamp,
 };
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc::{Fr, PublicKey};
@@ -785,28 +785,6 @@ impl TransactionValue {
         TransactionValue {
             outputs,
             tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    // We didn't track restake transaction, and wont store them on disk.
-    // But we still able to give info about this transaction, to api.
-    // This method was created to split api serialisation logic from main logic.
-    pub fn restake_tx_info(
-        tx: RestakeTransaction,
-        outputs: Vec<OutputValue>,
-        current_epoch: u64,
-    ) -> TransactionInfo {
-        let tx_hash = Hash::digest(&tx);
-
-        // merge output with extended info.
-        let outputs = outputs.iter().map(|e| e.to_info(current_epoch)).collect();
-
-        TransactionInfo {
-            tx_hash,
-            outputs,
-            fee: 0,
-            inputs: tx.txins.clone(),
             status: TransactionStatus::Created {},
         }
     }

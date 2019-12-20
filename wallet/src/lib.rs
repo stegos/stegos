@@ -631,27 +631,6 @@ impl UnsealedAccountService {
         self.unstake(amount, payment_fee)
     }
 
-    /// Restake all available stakes (even if not expired).
-    fn restake_all(&mut self) -> Result<TransactionInfo, Error> {
-        assert_eq!(STAKE_FEE, 0);
-        if self.available_stake_outputs().count() == 0 {
-            return Err(WalletError::NothingToRestake.into());
-        }
-
-        let stakes = self.available_stake_outputs();
-        let (tx, outputs) = create_restaking_transaction(
-            &self.account_skey,
-            &self.account_pkey,
-            &self.network_pkey,
-            &self.network_skey,
-            stakes,
-        )?;
-
-        let transaction = TransactionValue::restake_tx_info(tx.clone(), outputs, self.epoch);
-        self.send_transaction(tx.into())?;
-        Ok(transaction)
-    }
-
     /// Cloak all available public outputs.
     fn cloak_all(&mut self, fee: i64) -> Result<TransactionInfo, Error> {
         // Secret key to sign the transaction.
@@ -1422,7 +1401,6 @@ impl Future for UnsealedAccountService {
                             AccountRequest::UnstakeAll { payment_fee } => {
                                 self.unstake_all(payment_fee).into()
                             }
-                            AccountRequest::RestakeAll {} => self.restake_all().into(),
                             AccountRequest::CloakAll { payment_fee } => {
                                 self.cloak_all(payment_fee).into()
                             }

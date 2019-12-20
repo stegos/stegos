@@ -51,8 +51,6 @@ pub enum WalletError {
     NoEnoughToPayPublicly(i64),
     #[fail(display = "Incorrect TXIN type")]
     IncorrectTXINType,
-    #[fail(display = "Nothing to re-stake")]
-    NothingToRestake,
     #[fail(display = "Snowball is busy")]
     SnowballBusy,
 }

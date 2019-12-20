@@ -200,7 +200,6 @@ pub enum AccountRequest {
     UnstakeAll {
         payment_fee: i64,
     },
-    RestakeAll {},
     CloakAll {
         payment_fee: i64,
     },

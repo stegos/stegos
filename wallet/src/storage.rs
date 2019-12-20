@@ -41,6 +41,7 @@ use stegos_crypto::scc::{Fr, PublicKey};
 use stegos_node::TransactionStatus;
 use stegos_serialization::traits::ProtoConvert;
 use tempdir::TempDir;
+use tokio_timer::clock;
 
 // colon families.
 const HISTORY: &'static str = "history";
@@ -65,17 +66,23 @@ pub struct AccountDatabase {
     /// RocksDB database object.
     database: DB,
 
-    //
-    // Indexes
-    //
+    /// Current Epoch.
+    epoch: u64,
     /// Index of epoch UTXOS, that is not final.
     utxos: HashMap<Hash, UnspentOutput>,
     /// Index of UTXOS that known to be change.
     known_changes: HashSet<Hash>,
+    /// Is last update of UTXO was in current epoch.
+    /// TODO: encapsulate this member.
+    pub(super) current_epoch_balance_changed: bool,
     /// Index of all created UTXOs by this wallet.
     utxos_list: HashMap<Hash, Timestamp>,
     /// Index of all created transactions by this wallet.
     created_txs: HashMap<Hash, Timestamp>,
+    /// List of pending utxos.
+    // Store time in Instant, to be more compatible with tokio-timer.
+    /// TODO: encapsulate this member.
+    pub(super) pending_payments: HashMap<Hash, PendingOutput>,
     /// Index of all transactions that wasn't rejected or committed.
     pending_txs: HashSet<Hash>,
     /// Index of inputs of pending_txs,
@@ -89,7 +96,7 @@ pub struct AccountDatabase {
 //Account log api.
 impl AccountDatabase {
     /// Open database.
-    pub fn open(path: &Path) -> (AccountDatabase, u64) {
+    pub fn open(path: &Path) -> AccountDatabase {
         debug!("Database path = {}", path.to_string_lossy());
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -100,7 +107,9 @@ impl AccountDatabase {
         let mut log = AccountDatabase {
             _temp_dir: None,
             database,
+            epoch: 0,
             created_txs: HashMap::new(),
+            pending_payments: HashMap::new(),
             pending_txs: HashSet::new(),
             inputs: HashMap::new(),
             outputs: HashMap::new(),
@@ -108,9 +117,10 @@ impl AccountDatabase {
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
             utxos: HashMap::new(),
+            current_epoch_balance_changed: false,
         };
-        let epoch = log.recover_state();
-        (log, epoch)
+        log.epoch = log.recover_state();
+        log
     }
 
     #[allow(unused)]
@@ -125,6 +135,7 @@ impl AccountDatabase {
             _temp_dir: Some(temp_dir),
             database,
             created_txs: HashMap::new(),
+            pending_payments: HashMap::new(),
             pending_txs: HashSet::new(),
             inputs: HashMap::new(),
             outputs: HashMap::new(),
@@ -132,6 +143,8 @@ impl AccountDatabase {
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
             utxos: HashMap::new(),
+            epoch: 0,
+            current_epoch_balance_changed: false,
         }
     }
 
@@ -139,6 +152,102 @@ impl AccountDatabase {
         let exist = self.known_changes.contains(&utxo);
         trace!("Checking is change = {}, exist={}", utxo, exist);
         exist
+    }
+
+    /// Returns current epoch
+    #[inline]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+
+    /// TODO: remove this method.
+    pub fn on_epoch_changed(&mut self, epoch: u64) {
+        self.epoch = epoch;
+    }
+
+    /// Get actual balance.
+    pub fn balance(&self) -> AccountBalance {
+        let mut balance: AccountBalance = Default::default();
+        for (hash, val) in self.iter_unspent() {
+            match val {
+                OutputValue::Payment(PaymentValue {
+                    amount,
+                    output: PaymentOutput { .. },
+                    ..
+                }) => {
+                    balance.payment.current += amount;
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    balance.payment.available += amount;
+                }
+                OutputValue::PublicPayment(PublicPaymentValue {
+                    output: PublicPaymentOutput { amount, .. },
+                    ..
+                }) => {
+                    balance.public_payment.current += amount;
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    balance.public_payment.available += amount;
+                }
+                OutputValue::Stake(StakeValue {
+                    output: StakeOutput { amount, .. },
+                    active_until_epoch,
+                    ..
+                }) => {
+                    balance.stake.current += amount;
+                    if self.pending_payments.get(&hash).is_some() {
+                        continue;
+                    }
+                    if let Some(active_until_epoch) = active_until_epoch {
+                        if active_until_epoch >= self.epoch + 1 {
+                            continue;
+                        }
+                    }
+                    balance.stake.available += amount;
+                }
+            }
+        }
+        balance.total.current =
+            balance.payment.current + balance.stake.current + balance.public_payment.current;
+        balance.total.available =
+            balance.payment.available + balance.stake.available + balance.public_payment.available;
+        assert!(balance.total.available <= balance.total.current);
+        balance.is_final = !self.current_epoch_balance_changed || !self.pending_payments.is_empty();
+        balance
+    }
+
+    /// Returns an iterator over available payment outputs.
+    pub fn available_payment_outputs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = (PaymentOutput, i64)> + 'a {
+        self.iter_unspent()
+            .filter_map(|(k, v)| v.payment().map(|v| (k, v)))
+            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .inspect(|(h, _)| trace!("Using PaymentOutput: hash={}", h))
+            .map(|(_, v)| (v.output, v.amount))
+    }
+
+    /// Returns an iterator over available public payment outputs.
+    pub fn available_public_payment_outputs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = PublicPaymentOutput> + 'a {
+        self.iter_unspent()
+            .filter_map(|(k, v)| v.public_payment().map(|v| (k, v)))
+            .filter(move |(h, _)| self.pending_payments.get(h).is_none())
+            .inspect(|(h, _)| trace!("Using PublicPaymentOutput: hash={}", h))
+            .map(|(_, v)| v.output)
+    }
+
+    /// Returns an iterator over available stake outputs.
+    pub fn available_stake_outputs<'a>(&'a self) -> impl Iterator<Item = StakeOutput> + 'a {
+        self.iter_unspent()
+            .filter_map(|(_k, v)| v.stake())
+            // All stake unspent utxo should be with info about active epoch.
+            .filter_map(|v| v.active_until_epoch.map(|epoch| (v.output, epoch)))
+            .filter(move |(_v, epoch)| *epoch <= self.epoch)
+            .map(|(o, _e)| o)
     }
 
     /// Returns id of first unknown epoch
@@ -459,6 +568,22 @@ impl AccountDatabase {
         let timestamp = self.push_entry(timestamp, entry)?;
         assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
         Ok(timestamp)
+    }
+
+    pub fn lock_input(&mut self, input: &Hash) {
+        let time = clock::now();
+        assert!(self
+            .pending_payments
+            .insert(*input, PendingOutput { time })
+            .is_none());
+    }
+
+    pub fn unlock_input(&mut self, input: &Hash) {
+        assert!(self.pending_payments.remove(&input).is_some())
+    }
+
+    pub fn is_input_locked(&mut self, input: &Hash) -> Option<&PendingOutput> {
+        self.pending_payments.get(input)
     }
 
     /// Insert log entry as last entry in log.

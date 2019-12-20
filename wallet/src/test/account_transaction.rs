@@ -1236,7 +1236,11 @@ fn snowball_failed_join() {
         let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
         assert!(accounts[0].account_service.snowball.is_some());
-        assert!(!accounts[0].account_service.pending_payments.is_empty());
+        assert!(!accounts[0]
+            .account_service
+            .database
+            .pending_payments
+            .is_empty());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1249,7 +1253,11 @@ fn snowball_failed_join() {
         s.poll();
 
         accounts[0].poll();
-        assert!(accounts[0].account_service.pending_payments.is_empty());
+        assert!(accounts[0]
+            .account_service
+            .database
+            .pending_payments
+            .is_empty());
         assert!(accounts[0].account_service.snowball.is_none());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);

@@ -12,7 +12,7 @@ Linux*)
 Darwin*)
     timeout_cli=gtimeout
     ;;
-CYGWIN_NT*)
+CYGWIN_NT*|MINGW64_NT*)
     timeout_cli=timeout
     ;;
 *)

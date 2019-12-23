@@ -16,6 +16,6 @@ for i in $(seq -f "%02g" 1 $TOTAL_NODES); do
 done
 
 # Generate keys for $TOTAL_NODES nodes, but only $CONSENSUS_NODES in genesis.
-cargo run --bin bootstrap -- --keys $TOTAL_NODES -n dev --difficulty 200 --reuse
+cargo run --bin bootstrap -- --keys $TOTAL_NODES -n dev --difficulty 50000 --reuse
 # Overwrite $CONSENSUS_NODES
-cargo run --bin bootstrap -- --keys $CONSENSUS_NODES -n dev --difficulty 200 --reuse
+cargo run --bin bootstrap -- --keys $CONSENSUS_NODES -n dev --difficulty 50000 --reuse

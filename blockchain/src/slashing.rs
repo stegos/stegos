@@ -27,7 +27,7 @@ use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Debug, Serialize, Deserialize)]
 pub struct SlashingProof {
     pub block1: MicroBlock,
     pub block2: MicroBlock,

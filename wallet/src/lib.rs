@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod change;
@@ -45,7 +45,7 @@ use api::*;
 use failure::{format_err, Error};
 use futures::future::IntoFuture;
 use futures::sync::{mpsc, oneshot};
-use futures::{task, Async, Future, Poll, Stream};
+use futures::{lazy, task, Async, Future, Poll, Stream};
 use log::*;
 use std::collections::HashMap;
 use std::fs;
@@ -170,6 +170,11 @@ struct UnsealedAccountService {
     // Snowball state (owned)
     //
     snowball: Option<(Snowball, oneshot::Sender<AccountResponse>)>,
+
+    //
+    // Chat state
+    //
+    chat: chat::Chat,
     //
     // Response from mempool about transaction.
     //
@@ -209,6 +214,7 @@ impl UnsealedAccountService {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
 
+        let mut chat = chat::Chat::new(account_skey, account_pkey);
         let facilitator_pkey: pbc::PublicKey = pbc::PublicKey::dum();
         let snowball = None;
         let last_macro_block_timestamp = Timestamp::UNIX_EPOCH;
@@ -222,7 +228,7 @@ impl UnsealedAccountService {
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
-
+        chat.recover_chats(&database);
         info!("Loaded account {}", account_pkey);
         UnsealedAccountService {
             database_dir,
@@ -236,6 +242,7 @@ impl UnsealedAccountService {
             resend_tx,
             check_pending_utxos,
             snowball,
+            chat,
             stake_epochs,
             max_inputs_in_tx,
             last_macro_block_timestamp,
@@ -336,7 +343,7 @@ impl UnsealedAccountService {
 
     fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
         self.database
-            .iter_range(starting_from, limit)
+            .iter_account_history_range(starting_from, limit)
             .map(|(timestamp, e)| match e {
                 LogEntry::Incoming {
                     output: ref output_value,
@@ -702,8 +709,8 @@ impl UnsealedAccountService {
     fn on_output_created(&mut self, epoch: u64, output: &Output, block_timestamp: Timestamp) {
         let hash = Hash::digest(&output);
         match output {
-            Output::ChatMessageOutput(_o) => {
-                // TODO - wire this in...
+            Output::ChatMessageOutput(o) => {
+                self.chat.process_incomming(&mut self.database, o.clone())
             }
             Output::PaymentOutput(o) => {
                 if let Ok(PaymentPayload { amount, data, .. }) =
@@ -1083,6 +1090,28 @@ impl UnsealedAccountService {
         self.subscribers
             .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
     }
+
+    // Iteration 1, chat and account has same keypair.
+    // TODO: Iteration 2, chat and account has different keypair, but same account.
+    fn new_chat_tx(&mut self, outputs: Vec<ChatMessageOutput>) -> Result<Transaction, Error> {
+        const PAYMNET_FEE: i64 = 1_000;
+        let chat_fee = PAYMNET_FEE;
+        let payment_fee = PAYMNET_FEE;
+
+        let unspent_iter = self.database.available_payment_outputs();
+        let (inputs, outputs, gamma, fee) = create_chat_transaction(
+            &self.account_pkey,
+            unspent_iter,
+            chat_fee,
+            payment_fee,
+            self.max_inputs_in_tx,
+            outputs,
+        )?;
+
+        let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
+        tx.validate(&inputs)?;
+        Ok(tx.into())
+    }
 }
 
 /// This could be used for non PaymentTx.
@@ -1123,6 +1152,17 @@ impl PartialEq for UnsealedAccountResult {
             _ => false,
         }
     }
+}
+
+macro_rules! api_on_okay {
+    ($val:expr => Ok($new_val:tt) $okay:block) => {
+        match $val {
+            Ok($new_val) => $okay,
+            Err(e) => AccountResponse::Error {
+                error: e.to_string(),
+            },
+        }
+    };
 }
 
 // Event loop.
@@ -1341,6 +1381,75 @@ impl Future for UnsealedAccountService {
                                     },
                                 }
                             }
+                            AccountRequest::DebugChatState {} => {
+                                log::info!("chat = {:?}", self.chat);
+                                continue;
+                            }
+                            AccountRequest::ShowChats {} => {
+                                let mut channels = Vec::new();
+                                let mut groups = Vec::new();
+                                for chats in &self.database.chats {
+                                    match chats.0 {
+                                        chat::ChatId::ChannelId(name) => {
+                                            channels.push(ChannelInfo {
+                                                channel_id: name.clone(),
+                                                owning: chats.1.owner_pkey == self.account_pkey,
+                                            })
+                                        }
+                                        chat::ChatId::GroupId(name) => groups.push(GroupInfo {
+                                            group_id: name.clone(),
+                                            owning: chats.1.owner_pkey == self.account_pkey,
+                                        }),
+                                    }
+                                }
+                                AccountResponse::ShowChats { channels, groups }
+                            }
+                            AccountRequest::ChatHistory {
+                                chat_id,
+                                starting_from,
+                                limit,
+                            } => {
+                                let list: Vec<_> = self
+                                    .database
+                                    .iter_chat_history_range(&chat_id, starting_from, limit)
+                                    .map(|((_, idx), v)| ChatHistoryInfo {
+                                        text: v.text,
+                                        idx,
+                                        utxo: Hash::digest(&v.utxo),
+                                    })
+                                    .collect();
+                                AccountResponse::ChatHistory { chat_id, list }
+                            }
+                            AccountRequest::CreateChannel { channel_id } => {
+                                api_on_okay!(self.chat.create_channel(&mut self.database, channel_id) =>
+                                    Ok(invite) {
+                                        AccountResponse::CreateChannel {invite}
+                                    }
+                                )
+                            }
+                            AccountRequest::JoinChannel { channel_id, invite } => {
+                                api_on_okay!(self.chat.join_channel(&mut self.database,channel_id, invite) =>
+                                    Ok(_) {
+                                        AccountResponse::JoinChannel {}
+                                    }
+                                )
+                            }
+                            AccountRequest::SendMessage { chat_id, message } => {
+                                api_on_okay!(self.chat.new_message(&mut self.database,chat_id, message.as_bytes().to_vec()) =>
+                                    Ok(output) {
+                                        api_on_okay!(self.new_chat_tx(vec![output]) =>
+                                            Ok(tx) {
+                                                AccountResponse::CreateTx {
+                                                    list: tx
+                                                }
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+                            AccountRequest::CreateGroup { group_id } => unimplemented!(),
+                            AccountRequest::AddMember { group_id, user } => unimplemented!(),
+                            AccountRequest::EvictMember { group_id, user } => unimplemented!(),
                         };
                         tx.send(response).ok(); // ignore errors.
                     }
@@ -1709,8 +1818,10 @@ impl Future for AccountService {
 }
 
 impl AccountService {
-    /// Create a new wallet.
-    fn new(
+    /// Spawn a new account service, returns error if can't find account folder.
+    /// Returns Account api.
+    fn spawn_new(
+        executor: &TaskExecutor,
         database_dir: &Path,
         account_dir: &Path,
         network_skey: pbc::SecretKey,
@@ -1719,11 +1830,12 @@ impl AccountService {
         node: Node,
         stake_epochs: u64,
         max_inputs_in_tx: usize,
-    ) -> Result<(Self, Account), KeyError> {
+    ) -> Result<Account, KeyError> {
         let account_pkey_file = account_dir.join("account.pkey");
         let account_pkey = load_account_pkey(&account_pkey_file)?;
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
+
         let service = SealedAccountService::new(
             database_dir.to_path_buf(),
             account_dir.to_path_buf(),
@@ -1737,9 +1849,13 @@ impl AccountService {
             subscribers,
             events,
         );
-        let service = AccountService::Sealed(service);
+        executor.spawn(lazy(move || {
+            let service = AccountService::Sealed(service);
+            service
+        }));
+
         let api = Account { outbox };
-        Ok((service, api))
+        Ok(api)
     }
 }
 
@@ -1898,7 +2014,8 @@ impl WalletService {
             drop(database);
         }
 
-        let (account_service, account) = AccountService::new(
+        let (account) = AccountService::spawn_new(
+            &self.executor,
             &account_database_dir,
             &account_dir,
             self.network_skey.clone(),
@@ -1916,7 +2033,6 @@ impl WalletService {
         };
         let prev = self.accounts.insert(account_id.to_string(), handle);
         assert!(prev.is_none(), "account_id is unique");
-        self.executor.spawn(account_service);
         info!("Recovered account {}, is_new:{}", account_pkey, is_new);
         Ok(())
     }

@@ -19,12 +19,12 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use failure::{format_err, Error};
+use failure::{bail, format_err, Error};
 use futures::sync::mpsc::{channel, Receiver, Sender};
 use futures::try_ready;
 use futures::{Async, Future, Poll, Sink, Stream};
 use lazy_static::*;
-use log::debug;
+use log::{debug, trace};
 use regex::Regex;
 use rpassword::prompt_password_stdout;
 use rustyline as rl;
@@ -857,6 +857,100 @@ impl ConsoleService {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::CloakAll { payment_fee };
             self.send_account_request(request)?
+        } else if msg.starts_with("chat ") {
+            let args = &msg[5..];
+            if args == "list" {
+                self.send_account_request(AccountRequest::ShowChats {})?
+            } else if args.starts_with("history") {
+                let mut args = args[7..].split_whitespace();
+                let chat_type = args.next().ok_or(format_err!(
+                    "Chat type should be first argument (group|channel)"
+                ))?;
+                let chat_id = args
+                    .next()
+                    .ok_or(format_err!("Chat name should be second argument"))?;
+                let chat_id = if chat_type.eq_ignore_ascii_case("group") {
+                    ChatId::GroupId(chat_id.to_string())
+                } else if chat_type.eq_ignore_ascii_case("channel") {
+                    ChatId::ChannelId(chat_id.to_string())
+                } else {
+                    bail!("Failed to parse chat type, should be 'group' or 'channel'");
+                };
+
+                let limit: u64;
+                let starting_from: u64;
+                if let Some(limit_str) = args.next() {
+                    limit = limit_str.parse()?;
+                    if let Some(starting_from_str) = args.next() {
+                        starting_from = starting_from_str.parse()?;
+                    } else {
+                        starting_from = 0;
+                    }
+                } else {
+                    limit = 0;
+                    starting_from = 0;
+                }
+                trace!(
+                    "Requesting history: chat_id={:?}, limit={}, starting_from={}",
+                    chat_id,
+                    limit,
+                    starting_from
+                );
+                self.send_account_request(AccountRequest::ChatHistory {
+                    chat_id,
+                    limit,
+                    starting_from,
+                })?
+            } else if args.starts_with("create") {
+                let mut args = args[6..].split_whitespace();
+                let chat_type = args.next().ok_or(format_err!(
+                    "Chat type should be first argument (group|channel)"
+                ))?;
+                let chat_id = args
+                    .next()
+                    .ok_or(format_err!("Chat name should be second argument"))?;
+                let chat_id = if chat_type.eq_ignore_ascii_case("group") {
+                    self.send_account_request(AccountRequest::CreateGroup {
+                        group_id: chat_id.to_string(),
+                    })?
+                } else if chat_type.eq_ignore_ascii_case("channel") {
+                    self.send_account_request(AccountRequest::CreateChannel {
+                        channel_id: chat_id.to_string(),
+                    })?
+                } else {
+                    bail!("Failed to parse chat type, should be 'group' or 'channel'");
+                };
+            } else if args.starts_with("join") {
+                unimplemented!();
+            // parse chat name, invite id (invite ID should contain chat_type)
+            } else if args.starts_with("add") {
+                unimplemented!();
+            // parse owned group name, public_key
+            } else if args.starts_with("remove") {
+                unimplemented!();
+            // parse owned group name, public_key
+            } else if args.starts_with("send") {
+                let mut args = args[4..].split_whitespace();
+                let chat_type = args.next().ok_or(format_err!(
+                    "Chat type should be first argument (group|channel)"
+                ))?;
+                let chat_id = args
+                    .next()
+                    .ok_or(format_err!("Chat name should be second argument"))?;
+                let chat_id = if chat_type.eq_ignore_ascii_case("group") {
+                    ChatId::GroupId(chat_id.to_string())
+                } else if chat_type.eq_ignore_ascii_case("channel") {
+                    ChatId::ChannelId(chat_id.to_string())
+                } else {
+                    bail!("Failed to parse chat type, should be 'group' or 'channel'");
+                };
+                let message: String = args
+                    .flat_map(|s| s.chars().chain(std::iter::once(' ')))
+                    .collect();
+                self.send_account_request(AccountRequest::SendMessage { chat_id, message })?
+            } else {
+                bail!("Can't recognize subcommand of the 'chat' command");
+            }
         } else if msg == "show version" {
             self.send_network_request(NetworkRequest::VersionInfo {})?;
             return Ok(true);

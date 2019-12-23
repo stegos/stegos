@@ -177,7 +177,7 @@ fn create_tx_with_certificate() {
                     let tx_entry = accounts[0]
                         .account_service
                         .database
-                        .iter_range(timestamp, 1)
+                        .iter_account_history_range(timestamp, 1)
                         .next()
                         .unwrap();
                     let output = match tx_entry.1 {

@@ -37,7 +37,7 @@ use stegos_crypto::scc::{
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction that confiscate stake from cheater.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceAwardTransaction {
     pub winner_reward: Vec<Output>,
 }
@@ -56,7 +56,7 @@ impl Hashable for ServiceAwardTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction that confiscate stake from cheater.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct SlashingTransaction {
     pub proof: SlashingProof,
     /// List of inputs.
@@ -88,7 +88,7 @@ impl Hashable for SlashingTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Coinbase Transaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct CoinbaseTransaction {
     /// Block reward.
     pub block_reward: i64,
@@ -140,7 +140,7 @@ impl SlashingTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// PaymentTransaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct PaymentTransaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
@@ -367,7 +367,7 @@ impl PaymentTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// RestakeTransaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RestakeTransaction {
     /// List of inputs.
     pub txins: Vec<Hash>,
@@ -539,7 +539,7 @@ impl RestakeTransaction {
 //--------------------------------------------------------------------------------------------------
 
 /// Transaction.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum Transaction {

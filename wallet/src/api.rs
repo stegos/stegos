@@ -21,17 +21,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use super::chat;
 pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+use stegos_blockchain::Transaction;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
+use stegos_crypto::utils::{deserialize_protobuf_from_hex, serialize_protobuf_to_hex};
 use stegos_node::TransactionStatus;
+
 pub type AccountId = String;
+pub use chat::ChatId;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type")]
@@ -214,6 +219,49 @@ pub enum AccountRequest {
         new_password: String,
     },
     GetRecovery {},
+    ///
+    /// chat requests
+    ///
+    DebugChatState {},
+    ShowChats {},
+    ChatHistory {
+        #[serde(flatten)]
+        chat_id: chat::ChatId,
+        starting_from: u64,
+        limit: u64,
+    },
+    SendMessage {
+        #[serde(flatten)]
+        chat_id: chat::ChatId,
+        message: String,
+        #[serde(default)]
+        broadcast: bool,
+    },
+    CreateChannel {
+        channel_id: String,
+    },
+    // joining without notify
+    JoinChannel {
+        channel_id: String,
+        invite: chat::ChannelInvite,
+    },
+    CreateGroup {
+        group_id: String,
+    },
+    AddMember {
+        group_id: String,
+        user: scc::PublicKey,
+        broadcast: bool,
+    },
+    EvictMember {
+        group_id: String,
+        user: scc::PublicKey,
+        broadcast: bool,
+    },
+    // Accept group changes provided by host.
+    AcceptGroupChanges {
+        group_id: String,
+    },
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -259,6 +307,25 @@ pub struct TransactionInfo {
     pub status: TransactionStatus,
 }
 
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct ChannelInfo {
+    pub channel_id: String,
+    pub owning: bool,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct GroupInfo {
+    pub group_id: String,
+    pub owning: bool,
+}
+
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct ChatHistoryInfo {
+    pub text: String,
+    pub idx: u64,
+    pub utxo: Hash,
+}
+
 ///
 /// RPC responses.
 ///
@@ -283,6 +350,29 @@ pub enum AccountResponse {
     },
     PasswordChanged,
     Recovery(AccountRecovery),
+    ///
+    /// Chats responses
+    ///
+    CreateChannel {
+        invite: chat::ChannelInvite,
+    },
+    ShowChats {
+        channels: Vec<ChannelInfo>,
+        groups: Vec<GroupInfo>,
+    },
+    ChatHistory {
+        #[serde(flatten)]
+        chat_id: chat::ChatId,
+        list: Vec<ChatHistoryInfo>,
+    },
+    JoinChannel {},
+    // Temporary
+    CreateTx {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        list: Transaction,
+    },
+
     Error {
         error: String,
     },

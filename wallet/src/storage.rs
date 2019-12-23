@@ -23,6 +23,7 @@
 //! Data objects used to store information about transaction, produced outputs, and consumed inputs.
 //!
 
+use super::chat;
 use crate::api::*;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
@@ -31,6 +32,7 @@ use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput,
@@ -44,10 +46,20 @@ use tempdir::TempDir;
 use tokio_timer::clock;
 
 // colon families.
+
+// List of chats, where Key is ChatId, and data is ChatSessionValue
+const ACTIVE_CHATS: &'static str = "active_chats";
+// List of history in chats, key is (ChatId, Idx), and data is ChatOutputValue (should be grouped by ChatId, and ordered by Idx)
+// [0;1] element is reserved for CHATS_HISTORY_LEN;
+const CHATS_HISTORY: &'static str = "chats_history";
+
+// List of history elements where Key is timestamp, and data is LogEntry. (Should be orderd by timestamp)
 const HISTORY: &'static str = "history";
+// List of unspent outputs, where Key is Hash, and data is OutputValue.
 const UNSPENT: &'static str = "unspent";
+// Neta table, collect rest frequently used values (currently only epoch).
 const META: &'static str = "meta";
-const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
+const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META, ACTIVE_CHATS, CHATS_HISTORY];
 
 // Keys in meta cf
 const EPOCH_KEY: &[u8; 9] = b"epoch_key";
@@ -91,6 +103,13 @@ pub struct AccountDatabase {
     outputs: HashMap<Hash, Hash>,
     /// Transactions that was created in current epoch.
     epoch_transactions: HashSet<Hash>,
+
+    ///
+    /// Chats specific items
+    ///
+
+    /// Active chat list
+    pub(crate) chats: HashMap<chat::ChatId, chat::ChatSessionValue>,
 }
 
 //Account log api.
@@ -117,9 +136,10 @@ impl AccountDatabase {
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
             utxos: HashMap::new(),
+            chats: HashMap::new(),
             current_epoch_balance_changed: false,
         };
-        log.epoch = log.recover_state();
+        log.recover_state();
         log
     }
 
@@ -143,6 +163,7 @@ impl AccountDatabase {
             utxos_list: HashMap::new(),
             known_changes: HashSet::new(),
             utxos: HashMap::new(),
+            chats: HashMap::new(),
             epoch: 0,
             current_epoch_balance_changed: false,
         }
@@ -250,8 +271,15 @@ impl AccountDatabase {
             .map(|(o, _e)| o)
     }
 
-    /// Returns id of first unknown epoch
-    fn recover_state(&mut self) -> u64 {
+    /// - Recover utxos indexes list
+    /// - Recover created_tx list
+    /// - Recover pending_tx list
+    /// - Recover changes list
+    /// - Recover last known epoch
+    ///
+    /// - Recover chats list
+    ///
+    fn recover_state(&mut self) {
         // TODO: limit time for recover
         // (for example, if some transaction was created weak ago, it's no reason to resend it)
         let starting_time = Timestamp::UNIX_EPOCH;
@@ -284,6 +312,24 @@ impl AccountDatabase {
                 }
             }
         }
+
+        let chats_cf = static_db.cf_handle(ACTIVE_CHATS).expect("cf created");
+        // Recover chats list.
+        let mode = IteratorMode::Start;
+        let chat_iter = static_db
+            .iterator_cf(chats_cf, mode)
+            .expect("cannot open cf");
+
+        for (chat_id, chat) in chat_iter {
+            let chat = chat::ChatSessionValue::decode(&chat)
+                .expect("deserialization ChatSessionValue from database should not fail.");
+
+            let chat_id = chat::ChatId::decode(&chat_id)
+                .expect("deserialization ChatId from database should not fail.");
+
+            self.chats.insert(chat_id, chat);
+        }
+
         drop(static_db);
 
         let meta_cf = self.database.cf_handle(META).expect("cf created");
@@ -292,10 +338,10 @@ impl AccountDatabase {
             .database
             .get_cf(meta_cf, EPOCH_KEY)
             .expect("cannot read epoch");
-        epoch
+        self.epoch = epoch
             .and_then(|b| Self::u64_from_bytes(&b))
             .map(|i| i + 1)
-            .unwrap_or(0)
+            .unwrap_or(0);
     }
 
     pub fn iter_unspent<'a>(&'a self) -> impl Iterator<Item = (Hash, OutputValue)> + 'a {
@@ -747,12 +793,101 @@ impl AccountDatabase {
     }
 
     /// List log entries starting from `offset`, limited by `limit`.
-    pub fn iter_range<'a>(
+    pub fn iter_account_history_range<'a>(
         &'a self,
         starting_from: Timestamp,
         limit: u64,
     ) -> impl Iterator<Item = (Timestamp, LogEntry)> + 'a {
         Self::iter_range_inner(&self.database, starting_from, limit)
+    }
+
+    /// List chat history for specific `chat_id, starting with history index `offset`.
+    pub fn iter_chat_history_range<'a>(
+        &'a self,
+        chat_id: &'a chat::ChatId,
+        starting_from: u64,
+        limit: u64,
+    ) -> impl Iterator<Item = ((chat::ChatId, u64), chat::ChatOutputValue)> + 'a {
+        let chat_history_cf = self.database.cf_handle(CHATS_HISTORY).expect("cf created");
+        let key = Self::bytes_from_chat_entry((chat_id.clone(), starting_from))
+            .expect("Chat id should be valid");
+        let mode = IteratorMode::From(&key, Direction::Forward);
+        self.database
+            .iterator_cf(chat_history_cf, mode)
+            .expect("cannot open cf")
+            .map(|(k, v)| {
+                // we also store len of chat history as item (ChatId) without index,
+                let k = Self::chat_entry_from_bytes(&k).ok();
+                let v =
+                    chat::ChatOutputValue::decode(&*v).expect("couldn't deserialize chat entry.");
+                (k, v)
+            })
+            .take_while(move |(k, _v)| {
+                // if iterator start to iterate other chat history, it should be `len` index between them.
+                if let Some(k) = k {
+                    assert_eq!(&k.0, chat_id);
+                    return true;
+                }
+                return false;
+            })
+            .map(|(k, v)| (k.unwrap(), v))
+            .take(limit as usize)
+    }
+
+    pub fn get_chat_history_len(&self, chat_id: &chat::ChatId) -> Result<u64, Error> {
+        let history_cf = self.database.cf_handle(CHATS_HISTORY).expect("cf created");
+        let chat_history_len = chat_id.encode()?;
+        Ok(self
+            .database
+            .get_cf(history_cf, chat_history_len)?
+            .and_then(|b| Self::u64_from_bytes(&b))
+            .unwrap_or(0))
+    }
+
+    pub fn push_chat_session(&mut self, chat_session: chat::ChatSessionValue) -> Result<(), Error> {
+        let chat_cf = self.database.cf_handle(ACTIVE_CHATS).expect("cf created");
+
+        let chat_id = chat_session.id();
+        debug!("Add new active chat: id={:?}", chat_id);
+
+        let mut batch = WriteBatch::default();
+        // Put new entry to history.
+        let chat_id_bytes = chat_id.encode()?;
+        let chat_session_bytes = chat_session.encode()?;
+        batch.put_cf(chat_cf, &chat_id_bytes, &chat_session_bytes)?;
+        self.database.write(batch)?;
+        Ok(())
+    }
+
+    // Save chat into storage.
+    // Key: (ChatId, EntryIdx)
+    // Value: Decrypted Output.
+    pub fn push_chat_history(
+        &mut self,
+        chat_id: chat::ChatId,
+        output: chat::ChatOutputValue,
+    ) -> Result<(), Error> {
+        let history_cf = self.database.cf_handle(CHATS_HISTORY).expect("cf created");
+
+        let idx = self.get_chat_history_len(&chat_id)?;
+        debug!("Push chat entry: id={:?}, idx={}", chat_id, idx);
+        let chat_history_len = chat_id.encode()?;
+
+        let mut batch = WriteBatch::default();
+        // Put new entry to history.
+        let key = (chat_id, idx);
+        let key_bytes = Self::bytes_from_chat_entry(key)?;
+        let output_value_bytes = output.encode()?;
+        batch.put_cf(history_cf, &key_bytes, &output_value_bytes)?;
+
+        // Put new chat history len to index.
+        let new_idx = idx + 1;
+        let new_idx_bytes = Self::bytes_from_u64(new_idx);
+
+        batch.put_cf(history_cf, chat_history_len, &new_idx_bytes)?;
+
+        self.database.write(batch)?;
+        Ok(())
     }
 
     //
@@ -787,6 +922,13 @@ impl AccountDatabase {
         Ok(())
     }
 
+    fn bytes_from_chat_entry(entry: (chat::ChatId, u64)) -> Result<Vec<u8>, Error> {
+        let idx_bytes = Self::bytes_from_u64(entry.1);
+        let mut data = entry.0.encode()?;
+        data.extend_from_slice(&idx_bytes);
+        Ok(data)
+    }
+
     /// Convert timestamp to bytearray.
     fn bytes_from_timestamp(timestamp: Timestamp) -> [u8; 8] {
         let mut bytes = [0u8; 8];
@@ -819,6 +961,17 @@ impl AccountDatabase {
         } else {
             None
         }
+    }
+
+    fn chat_entry_from_bytes(bytes: &[u8]) -> Result<(chat::ChatId, u64), Error> {
+        let bytes_len = bytes.len();
+        if bytes_len <= 8 {
+            bail!("No enough bytes to decode chat entry.")
+        }
+        let separate = bytes_len - 8;
+        let idx = Self::u64_from_bytes(&bytes[separate..]).unwrap();
+        let chat_id = chat::ChatId::decode(&bytes[..separate])?;
+        Ok((chat_id, idx))
     }
 }
 
@@ -1170,7 +1323,7 @@ mod test {
 
         // ignore that limit 10, still return 5 items
         for ((id, (t, ref saved)), (time2, _)) in db
-            .iter_range(Timestamp::UNIX_EPOCH, 10)
+            .iter_account_history_range(Timestamp::UNIX_EPOCH, 10)
             .enumerate()
             .zip(entries.iter())
         {
@@ -1192,7 +1345,7 @@ mod test {
         }
 
         for ((id, (t, ref saved)), (time2, _)) in db
-            .iter_range(Timestamp::UNIX_EPOCH, 1000)
+            .iter_account_history_range(Timestamp::UNIX_EPOCH, 1000)
             .enumerate()
             .zip(entries.iter())
         {
@@ -1213,7 +1366,10 @@ mod test {
             db.push_entry(time, e.clone()).unwrap();
         }
 
-        for (id, (t, ref saved)) in db.iter_range(Timestamp::UNIX_EPOCH, 5).enumerate() {
+        for (id, (t, ref saved)) in db
+            .iter_account_history_range(Timestamp::UNIX_EPOCH, 5)
+            .enumerate()
+        {
             debug!("saved = {:?}", saved);
             assert!(saved.is_testing_stub(id));
             assert_eq!(t, time + Duration::from_millis(id as u64));

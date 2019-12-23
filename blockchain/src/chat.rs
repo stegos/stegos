@@ -23,22 +23,15 @@
 
 use crate::timestamp::Timestamp;
 use crate::{BlockchainError, OutputError};
-// use curve25519_dalek::scalar::Scalar;
-// use failure::{Error, Fail};
 use failure::Fail;
-// use rand::{random, Rng};
-// use serde::de::{Deserialize, Deserializer};
-// use serde::ser::{Serialize, Serializer};
 use serde_derive::{Deserialize, Serialize};
 use std::fmt;
-// use std::mem::transmute;
 use std::time::Duration;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc::{
     aes_encrypt_with_key, sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey,
 };
 use stegos_crypto::CryptoError;
-// use stegos_serialization::traits::ProtoConvert;
 
 // -----------------------------------------------------------
 
@@ -96,7 +89,7 @@ pub struct ChatMessageOutput {
     pub payload: MessagePayload,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Serialize, Deserialize)]
 pub enum MessagePayload {
     EncryptedMessage(Vec<u8>),
     EncryptedChainCodes(Vec<Pt>),
@@ -110,8 +103,6 @@ pub enum ChatError {
     InvalidPoint,
     #[fail(display = "Duplicate Group/Channel ID")]
     DuplicateID,
-    #[fail(display = "Invalid Group or Channel ID: {}", _0)]
-    InvalidGroup(String),
     #[fail(display = "Private Message Data Too Long")]
     DataTooLong,
     #[fail(display = "Private Message Data Too Short")]
@@ -167,39 +158,15 @@ impl ChatMessageOutput {
             msg_nbr: 0,
             msg_tot: 0,
             signature: SchnorrSig::new(),
-            payload: MessagePayload::dum(),
+            payload: MessagePayload::default(),
         }
     }
-
-    /*
-    pub fn to_str(&self) -> &str {
-        // TODO
-        "ChatMessageOutput".clone()
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        // TODO
-        Ok(Self::new())
-    }
-    */
 }
 
-impl MessagePayload {
-    pub fn dum() -> Self {
+impl Default for MessagePayload {
+    fn default() -> Self {
         MessagePayload::EncryptedMessage(Vec::<u8>::new())
     }
-
-    /*
-    pub fn to_str(&self) -> &str {
-        // TODO
-        "MessagePayload".clone()
-    }
-
-    pub fn from_str(s: &str) -> Result<Self, CryptoError> {
-        // TODO
-        Ok(Self::dum())
-    }
-    */
 }
 
 impl fmt::Debug for ChatMessageOutput {
@@ -215,22 +182,6 @@ impl fmt::Debug for MessagePayload {
         write!(f, "MessagePayload()")
     }
 }
-
-impl Eq for MessagePayload {}
-impl PartialEq<MessagePayload> for MessagePayload {
-    fn eq(&self, other: &MessagePayload) -> bool {
-        match (self, other) {
-            (MessagePayload::EncryptedChainCodes(a), MessagePayload::EncryptedChainCodes(b)) => {
-                a.iter().zip(b.iter()).all(|(ka, kb)| *ka == *kb)
-            }
-            (MessagePayload::EncryptedMessage(a), MessagePayload::EncryptedMessage(b)) => {
-                a.iter().zip(b.iter()).all(|(ta, tb)| *ta == *tb)
-            }
-            _ => false,
-        }
-    }
-}
-
 // -------------------------------------------------------------
 
 #[derive(Clone)]

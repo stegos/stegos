@@ -387,7 +387,6 @@ pub fn create_fake_micro_block(
                     if Timestamp::now() > good_until {
                         continue;
                     }
-                    stakes.push(output);
                 }
             }
         }

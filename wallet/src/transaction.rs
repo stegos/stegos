@@ -35,6 +35,7 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc::Fr;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::scc::SecretKey;
+use stegos_blockchain::ChatMessageOutput;
 
 /// Create trasnaction.
 #[derive(Serialize, Debug, PartialEq, Eq, Clone)]
@@ -303,6 +304,95 @@ where
 
     assert_eq!(extended_outputs.len(), outputs.len());
     Ok((inputs, outputs, gamma, extended_outputs, fee))
+}
+
+
+
+/// Create a new payment transaction.
+pub(crate) fn create_chat_transaction<'a, UnspentIter>(
+    sender_pkey: &PublicKey,
+    unspent_iter: UnspentIter,
+    chat_fee: i64,
+    payment_fee: i64,
+    max_inputs_in_tx: usize,
+    chat_outputs: Vec<ChatMessageOutput>,
+) -> Result<(Vec<Output>, Vec<Output>, Fr, i64), Error>
+where
+    UnspentIter: Iterator<Item = (PaymentOutput, i64)>,
+{
+    let fee = chat_fee + payment_fee;
+
+    debug!(
+        "Creating a chat transaction: fee={}",
+        fee
+    );
+
+    //
+    // Find inputs
+    //
+
+    trace!("Checking for available funds in the account...");
+    let (inputs, fee, change) = find_utxo(unspent_iter, 0, fee, max_inputs_in_tx)?;
+    let inputs: Vec<Output> = inputs
+        .into_iter()
+        .map(|o| o.into())
+        .collect();
+    assert!(!inputs.is_empty());
+
+    debug!(
+        "Transaction preview: withdrawn={}, change={}, fee={}",
+        change + fee,
+        change,
+        fee
+    );
+    for input in &inputs {
+        debug!("Use UTXO: hash={}", Hash::digest(input));
+    }
+
+    //
+    // Create an output for change, if change > 0
+    //
+
+    let mut outputs: Vec<Output> = Vec::<Output>::with_capacity( chat_outputs.len() + 1);
+    outputs.extend(chat_outputs.into_iter().map(Into::into));
+    // let mut extended_outputs = Vec::with_capacity(chat_outputs.len() + 1);
+
+    let mut gamma = Fr::zero();
+
+    if change > 0 {
+        trace!("Creating change UTXO...");
+        let data = PaymentPayloadData::Comment("Change during chat output creation".to_string());
+        let (output2, gamma2, _rvalue) =
+            PaymentOutput::with_payload(None, sender_pkey, change, data.clone())?;
+        info!(
+            "Created change UTXO: hash={}, recipient={}, change={}, data={:?}",
+            Hash::digest(&output2),
+            sender_pkey,
+            change,
+            data
+        );
+        let extended_output = PaymentValue {
+            output: output2.clone(),
+            rvalue: None,
+            recipient: *sender_pkey,
+            amount: change,
+            data: data.into(),
+            is_change: true,
+        };
+        // extended_outputs.push(extended_output.into());
+        outputs.push(output2.into());
+        gamma += gamma2;
+    }
+
+    info!(
+        "Created chat transaction: withdrawn={}, change={}, fee={}",
+        change + fee,
+        change,
+        fee
+    );
+
+    // assert_eq!(extended_outputs.len(), outputs.len());
+    Ok((inputs, outputs, gamma, fee))
 }
 
 /// Create a new staking transaction.

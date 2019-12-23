@@ -418,13 +418,15 @@ impl PaymentPayload {
         let mut gamma_bytes: [u8; 32] = [0u8; 32];
         gamma_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += gamma_bytes.len();
-        let gamma: Fr = Fr::try_from_bytes(&gamma_bytes[..]).expect("ok");
+        let gamma: Fr = Fr::try_from_bytes(&gamma_bytes[..])?;
 
         // Delta.
         let mut delta_bytes: [u8; 32] = [0u8; 32];
         delta_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += delta_bytes.len();
-        let delta: Fr = Fr::try_from_bytes(&delta_bytes[..]).expect("ok");
+        // use Fr::from aproach. To be compatible with Fr::synthetic_random
+        let delta_hash: Hash = Hash::try_from_bytes(&delta_bytes[..])?;
+        let delta = Fr::from(delta_hash);
 
         // Amount.
         let mut amount_bytes: [u8; 8] = [0u8; 8];
@@ -439,7 +441,7 @@ impl PaymentPayload {
         let mut signature_u_bytes: [u8; 32] = [0u8; 32];
         signature_u_bytes.copy_from_slice(&payload[pos..pos + 32]);
         pos += signature_u_bytes.len();
-        let signature_u: Fr = Fr::try_from_bytes(&signature_u_bytes).expect("ok");
+        let signature_u: Fr = Fr::try_from_bytes(&signature_u_bytes)?;
 
         let mut signature_k_bytes: [u8; 32] = [0u8; 32];
         signature_k_bytes.copy_from_slice(&payload[pos..pos + 32]);

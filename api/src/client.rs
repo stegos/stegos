@@ -114,7 +114,7 @@ impl WebSocketClient {
 }
 
 impl WebSocketClient {
-    fn poll_impl(&mut self) -> Poll<Response, WebSocketError> {
+    fn poll_impl(&mut self) -> Poll<Option<Response>, WebSocketError> {
         match &mut self.state {
             State::Connect(connection_fut) => {
                 trace!("poll: state=Connect");
@@ -160,7 +160,7 @@ impl WebSocketClient {
                         trace!("[{}] => Text({})", self.endpoint, msg);
                         let response: Response = decode(&self.api_token, &msg)?;
                         trace!("[{}] => {:?}", self.endpoint, response);
-                        return Ok(Async::Ready(response));
+                        return Ok(Async::Ready(Some(response)));
                     }
                     Async::Ready(Some(OwnedMessage::Binary(msg))) => {
                         trace!("[{}] => Binary(len={})", self.endpoint, msg.len());
@@ -194,11 +194,11 @@ impl WebSocketClient {
 }
 
 // Event loop.
-impl Future for WebSocketClient {
+impl Stream for WebSocketClient {
     type Item = Response;
     type Error = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
         match self.poll_impl() {
             Ok(r) => Ok(r),
             Err(e) => {

@@ -77,7 +77,7 @@ macro_rules! serror {
 #[derive(Clone)]
 pub struct GroupMember {
     pub pkey: PublicKey,
-    pub chain: Hash,
+    pub chain: Fr,
     pub epoch: Timestamp,
 }
 
@@ -93,9 +93,9 @@ pub struct GroupOwnerInfo {
     // Secret key used for this group ownership
     pub owner_skey: SecretKey,
     // current chain code
-    pub owner_chain: Hash,
+    pub owner_chain: Fr,
     // chain for use in group rekeyings
-    pub owner_rekeying_chain: Hash,
+    pub owner_rekeying_chain: Fr,
     // list of members / subscribers
     pub members: MemberRoster,
     // list of ignored members
@@ -111,15 +111,15 @@ pub struct ChatSession {
     // owner of the group
     pub owner_pkey: PublicKey,
     // owner chain code for session
-    pub owner_chain: Hash,
+    pub owner_chain: Fr,
     // owner chain code for rekeying purposes
-    pub owner_rekeying_chain: Hash,
+    pub owner_rekeying_chain: Fr,
     // my public key for group chat purposees
     pub my_pkey: PublicKey,
     // my secret key for group chat purposes
     pub my_skey: SecretKey,
     // my current chain code
-    pub my_chain: Hash,
+    pub my_chain: Fr,
     // list of other group members and their chain codes
     pub members: MemberRoster,
     // list of ignored members
@@ -137,7 +137,7 @@ pub struct ChannelOwnerInfo {
     // Secret key used for this group ownership
     pub owner_skey: SecretKey,
     // current chain code
-    pub owner_chain: Hash,
+    pub owner_chain: Fr,
 }
 
 #[derive(Clone)]
@@ -147,7 +147,7 @@ pub struct ChannelSession {
     // owner of the Channel
     pub owner_pkey: PublicKey,
     // owner chain code for session
-    pub owner_chain: Hash,
+    pub owner_chain: Fr,
     // list of messages received
     pub messages: Vec<(PublicKey, Vec<u8>)>,
 }
@@ -175,10 +175,10 @@ impl MemberRoster {
     pub fn generate_rekeying_messages(
         &mut self,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         sender_skey: &SecretKey,
         sender_pkey: &PublicKey,
-        sender_chain: &Hash,
+        sender_chain: &Fr,
         new_chain_seed: &Fr,
     ) -> Vec<ChatMessageOutput> {
         // Generate one or more Rekeying messages for use in a Transaction
@@ -193,10 +193,10 @@ impl MemberRoster {
         // this kind of shit is really infuriating... why not make a real closure with lexical bindings?
         fn generate_message(
             owner_pkey: &PublicKey,
-            owner_chain: &Hash,
+            owner_chain: &Fr,
             sender_skey: &SecretKey,
             sender_pkey: &PublicKey,
-            sender_chain: &Hash,
+            sender_chain: &Fr,
             msg_ser: u64,
             msg_nbr: u32,
             msg_tot: u32,
@@ -260,13 +260,13 @@ impl MemberRoster {
         // for use on general group messages
         self.0
             .iter()
-            .find(|mem| utxo.sender == utxo.sender_keying_hint * Fr::from(mem.chain))
+            .find(|mem| utxo.sender == utxo.sender_keying_hint * mem.chain)
     }
 
     pub fn decrypt_chat_message(
         &self,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         utxo: &ChatMessageOutput,
         ctxt: &[u8],
     ) -> Option<(PublicKey, IncomingChatPayload)> {
@@ -291,18 +291,17 @@ impl MemberRoster {
     pub fn find_sender_newchain(
         &self,
         skey: &SecretKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         utxo: &ChatMessageOutput,
         pts: &Vec<Pt>,
-    ) -> Option<(PublicKey, Hash, Timestamp)> {
+    ) -> Option<(PublicKey, Fr, Timestamp)> {
         // utxo is expected to carry cloaked chain codes
         let sf = Fr::one() / Fr::from(*skey);
-        let sfk = utxo.sender_cloaking_hint / Fr::from(*owner_chain);
+        let sfk = utxo.sender_cloaking_hint / *owner_chain;
         let mut ans = None;
         pts.iter().find(|&&pt| {
             let cg = sf * pt;
-            let chain = Hash::digest(&cg).rshift(4);
-            let fr = Fr::from(chain);
+            let chain = Fr::from(Hash::digest(&cg).rshift(4));
             self.0.iter().find(|mem| {
                 if utxo.sender_keying_hint == sfk * Pt::from(mem.pkey) {
                     ans = Some((mem.pkey.clone(), chain.clone(), mem.epoch));
@@ -320,10 +319,10 @@ impl MemberRoster {
         &mut self,
         my_skey: &SecretKey,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         utxo: &ChatMessageOutput,
         pts: &Vec<Pt>,
-    ) -> Option<(PublicKey, Hash)> {
+    ) -> Option<(PublicKey, Fr)> {
         // when utxo is a rekeying message
         match self.find_sender_newchain(my_skey, owner_chain, utxo, pts) {
             Some((pkey, chain, epoch)) => {
@@ -352,23 +351,21 @@ impl MemberRoster {
 
     fn is_one_of_mine(
         &self,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         my_pkey: &PublicKey,
-        my_chain: &Hash,
+        my_chain: &Fr,
         utxo: &ChatMessageOutput,
     ) -> bool {
-        utxo.sender
-            == utxo.sender_cloaking_hint * Fr::from(*my_chain) / Fr::from(*owner_chain)
-                * Pt::from(*my_pkey)
+        utxo.sender == utxo.sender_cloaking_hint * *my_chain / *owner_chain * Pt::from(*my_pkey)
     }
 
     pub fn get_decrypted_message(
         &mut self,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         my_skey: &SecretKey,
         my_pkey: &PublicKey,
-        my_chain: &Hash,
+        my_chain: &Fr,
         utxo: &ChatMessageOutput,
     ) -> Option<(PublicKey, IncomingChatPayload)> {
         match &utxo.payload {
@@ -393,7 +390,7 @@ impl MemberRoster {
         }
     }
 
-    pub fn add_members_to_roster(&mut self, vec: &Vec<(PublicKey, Hash)>, epoch: Timestamp) {
+    pub fn add_members_to_roster(&mut self, vec: &Vec<(PublicKey, Fr)>, epoch: Timestamp) {
         let mut members = Vec::<GroupMember>::new();
         for (pkey, chain) in vec.iter() {
             // the following test weeds out duplicate entries by pkey
@@ -555,7 +552,7 @@ impl GroupOwnerInfo {
         &mut self,
         chat: &mut Chat,
         utxo: &ChatMessageOutput,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         sender: PublicKey,
     ) {
         match self.members.find_sender_chain(utxo) {
@@ -563,8 +560,7 @@ impl GroupOwnerInfo {
                 chat.my_utxos.push(UtxoInfo {
                     id: Hash::digest(utxo),
                     created: utxo.created,
-                    keying: utxo.recipient_cloaking_hint * Fr::from(*owner_chain)
-                        / Fr::from(member.chain)
+                    keying: utxo.recipient_cloaking_hint * *owner_chain / member.chain
                         * Fr::from(self.owner_skey),
                 });
             }
@@ -576,7 +572,7 @@ impl GroupOwnerInfo {
         &mut self,
         chat: &mut Chat,
         utxo: &ChatMessageOutput,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
     ) -> ChatMessage {
         match self.members.get_decrypted_message(
             &self.owner_pkey,
@@ -626,7 +622,7 @@ impl GroupOwnerInfo {
         )
     }
 
-    fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Hash {
+    fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Fr {
         match msg.payload {
             MessagePayload::EncryptedMessage(_) => self.owner_chain,
             MessagePayload::EncryptedChainCodes(_) => self.owner_rekeying_chain,
@@ -642,7 +638,7 @@ impl GroupOwnerInfo {
         let mut new_mems = new_members.clone();
         new_mems.sort();
         new_mems.dedup();
-        let mut pairs = Vec::<(PublicKey, Hash)>::new();
+        let mut pairs = Vec::<(PublicKey, Fr)>::new();
         for pkey in new_mems.iter() {
             let (_, chain) = new_chain_code(&pkey, &self.owner_chain);
             pairs.push((pkey.clone(), chain.clone()));
@@ -655,7 +651,7 @@ impl GroupOwnerInfo {
         let mut msg_nbr = 0u32;
         let mut mem_nbr = 0;
         let mut msgs = Vec::<NewMemberMessage>::new();
-        let mut joined = Vec::<(PublicKey, Hash)>::new();
+        let mut joined = Vec::<(PublicKey, Fr)>::new();
 
         fn generate_message(
             info: &GroupOwnerInfo,
@@ -664,7 +660,7 @@ impl GroupOwnerInfo {
             msg_tot: u32,
             r_owner: Fr,
             r_sender: Fr,
-            joined: &Vec<(PublicKey, Hash)>,
+            joined: &Vec<(PublicKey, Fr)>,
         ) -> NewMemberMessage {
             let mut msg = ChatMessageOutput::new();
             msg.sequence = msg_ser;
@@ -704,7 +700,7 @@ impl GroupOwnerInfo {
                 ));
                 msg_nbr += 1;
                 mem_nbr = 0;
-                joined = Vec::<(PublicKey, Hash)>::new();
+                joined = Vec::<(PublicKey, Fr)>::new();
             }
         });
         if mem_nbr > 0 {
@@ -782,15 +778,15 @@ pub struct NewMemberInfo {
     // Owner PubKey identifies which group
     pub owner_pkey: PublicKey,
     // current keying
-    pub owner_chain: Hash,
+    pub owner_chain: Fr,
     // emergency rekeying chain
-    pub rekeying_chain: Hash,
+    pub rekeying_chain: Fr,
     // my initial chain code
-    pub my_initial_chain: Hash,
+    pub my_initial_chain: Fr,
     // total number of members, including self,
     pub num_members: u32,
     // members [0..11) (Pubkey, Chain)
-    pub members: Vec<(PublicKey, Hash)>,
+    pub members: Vec<(PublicKey, Fr)>,
 }
 
 #[derive(Clone)]
@@ -799,7 +795,7 @@ pub struct NewMemberInfoCont {
     num_members: u32,
     member_index: u32,
     // up to 13 more members (Pubkey, chain)
-    members: Vec<(PublicKey, Hash)>,
+    members: Vec<(PublicKey, Fr)>,
 }
 
 #[derive(Clone)]
@@ -908,17 +904,17 @@ impl PrivateMessage {
         match bytes[0] {
             0 => {
                 let owner_pkey = PublicKey::try_from_bytes(&bytes[1..33])?;
-                let owner_chain = Hash::try_from_bytes(&bytes[33..65])?;
-                let rekeying_chain = Hash::try_from_bytes(&bytes[65..97])?;
-                let my_initial_chain = Hash::try_from_bytes(&bytes[97..129])?;
+                let owner_chain = Fr::try_from_bytes(&bytes[33..65])?;
+                let rekeying_chain = Fr::try_from_bytes(&bytes[65..97])?;
+                let my_initial_chain = Fr::try_from_bytes(&bytes[97..129])?;
                 let num_members = LittleEndian::read_u32(&bytes[129..133]);
-                let mut members = Vec::<(PublicKey, Hash)>::new();
+                let mut members = Vec::<(PublicKey, Fr)>::new();
                 let nmem = bytes[133] as usize;
                 let mut pos = 134;
                 for _ in 0..nmem {
                     let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
                     pos += 32;
-                    let chain = Hash::try_from_bytes(&bytes[pos..pos + 32])?;
+                    let chain = Fr::try_from_bytes(&bytes[pos..pos + 32])?;
                     pos += 32;
                     members.push((pkey, chain));
                 }
@@ -936,13 +932,13 @@ impl PrivateMessage {
                 let owner_pkey = PublicKey::try_from_bytes(&bytes[1..33])?;
                 let num_members = LittleEndian::read_u32(&bytes[33..37]);
                 let member_index = LittleEndian::read_u32(&bytes[37..41]);
-                let mut members = Vec::<(PublicKey, Hash)>::new();
+                let mut members = Vec::<(PublicKey, Fr)>::new();
                 let nmem = bytes[41] as usize;
                 let mut pos = 42;
                 for _ in 0..nmem {
                     let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
                     pos += 32;
-                    let chain = Hash::try_from_bytes(&bytes[pos..pos + 32])?;
+                    let chain = Fr::try_from_bytes(&bytes[pos..pos + 32])?;
                     pos += 32;
                     members.push((pkey, chain));
                 }
@@ -994,7 +990,7 @@ impl ChatSession {
         &mut self,
         chat: &mut Chat,
         utxo: &ChatMessageOutput,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
     ) -> ChatMessage {
         match self.members.get_decrypted_message(
             &self.owner_pkey,
@@ -1050,7 +1046,7 @@ impl ChatSession {
         )
     }
 
-    fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Hash {
+    fn get_owner_chain(&self, msg: &ChatMessageOutput) -> Fr {
         match msg.payload {
             MessagePayload::EncryptedMessage(_) => self.owner_chain,
             MessagePayload::EncryptedChainCodes(_) => self.owner_rekeying_chain,
@@ -1413,7 +1409,7 @@ impl Chat {
         &mut self,
         info: &mut GroupOwnerInfo,
         msg: &ChatMessageOutput,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
     ) {
         // Here is where incoming messages for Groups are being decrypted and handed
         // back with the public key of the sender. Rekeying messages are handled
@@ -1445,7 +1441,7 @@ impl Chat {
         &mut self,
         info: &mut ChatSession,
         msg: &ChatMessageOutput,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
     ) {
         // Here is where incoming messages for Groups are being decrypted and handed
         // back with the public key of the sender. Rekeying messages are handled
@@ -1509,12 +1505,12 @@ impl Chat {
     fn on_message_received(&mut self, msg: &ChatMessageOutput) {
         let owner_pt = Pt::from(msg.recipient);
         let owner_hint = msg.recipient_keying_hint;
-        let mut owner_chain = Hash::zero();
+        let mut owner_chain = Fr::zero();
         // Look for messages from owned groups.
         // Rekeying messages will arrive on rekeying chain code.
         if let Some(pos) = self.owned_groups.iter().position(|g| {
             owner_chain = g.get_owner_chain(msg);
-            owner_pt == Fr::from(owner_chain) * owner_hint
+            owner_pt == owner_chain * owner_hint
         }) {
             let mut info = self.owned_groups.remove(pos);
             self.process_owned_group_message(&mut info, msg, &owner_chain);
@@ -1524,7 +1520,7 @@ impl Chat {
         // Rekeying messages will arrive on rekeying chain code.
         } else if let Some(pos) = self.subscribed_groups.iter().position(|g| {
             owner_chain = g.get_owner_chain(msg);
-            owner_pt == Fr::from(owner_chain) * owner_hint
+            owner_pt == owner_chain * owner_hint
         }) {
             let mut info = self.subscribed_groups.remove(pos);
             self.process_subscribed_group_message(&mut info, msg, &owner_chain);
@@ -1534,7 +1530,7 @@ impl Chat {
         } else if let Some(pos) = self
             .subscribed_channels
             .iter()
-            .position(|g| owner_pt == Fr::from(g.owner_chain) * owner_hint)
+            .position(|g| owner_pt == g.owner_chain * owner_hint)
         {
             let mut info = self.subscribed_channels.remove(pos);
             self.process_subscribed_channel_message(&mut info, msg);
@@ -1545,7 +1541,7 @@ impl Chat {
         } else if let Some(pos) = self
             .owned_channels
             .iter()
-            .position(|g| owner_pt == Fr::from(g.owner_chain) * owner_hint)
+            .position(|g| owner_pt == g.owner_chain * owner_hint)
         {
             // getting back one of my own channel messages
             // record it as a spendable UTXO

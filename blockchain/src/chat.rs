@@ -238,7 +238,7 @@ pub enum OutgoingChatPayload {
     // payload was decrypted into a list of evicted members
     Evictions(Vec<PublicKey>),
     // payload for telling group about new member (pkey,chain) info
-    NewMembers(Vec<(PublicKey, Hash)>),
+    NewMembers(Vec<(PublicKey, Fr)>),
     // payload has been decrypted into plaintext of whatever content
     // leave room for 1 byte of SubMsgType info in encrypted payload
     PlainText(Vec<u8>),
@@ -247,9 +247,9 @@ pub enum OutgoingChatPayload {
 #[derive(Clone)]
 pub enum IncomingChatPayload {
     Evictions(Vec<PublicKey>),
-    NewMembers(Vec<(PublicKey, Hash)>),
+    NewMembers(Vec<(PublicKey, Fr)>),
     PlainText(Vec<u8>),
-    Rekeying(Hash),
+    Rekeying(Fr),
 }
 
 /// ChatMessageOutput canary  canary for the light nodes..
@@ -290,9 +290,9 @@ impl ChatMessageOutput {
     pub fn cloak_recipient(
         &mut self,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         r_owner: &Fr,
-        sender_chain: &Hash,
+        sender_chain: &Fr,
     ) {
         // key_hint = random_A * PKey_owner
         // cloaked_owner = key_hint * Chain_owner
@@ -331,16 +331,16 @@ impl ChatMessageOutput {
         //      sender_key_hint = sender_cloak_hint / chain_owner * PKey_member
         //
         self.recipient_keying_hint = *r_owner * Pt::from(*owner_pkey);
-        self.recipient = self.recipient_keying_hint * Fr::from(*owner_chain);
-        self.recipient_cloaking_hint = *r_owner * Fr::from(*sender_chain);
+        self.recipient = self.recipient_keying_hint * *owner_chain;
+        self.recipient_cloaking_hint = *r_owner * *sender_chain;
     }
 
     pub fn cloak_sender(
         &mut self,
         sender_pkey: &PublicKey,
-        sender_chain: &Hash,
+        sender_chain: &Fr,
         r_sender: &Fr,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
     ) {
         // key_hint = random_B * PKey_sender
         // cloaked_sender = key_hint * Chain_sender
@@ -349,30 +349,29 @@ impl ChatMessageOutput {
         // To find sender, scan membership roster looking for Chain * key_hint = cloaked_sender.
         // You will then know PKey_sender from association with Chain_sender.
         self.sender_keying_hint = *r_sender * Pt::from(*sender_pkey);
-        self.sender = self.sender_keying_hint * Fr::from(*sender_chain);
-        self.sender_cloaking_hint = *r_sender * Fr::from(*owner_chain);
+        self.sender = self.sender_keying_hint * *sender_chain;
+        self.sender_cloaking_hint = *r_sender * *owner_chain;
     }
 
-    pub fn sign(&mut self, sender_skey: &SecretKey, sender_chain: &Hash, r_sender: &Fr) {
+    pub fn sign(&mut self, sender_skey: &SecretKey, sender_chain: &Fr, r_sender: &Fr) {
         // signed in key of = random_B * Chain_sender * PKey_sender
         let h = Hash::digest(self);
-        let eff_skey =
-            SecretKey::from(*r_sender * Fr::from(*sender_skey) * Fr::from(*sender_chain));
+        let eff_skey = SecretKey::from(*r_sender * Fr::from(*sender_skey) * *sender_chain);
         self.signature = sign_hash(&h, &eff_skey);
     }
 
     pub fn compute_encryption_key(
         &self,
         owner_pkey: &PublicKey,
-        owner_chain: &Hash,
+        owner_chain: &Fr,
         sender_pkey: &PublicKey,
-        sender_chain: &Hash,
+        sender_chain: &Fr,
     ) -> Hash {
         // Key for payload AES/128 encryption/decryption
         // = H(Chain_owner * PKey_sender + Chain_sender * PKey_owner +
         //       random_B * PKey_sender + random_A * PKey_owner)
-        let pt = Fr::from(*owner_chain) * Pt::from(*sender_pkey)
-            + Fr::from(*sender_chain) * Pt::from(*owner_pkey)
+        let pt = *owner_chain * Pt::from(*sender_pkey)
+            + *sender_chain * Pt::from(*owner_pkey)
             + self.sender_keying_hint
             + self.recipient_keying_hint;
         let mut hasher = Hasher::new();
@@ -430,7 +429,7 @@ impl ChatMessageOutput {
         match SubMsgType::decoding(plain_text[0]) {
             SubMsgType::RawMsg => Ok(IncomingChatPayload::PlainText(plain_text[1..].to_vec())),
             SubMsgType::NewMembers => {
-                let mut pairs = Vec::<(PublicKey, Hash)>::new();
+                let mut pairs = Vec::<(PublicKey, Fr)>::new();
                 if nb > 1 {
                     let ct = plain_text[1] as usize;
                     if (ct * 32 * 2 + 2) > nb {
@@ -444,7 +443,7 @@ impl ChatMessageOutput {
                         let pkey = PublicKey::try_from_bytes(&bytes)?;
                         bytes.copy_from_slice(&plain_text[pos..pos + 32]);
                         pos += 32;
-                        let chain = Hash::try_from_bytes(&bytes)?;
+                        let chain = Fr::try_from_bytes(&bytes)?;
                         pairs.push((pkey, chain));
                     }
                 }
@@ -475,10 +474,10 @@ impl ChatMessageOutput {
 /// Send in some plaintext, get a ChatMessageOutput UTXO in return.
 pub fn make_chat_message(
     owner_pkey: &PublicKey,
-    owner_chain: &Hash,
+    owner_chain: &Fr,
     sender_skey: &SecretKey,
     sender_pkey: &PublicKey,
-    sender_chain: &Hash,
+    sender_chain: &Fr,
     message: &[u8],
 ) -> ChatMessageOutput {
     let mut msg = ChatMessageOutput::new();
@@ -498,7 +497,7 @@ pub fn make_chat_message(
     msg
 }
 
-pub fn detrand(pkey: &PublicKey, chain: &Hash) -> Fr {
+pub fn detrand(pkey: &PublicKey, chain: &Fr) -> Fr {
     // make a deterministic random Fr value
     let mut hasher = Hasher::new();
     pkey.hash(&mut hasher);
@@ -509,11 +508,12 @@ pub fn detrand(pkey: &PublicKey, chain: &Hash) -> Fr {
     Fr::from(h)
 }
 
-pub fn new_chain_code(pkey: &PublicKey, chain: &Hash) -> (Fr, Hash) {
+pub fn new_chain_code(pkey: &PublicKey, chain: &Fr) -> (Fr, Fr) {
     // Use deterministic randomness based on hash of pkey, chain, random Fr
     let c = detrand(pkey, chain);
     let pt = c * Pt::one();
-    let chain = Hash::digest(&pt).rshift(4); // ensure fits in Fr
+    let hr4 = Hash::digest(&pt).rshift(4); // ensure fits in Fr
+    let chain = Fr::from(hr4);
     (c, chain)
 }
 
@@ -529,9 +529,9 @@ mod tests {
     fn check_chat_message_size() {
         let (_owner_skey, owner_pkey) = scc::make_random_keys();
         let (sender_skey, sender_pkey) = scc::make_random_keys();
-        let initial_owner_chain = Hash::digest(&owner_pkey);
+        let initial_owner_chain = Fr::from(Hash::digest(&owner_pkey).rshift(4));
         let (_owner_c, owner_chain) = new_chain_code(&owner_pkey, &initial_owner_chain);
-        let initial_sender_chain = Hash::digest(&sender_pkey);
+        let initial_sender_chain = Fr::from(Hash::digest(&sender_pkey).rshift(4));
         let (_sender_c, sender_chain) = new_chain_code(&sender_pkey, &initial_sender_chain);
         let txt = b"This is a test";
         // Check that we can construct an encrypted group message UTXO

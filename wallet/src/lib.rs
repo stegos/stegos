@@ -917,6 +917,9 @@ impl UnsealedAccountService {
                 }
             }
             Output::PublicPaymentOutput(o) => {
+                if &o.recipient != &self.account_pkey {
+                    return;
+                }
                 let PublicPaymentOutput { ref amount, .. } = &o;
                 assert!(*amount >= 0);
                 info!("Received public payment: utxo={}, amount={}", hash, amount);

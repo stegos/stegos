@@ -34,19 +34,13 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
 use std::time::Duration;
-use stegos_blockchain::{Block, Blockchain};
+use stegos_blockchain::{Block, BlockReader};
 use stegos_network::{Network, PeerId, ReplicationEvent};
 use tokio_timer::{clock, Delay};
 
-pub(super) struct Replication {
+pub struct Replication {
     /// My Peer ID.
     peer_id: PeerId,
-
-    /// My current epoch.
-    epoch: u64,
-
-    /// My current offset.
-    offset: u32,
 
     /// A map of connected peers.
     peers: HashMap<PeerId, Peer>,
@@ -67,9 +61,7 @@ impl Replication {
     ///
     /// Initialize replication subsystem.
     ///
-    pub(super) fn new(
-        epoch: u64,
-        offset: u32,
+    pub fn new(
         peer_id: PeerId,
         network: Network,
         events: mpsc::UnboundedReceiver<ReplicationEvent>,
@@ -77,8 +69,6 @@ impl Replication {
         let peers = HashMap::new();
         let periodic_delay = Delay::new(clock::now() + UPSTREAM_UPDATE_INTERVAL);
         Self {
-            epoch,
-            offset,
             peer_id,
             peers,
             periodic_delay,
@@ -90,7 +80,7 @@ impl Replication {
     //
     // Change the current upstream (if any).
     //
-    pub(super) fn change_upstream(&mut self) {
+    pub fn change_upstream(&mut self) {
         for (peer_id, peer) in self.peers.iter_mut() {
             if peer.is_upstream() {
                 info!("[{}] Disconnect by the user", peer_id);
@@ -103,13 +93,7 @@ impl Replication {
     ///
     /// Processes a new block.
     ///
-    pub(super) fn on_block(&mut self, block: Block, micro_blocks_in_epoch: u32) {
-        let (epoch, offset) = match &block {
-            Block::MacroBlock(block) => (block.header.epoch, 0),
-            Block::MicroBlock(block) => (block.header.epoch, block.header.offset),
-        };
-        self.epoch = epoch;
-        self.offset = offset;
+    pub fn on_block(&mut self, block: Block, micro_blocks_in_epoch: u32) {
         for (_peer_id, peer) in self.peers.iter_mut() {
             peer.on_block(&block, micro_blocks_in_epoch);
         }
@@ -118,15 +102,13 @@ impl Replication {
     ///
     /// Returns replication status.
     ///
-    pub(super) fn info(&self) -> ReplicationInfo {
+    pub fn info(&self) -> ReplicationInfo {
         let mut peers = Vec::with_capacity(self.peers.len());
         for (_peer_id, peer) in self.peers.iter() {
             peers.push(peer.info());
         }
         let my_info = PeerInfo::Localhost {
             peer_id: self.peer_id.to_base58(),
-            epoch: self.epoch,
-            offset: self.offset,
         };
         peers.push(my_info);
 
@@ -136,7 +118,13 @@ impl Replication {
     ///
     /// Polls events.
     ///
-    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Option<Block>> {
+    pub(super) fn poll(
+        &mut self,
+        current_epoch: u64,
+        current_offset: u32,
+        micro_blocks_in_epoch: u32,
+        block_reader: &dyn BlockReader,
+    ) -> Async<Option<Block>> {
         trace!("Poll");
 
         // Process replication events.
@@ -158,7 +146,7 @@ impl Replication {
                     ReplicationEvent::Connected { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
-                        peer.connected(chain.epoch(), chain.offset(), rx, tx);
+                        peer.connected(current_epoch, current_offset, rx, tx);
                     }
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
@@ -182,7 +170,12 @@ impl Replication {
 
         let mut has_upstream = false;
         for (_peer_id, peer) in self.peers.iter_mut() {
-            match peer.poll(chain) {
+            match peer.poll(
+                current_epoch,
+                current_offset,
+                micro_blocks_in_epoch,
+                block_reader,
+            ) {
                 Async::Ready(block) => {
                     return Async::Ready(Some(block));
                 }

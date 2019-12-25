@@ -36,8 +36,10 @@ use crate::output::*;
 use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
+use crate::BlockReader;
 use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
+use failure::Error;
 use log::*;
 use rocksdb;
 use rocksdb::{ColumnFamily, Snapshot, WriteBatch};
@@ -2764,5 +2766,16 @@ pub mod tests {
             unspent_output_proof.timestamp,
             chain.last_macro_block_timestamp()
         );
+    }
+}
+
+impl BlockReader for Blockchain {
+    /// Returns iterator over saved blocks.
+    fn iter_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error> {
+        Ok(Box::new(self.blocks_starting(epoch, offset)))
     }
 }

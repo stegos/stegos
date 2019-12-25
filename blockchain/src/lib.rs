@@ -101,3 +101,11 @@ pub fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error>
     let genesis = genesis.unwrap_macro();
     Ok((genesis, chain_cfg))
 }
+
+pub trait BlockReader {
+    fn iter_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error>;
+}

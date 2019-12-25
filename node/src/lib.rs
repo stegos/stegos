@@ -413,13 +413,7 @@ impl NodeService {
             network: network.clone(),
         };
         let txpool_service = None;
-        let replication = Replication::new(
-            chain.epoch(),
-            chain.offset(),
-            peer_id,
-            network.clone(),
-            replication_rx,
-        );
+        let replication = Replication::new(peer_id, network.clone(), replication_rx);
 
         let service = NodeService {
             cfg,
@@ -2537,7 +2531,14 @@ impl Future for NodeService {
         }
         // Replication
         loop {
-            match self.replication.poll(&self.chain) {
+            let micro_blocks_in_epoch = self.chain.cfg().micro_blocks_in_epoch;
+            let block_reader: &dyn BlockReader = &self.chain;
+            match self.replication.poll(
+                self.chain.epoch(),
+                self.chain.offset(),
+                micro_blocks_in_epoch,
+                block_reader,
+            ) {
                 Async::Ready(Some(block)) => {
                     if let Err(e) = self.handle_block(block) {
                         serror!(self, "Invalid block received from replication: {}", e);
@@ -2547,7 +2548,6 @@ impl Future for NodeService {
                 Async::NotReady => break,
             }
         }
-
         Ok(Async::NotReady)
     }
 }

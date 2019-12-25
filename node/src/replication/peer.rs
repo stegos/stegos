@@ -27,7 +27,7 @@ use futures::sync::mpsc;
 use futures::{task, Async, AsyncSink, Sink, Stream};
 use log::*;
 use std::time::{Duration, Instant};
-use stegos_blockchain::{Block, Blockchain};
+use stegos_blockchain::{Block, BlockReader};
 use stegos_network::{Multiaddr, PeerId};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
@@ -486,7 +486,13 @@ impl Peer {
     ///
     /// The state machine.
     ///
-    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Block> {
+    pub(super) fn poll(
+        &mut self,
+        current_epoch: u64,
+        current_offset: u32,
+        micro_blocks_in_epoch: u32,
+        block_reader: &dyn BlockReader,
+    ) -> Async<Block> {
         match self {
             //--------------------------------------------------------------------------------------
             // Discovered
@@ -683,16 +689,16 @@ impl Peer {
                 };
                 match request {
                     ReplicationRequest::Subscribe { epoch, offset } => {
-                        if epoch > chain.epoch() {
+                        if epoch > current_epoch {
                             trace!("[{}] Subscribe from the future: epoch={}, offset={}, local_epoch={}, local_offset={}",
-                                   peer_id, epoch, offset, chain.epoch(), chain.offset());
+                                   peer_id, epoch, offset, current_epoch, current_offset);
                             let new_state = Self::registered(peer_id, multiaddr);
                             std::mem::replace(self, new_state);
                             return Async::NotReady;
                         }
                         let response = ReplicationResponse::Subscribed {
-                            current_epoch: chain.epoch(),
-                            current_offset: chain.offset(),
+                            current_epoch,
+                            current_offset,
                         };
                         trace!("[{}] <- {:?}", peer_id, response);
                         let response = response.into_buffer().unwrap();
@@ -895,11 +901,15 @@ impl Peer {
                 //
                 // Send blocks.
                 //
-                let current_epoch = chain.epoch();
-                let current_offset = chain.offset();
                 if *epoch != current_epoch || *offset != current_offset {
-                    let micro_blocks_in_epoch = chain.cfg().micro_blocks_in_epoch;
-                    let blocks = chain.blocks_starting(*epoch, *offset);
+                    let blocks = match block_reader.iter_starting(*epoch, *offset) {
+                        Ok(blocks) => blocks,
+                        Err(e) => {
+                            error!("[{}] Failed to send blocks: {}", peer_id, e);
+                            self.disconnected();
+                            return Async::NotReady;
+                        }
+                    };
                     self.send_blocks(blocks, current_epoch, current_offset, micro_blocks_in_epoch);
                 }
 

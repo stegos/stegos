@@ -61,7 +61,8 @@ use stegos_keychain::keyfile::{
 };
 use stegos_keychain::KeyError;
 use stegos_network::Network;
-use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse};
+use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, TX_TOPIC};
+use stegos_serialization::traits::ProtoConvert;
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
 
@@ -164,10 +165,6 @@ struct UnsealedAccountService {
     // Snowball state (owned)
     //
     snowball: Option<(Snowball, oneshot::Sender<AccountResponse>)>,
-    //
-    // Response from mempool about transaction.
-    //
-    transaction_response: Option<oneshot::Receiver<NodeResponse>>,
 
     //
     // Api subscribers
@@ -211,7 +208,6 @@ impl UnsealedAccountService {
         let database = LightDatabase::open(&database_dir, genesis_hash, chain_cfg);
         let epoch = database.epoch();
         debug!("Opened database: epoch={}", epoch);
-        let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let expire_locked_inputs = Interval::new(clock::now(), CHECK_LOCKED_INPUTS);
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
@@ -234,7 +230,6 @@ impl UnsealedAccountService {
             subscribers,
             events,
             chain_notifications,
-            transaction_response,
         }
     }
 
@@ -757,16 +752,24 @@ impl UnsealedAccountService {
         Ok(())
     }
 
+    /// Send transaction to node and to the network.
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
-        if self.transaction_response.is_some() {
-            return Err(format_err!(
-                "Cannot create new transaction, tx={}, \
-                 old transaction still on the way to mempool.",
-                Hash::digest(&tx)
-            ));
-        }
-        self.transaction_response = Some(self.node.send_transaction(tx));
-        task::current().notify();
+        let data = tx.into_buffer()?;
+        let tx_hash = Hash::digest(&tx);
+        self.network.publish(&TX_TOPIC, data.clone())?;
+        info!(
+            "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
+            &tx_hash,
+            tx.txins()
+                .iter()
+                .map(|h| h.to_string())
+                .collect::<Vec<String>>(),
+            tx.txouts()
+                .iter()
+                .map(|o| Hash::digest(o).to_string())
+                .collect::<Vec<String>>(),
+            tx.fee()
+        );
         Ok(())
     }
 
@@ -987,24 +990,6 @@ impl Future for UnsealedAccountService {
     type Error = ();
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(mut transaction_response) = self.transaction_response.take() {
-            match transaction_response.poll().expect("connected") {
-                Async::Ready(response) => {
-                    match response {
-                        NodeResponse::BroadcastTransaction { hash, status } => {
-                            // Recover state.
-                            self.on_tx_status(&hash, &status);
-                        }
-                        NodeResponse::Error { error } => {
-                            error!("Failed to get transaction status: {:?}", error);
-                        }
-                        _ => unreachable!("Expected BroadcastTransaction|Error response"),
-                    };
-                }
-                Async::NotReady => self.transaction_response = Some(transaction_response),
-            }
-        }
-
         loop {
             match self.resend_tx.poll().expect("no errors in timers") {
                 Async::Ready(Some(_t)) => self.handle_resend_pending_txs(),

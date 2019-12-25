@@ -2920,7 +2920,7 @@ dependencies = [
  "stegos_crypto 1.0.0",
  "stegos_keychain 1.0.0",
  "stegos_network 1.0.0",
- "stegos_node 1.0.0",
+ "stegos_replication 1.0.0",
  "stegos_serialization 1.0.0",
  "stegos_txpool 1.0.0",
  "tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",

@@ -34,7 +34,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use stegos_network::{Network, NetworkResponse as NetworkServiceResponse, UnicastMessage};
 use stegos_node::{ChainNotification, Node, NodeResponse, StatusNotification};
-use stegos_wallet::api::{WalletNotification, WalletResponse};
+use stegos_wallet::api::{WalletControlResponse, WalletNotification, WalletResponse};
 use stegos_wallet::Wallet;
 use tokio::net::TcpListener;
 use tokio::runtime::TaskExecutor;
@@ -73,13 +73,13 @@ struct WebSocketHandler {
     /// Responses from the network subsystem
     network_responses: Vec<(RequestId, oneshot::Receiver<NetworkServiceResponse>)>,
     /// Wallet API.
-    wallet: Wallet,
+    wallet: Option<Wallet>,
     /// Wallet events.
-    wallet_notifications: mpsc::UnboundedReceiver<WalletNotification>,
+    wallet_notifications: Option<mpsc::UnboundedReceiver<WalletNotification>>,
     /// Wallet RPC responses.
     wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
     /// Node API.
-    node: Node,
+    node: Option<Node>,
     /// Node RPC responses.
     node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
     /// Subscription to status notifications.
@@ -104,8 +104,8 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         network: Network,
-        wallet: Wallet,
-        node: Node,
+        wallet: Option<Wallet>,
+        node: Option<Node>,
         version: String,
         chain_name: String,
     ) -> Self {
@@ -117,7 +117,11 @@ impl WebSocketHandler {
         let rx = network.subscribe(CONSOLE_TOPIC).unwrap();
         network_broadcast.insert(CONSOLE_TOPIC.to_string(), rx);
         let network_responses = Vec::new();
-        let wallet_notifications = wallet.subscribe();
+        let wallet_notifications = if let Some(wallet) = &wallet {
+            Some(wallet.subscribe())
+        } else {
+            None
+        };
         let wallet_responses = Vec::new();
         let node_responses = Vec::new();
         let status_notifications = None;
@@ -286,12 +290,35 @@ impl Future for WebSocketHandler {
                             };
                         }
                         RequestKind::WalletsRequest(wallet_request) => {
-                            self.wallet_responses
-                                .push((request.id, self.wallet.request(wallet_request)));
+                            if let Some(wallet) = &self.wallet {
+                                self.wallet_responses
+                                    .push((request.id, wallet.request(wallet_request)));
+                            } else {
+                                let r = WalletControlResponse::Error {
+                                    error: format!("Wallet API is not supported on the full node"),
+                                };
+                                let r = WalletResponse::WalletControlResponse(r);
+                                let r = Response {
+                                    kind: ResponseKind::WalletResponse(r),
+                                    id: request.id,
+                                };
+                                try_send!(self, r);
+                            }
                         }
                         RequestKind::NodeRequest(node_request) => {
-                            self.node_responses
-                                .push((request.id, self.node.request(node_request)));
+                            if let Some(node) = &self.node {
+                                self.node_responses
+                                    .push((request.id, node.request(node_request)));
+                            } else {
+                                let r = NodeResponse::Error {
+                                    error: format!("Node API is not supported on the light node"),
+                                };
+                                let r = Response {
+                                    kind: ResponseKind::NodeResponse(r),
+                                    id: request.id,
+                                };
+                                try_send!(self, r);
+                            }
                         }
                     }
                 }
@@ -386,8 +413,8 @@ impl Future for WebSocketHandler {
         }
 
         // Wallet notifications.
-        loop {
-            match self.wallet_notifications.poll().unwrap() {
+        while let Some(wallet_notifications) = &mut self.wallet_notifications {
+            match wallet_notifications.poll().unwrap() {
                 Async::Ready(Some(notification)) => {
                     let response = Response {
                         kind: ResponseKind::WalletNotification(notification),
@@ -515,8 +542,8 @@ impl WebSocketServer {
         api_token: ApiToken,
         executor: TaskExecutor,
         network: Network,
-        wallet: Wallet,
-        node: Node,
+        wallet: Option<Wallet>,
+        node: Option<Node>,
         version: String,
         chain_name: String,
     ) -> Result<(), Error> {

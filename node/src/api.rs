@@ -20,6 +20,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
+
 use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -27,14 +28,13 @@ use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
     TransactionStatus, ValidatorKeyInfo,
 };
-use stegos_replication::api::*;
-
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc;
 use stegos_crypto::utils::{
     deserialize_protobuf_array_from_hex, deserialize_protobuf_from_hex,
     serialize_protobuf_array_to_hex, serialize_protobuf_to_hex,
 };
+use stegos_replication::api::*;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "output_type")]

@@ -111,7 +111,6 @@ use stegos_crypto::scc::{
 };
 use stegos_crypto::{dicemix, CryptoError};
 use stegos_network::Network;
-use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
 use stegos_txpool::PoolJoin;
 use stegos_txpool::PoolNotification;
@@ -380,7 +379,6 @@ impl Snowball {
         account_pkey: PublicKey,
         network_pkey: pbc::PublicKey,
         network: Network,
-        _node: Node,
         facilitator: pbc::PublicKey,
         my_txins: Vec<(TXIN, UTXO)>,
         my_txouts: Vec<ProposedUTXO>,

@@ -928,7 +928,6 @@ impl LightDatabase {
             facilitator: self.facilitator_pkey.clone(),
         };
         batch.put_cf(meta_cf, EPOCH_KEY, epoch_info.into_buffer()?)?;
-
         for (tx_hash, tx_status) in &transaction_statuses {
             let timestamp = self
                 .tx_entry(tx_hash.clone())

@@ -884,6 +884,9 @@ impl ConsoleService {
         } else if msg == "show utxo" {
             let request = AccountRequest::UnspentInfo {};
             self.send_account_request(request)?
+        } else if msg == "show light replication" {
+            let request = WalletControlRequest::LightReplicationInfo {};
+            self.send_wallet_control_request(request)?
         } else if msg.starts_with("show history") {
             let arg = &msg[12..];
             let starting_from = if arg.is_empty() {

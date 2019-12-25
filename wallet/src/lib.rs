@@ -52,6 +52,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use stegos_blockchain::TransactionStatus;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -60,8 +61,8 @@ use stegos_keychain::keyfile::{
     load_account_pkey, load_network_keypair, write_account_pkey, write_account_skey,
 };
 use stegos_keychain::KeyError;
-use stegos_network::Network;
-use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, TX_TOPIC};
+use stegos_network::{Network, PeerId, ReplicationEvent};
+use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::runtime::TaskExecutor;
 use tokio_timer::{clock, Interval};
@@ -70,6 +71,9 @@ const STAKE_FEE: i64 = 0;
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const PENDING_UTXO_TIME: Duration = Duration::from_secs(5 * 60);
 const CHECK_LOCKED_INPUTS: Duration = Duration::from_secs(10);
+
+/// Topic used for sending transactions.
+pub const TX_TOPIC: &'static str = "tx";
 
 ///
 /// Events.
@@ -86,45 +90,6 @@ enum AccountEvent {
         request: AccountRequest,
         tx: oneshot::Sender<AccountResponse>,
     },
-}
-
-/// Helper for NodeRequest::SubscribeChain.
-enum ChainSubscription {
-    // Waiting for subscription.
-    Pending(oneshot::Receiver<NodeResponse>),
-    // Subscribed/
-    Active(mpsc::Receiver<ChainNotification>),
-}
-
-impl ChainSubscription {
-    fn new(node: &Node, epoch: u64, offset: u32) -> Self {
-        let request = NodeRequest::SubscribeChain { epoch, offset };
-        let rx = node.request(request);
-        ChainSubscription::Pending(rx)
-    }
-
-    fn poll_subscribed(&mut self) -> Poll<&mut mpsc::Receiver<ChainNotification>, Error> {
-        match self {
-            ChainSubscription::Pending(rx) => match rx.poll()? {
-                Async::Ready(response) => match response {
-                    NodeResponse::SubscribedChain { rx, .. } => {
-                        let rx = rx.unwrap();
-                        std::mem::replace(self, ChainSubscription::Active(rx));
-                        match self {
-                            ChainSubscription::Active(rx) => Ok(Async::Ready(rx)),
-                            _ => unreachable!("Expected ChainSubscription::Active state"),
-                        }
-                    }
-                    _ => unreachable!(
-                        "Expected SubscribeChain response NodeResponse: {:?}",
-                        response
-                    ),
-                },
-                Async::NotReady => Ok(Async::NotReady),
-            },
-            ChainSubscription::Active(rx) => Ok(Async::Ready(rx)),
-        }
-    }
 }
 
 struct UnsealedAccountService {
@@ -154,8 +119,6 @@ struct UnsealedAccountService {
 
     /// Network API (shared).
     network: Network,
-    /// Node API (shared).
-    node: Node,
     /// Resend timeout.
     resend_tx: Interval,
 
@@ -178,7 +141,12 @@ struct UnsealedAccountService {
     /// API Requests.
     events: mpsc::UnboundedReceiver<AccountEvent>,
     /// Chain notifications
-    chain_notifications: ChainSubscription,
+    chain_notifications: mpsc::Receiver<LightBlock>,
+    /// Incoming transactions from the network.
+    /// Sic: this subscription is only needed for outgoing messages.
+    /// Floodsub doesn't accept outgoing messages if you are not subscribed
+    /// to the topic.
+    transaction_rx: mpsc::UnboundedReceiver<Vec<u8>>,
 }
 
 impl UnsealedAccountService {
@@ -191,12 +159,12 @@ impl UnsealedAccountService {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
+        chain_notifications: mpsc::Receiver<LightBlock>,
     ) -> Self {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
@@ -210,10 +178,10 @@ impl UnsealedAccountService {
         debug!("Opened database: epoch={}", epoch);
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
         let expire_locked_inputs = Interval::new(clock::now(), CHECK_LOCKED_INPUTS);
-        let chain_notifications = ChainSubscription::new(&node, epoch, 0);
+        let transaction_rx = network.subscribe(&TX_TOPIC).unwrap();
 
         info!("Loaded account {}", account_pkey);
-        UnsealedAccountService {
+        let mut service = UnsealedAccountService {
             database_dir,
             account_dir,
             account_skey,
@@ -226,11 +194,14 @@ impl UnsealedAccountService {
             snowball,
             max_inputs_in_tx,
             network,
-            node,
             subscribers,
             events,
             chain_notifications,
-        }
+            transaction_rx,
+        };
+        service.notify(AccountNotification::Unsealed);
+        service.notify_status();
+        service
     }
 
     /// Send money.
@@ -387,7 +358,6 @@ impl UnsealedAccountService {
             self.account_pkey.clone(),
             self.network_pkey.clone(),
             self.network.clone(),
-            self.node.clone(),
             self.database.facilitator_pkey().clone(),
             inputs,
             outputs,
@@ -657,9 +627,34 @@ impl UnsealedAccountService {
         input_hashes: Vec<Hash>,
         outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
     ) -> Result<(), Error> {
+        if header.epoch < self.database.epoch() || header.offset < self.database.offset() {
+            let block_hash = Hash::digest(&header);
+            debug!(
+                "Skip an outdated micro block: block={}, epoch={}, offset={}, our_epoch={}, our_offset={}",
+                block_hash,
+                header.epoch,
+                header.offset,
+                self.database.epoch(),
+                self.database.offset()
+            );
+            return Ok(());
+        } else if header.epoch > self.database.epoch() || header.offset > self.database.offset() {
+            let block_hash = Hash::digest(&header);
+            debug!("Skip a micro block from the future: block={}, block_epoch={}, block_offset={}, our_epoch={}, our_offset={}",
+                block_hash,
+                header.epoch,
+                header.offset,
+                self.database.epoch(),
+                self.database.offset()
+            );
+            return Ok(());
+        }
+
         //
         // Validate block.
         //
+        assert_eq!(header.epoch, self.database.epoch());
+        assert_eq!(header.offset, self.database.offset());
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
         let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
         self.database.validate_light_micro_block(
@@ -681,15 +676,7 @@ impl UnsealedAccountService {
             &self.account_skey,
         )?;
 
-        self.on_tx_statuses_changed(&transaction_statuses);
-        if transaction_statuses.len() > 0 {
-            self.notify_balance_changed(self.database.balance());
-        }
-        Ok(())
-    }
-
-    fn revert_light_micro_block(&mut self) -> Result<(), Error> {
-        let transaction_statuses = self.database.revert_micro_block()?;
+        self.notify_status();
         self.on_tx_statuses_changed(&transaction_statuses);
         if transaction_statuses.len() > 0 {
             self.notify_balance_changed(self.database.balance());
@@ -706,12 +693,30 @@ impl UnsealedAccountService {
         outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
         validators: StakersGroup,
     ) -> Result<(), Error> {
-        let epoch = header.epoch;
-        let timestamp = header.timestamp;
+        if header.epoch < self.database.epoch() {
+            let block_hash = Hash::digest(&header);
+            debug!(
+                "Skip an outdated macro block: block={}, block_epoch={}, our_epoch={}",
+                block_hash,
+                header.epoch,
+                self.database.epoch()
+            );
+            return Ok(());
+        } else if header.epoch > self.database.epoch() {
+            let block_hash = Hash::digest(&header);
+            debug!(
+                "Skip a macro block from the future: block={}, block_epoch={}, our_epoch={}",
+                block_hash,
+                header.epoch,
+                self.database.epoch()
+            );
+            return Ok(());
+        }
 
         //
         // Validate block.
         //
+        assert_eq!(header.epoch, self.database.epoch());
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
         let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
         self.database.validate_macro_block(
@@ -736,15 +741,10 @@ impl UnsealedAccountService {
             &self.account_skey,
         )?;
 
-        debug!(
-            "Epoch changed: epoch={}, facilitator={}, last_macro_block_timestamp={}",
-            epoch,
-            self.database.facilitator_pkey(),
-            timestamp
-        );
         if let Some((ref mut snowball, _)) = &mut self.snowball {
             snowball.change_facilitator(self.database.facilitator_pkey().clone());
         }
+        self.notify_status();
         self.on_tx_statuses_changed(&transaction_statuses);
         if transaction_statuses.len() > 0 {
             self.notify_balance_changed(self.database.balance());
@@ -937,6 +937,14 @@ impl UnsealedAccountService {
         self.notify(AccountNotification::BalanceChanged(balance));
     }
 
+    fn notify_status(&mut self) {
+        let status = AccountStatusInfo {
+            epoch: self.database.epoch(),
+            offset: self.database.offset(),
+        };
+        self.notify(AccountNotification::StatusChanged(status));
+    }
+
     fn notify(&mut self, notification: AccountNotification) {
         trace!("Created notification = {:?}", notification);
         self.subscribers
@@ -1112,6 +1120,8 @@ impl Future for UnsealedAccountService {
                                 let account_info = AccountInfo {
                                     account_pkey: self.account_pkey.clone(),
                                     network_pkey: self.network_pkey.clone(),
+                                    epoch: self.database.epoch(),
+                                    offset: self.database.offset(),
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
@@ -1194,46 +1204,34 @@ impl Future for UnsealedAccountService {
             }
         }
 
-        // Process chain notifications.
+        // Blocks
         loop {
-            let rx = match self.chain_notifications.poll_subscribed() {
-                Ok(Async::Ready(rx)) => rx,
-                Ok(Async::NotReady) => break,
-                Err(e) => panic!("Failed to subscribe for chain changes: {:?}", e),
-            };
-            match rx.poll().expect("all errors are already handled") {
-                Async::Ready(Some(notification)) => match notification {
-                    ChainNotification::MacroBlockCommitted(block) => {
-                        let validators = block
-                            .epoch_info
-                            .validators
-                            .into_iter()
-                            .map(|info| (info.network_pkey, info.slots))
-                            .collect();
+            match self.chain_notifications.poll().unwrap() {
+                Async::Ready(Some(block)) => match block {
+                    LightBlock::LightMacroBlock(block) => {
+                        debug!("Got a macro block: epoch={}", block.header.epoch);
                         self.apply_light_macro_block(
-                            block.block.header,
-                            block.block.multisig,
-                            block.block.multisigmap,
-                            block.block.inputs,
-                            block.block.outputs,
-                            validators,
+                            block.header,
+                            block.multisig,
+                            block.multisigmap,
+                            block.input_hashes,
+                            block.outputs,
+                            block.validators,
                         )
                         .expect("failed to apply a macro block");
                     }
-                    ChainNotification::MicroBlockPrepared(block) => {
-                        let input_hashes = block.inputs().cloned().collect();
-                        let outputs = block.outputs().cloned().collect();
+                    LightBlock::LightMicroBlock(block) => {
+                        debug!(
+                            "Got a micro block: epoch={}, offset={}",
+                            block.header.epoch, block.header.offset
+                        );
                         self.apply_light_micro_block(
-                            block.header.clone(),
+                            block.header,
                             block.sig,
-                            input_hashes,
-                            outputs,
+                            block.input_hashes,
+                            block.outputs,
                         )
                         .expect("failed to apply a micro block");
-                    }
-                    ChainNotification::MicroBlockReverted(_block) => {
-                        self.revert_light_micro_block()
-                            .expect("failed to revert a micro block");
                     }
                 },
                 Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
@@ -1241,6 +1239,15 @@ impl Future for UnsealedAccountService {
             }
         }
 
+        // Transactions
+        // Sic: this subscription is only needed for outgoing messages.
+        loop {
+            match self.transaction_rx.poll().unwrap() {
+                Async::Ready(Some(_tx)) => (), // ignore
+                Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
+                Async::NotReady => break,
+            }
+        }
         Ok(Async::NotReady)
     }
 }
@@ -1265,8 +1272,6 @@ struct SealedAccountService {
 
     /// Network API (shared).
     network: Network,
-    /// Node API (shared).
-    node: Node,
 
     //
     // Api subscribers
@@ -1274,6 +1279,8 @@ struct SealedAccountService {
     subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
     /// Incoming events.
     events: mpsc::UnboundedReceiver<AccountEvent>,
+    /// Incoming blocks.
+    chain_notifications: mpsc::Receiver<LightBlock>,
 }
 
 impl SealedAccountService {
@@ -1284,14 +1291,14 @@ impl SealedAccountService {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
+        chain_notifications: mpsc::Receiver<LightBlock>,
     ) -> Self {
-        SealedAccountService {
+        let mut service = SealedAccountService {
             database_dir,
             account_dir,
             account_pkey,
@@ -1300,11 +1307,13 @@ impl SealedAccountService {
             genesis_hash,
             chain_cfg,
             max_inputs_in_tx,
-            node,
             network,
             subscribers,
             events,
-        }
+            chain_notifications,
+        };
+        service.notify(AccountNotification::Sealed);
+        service
     }
 
     fn load_secret_key(&self, password: &str) -> Result<scc::SecretKey, KeyError> {
@@ -1318,6 +1327,12 @@ impl SealedAccountService {
             ));
         }
         Ok(account_skey)
+    }
+
+    fn notify(&mut self, notification: AccountNotification) {
+        trace!("Created notification = {:?}", notification);
+        self.subscribers
+            .retain(move |tx| tx.unbounded_send(notification.clone()).is_ok());
     }
 }
 
@@ -1348,6 +1363,8 @@ impl Future for SealedAccountService {
                                 let account_info = AccountInfo {
                                     account_pkey: self.account_pkey,
                                     network_pkey: self.network_pkey,
+                                    epoch: 0,
+                                    offset: 0,
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
@@ -1405,12 +1422,12 @@ impl Future for AccountService {
                         sealed.network_skey,
                         sealed.network_pkey,
                         sealed.network,
-                        sealed.node,
                         sealed.genesis_hash,
                         sealed.chain_cfg,
                         sealed.max_inputs_in_tx,
                         sealed.subscribers,
                         sealed.events,
+                        sealed.chain_notifications,
                     );
                     std::mem::replace(self, AccountService::Unsealed(unsealed));
                     task::current().notify();
@@ -1445,12 +1462,12 @@ impl Future for AccountService {
                         unsealed.network_skey,
                         unsealed.network_pkey,
                         unsealed.network,
-                        unsealed.node,
                         unsealed.database.genesis_hash().clone(),
                         unsealed.database.cfg().clone(),
                         unsealed.max_inputs_in_tx,
                         unsealed.subscribers,
                         unsealed.events,
+                        unsealed.chain_notifications,
                     );
                     std::mem::replace(self, AccountService::Sealed(sealed));
                     task::current().notify();
@@ -1470,10 +1487,10 @@ impl AccountService {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
+        chain_notifications: mpsc::Receiver<LightBlock>,
     ) -> Result<(Self, Account), KeyError> {
         let account_pkey_file = account_dir.join("account.pkey");
         let account_pkey = load_account_pkey(&account_pkey_file)?;
@@ -1486,12 +1503,12 @@ impl AccountService {
             network_skey,
             network_pkey,
             network,
-            node,
             genesis_hash,
             chain_cfg,
             max_inputs_in_tx,
             subscribers,
             events,
+            chain_notifications,
         );
         let service = AccountService::Sealed(service);
         let api = Account { outbox };
@@ -1538,8 +1555,16 @@ struct AccountHandle {
     account_pkey: scc::PublicKey,
     /// Account API.
     account: Account,
+    /// Current epoch.
+    epoch: u64,
+    /// Current offset.
+    offset: u32,
+    /// True if unsealed.
+    unsealed: bool,
     /// Account Notifications.
     account_notifications: mpsc::UnboundedReceiver<AccountNotification>,
+    /// A channel to send blocks,
+    chain_tx: mpsc::Sender<LightBlock>,
 }
 
 pub struct WalletService {
@@ -1547,7 +1572,6 @@ pub struct WalletService {
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
     network: Network,
-    node: Node,
     executor: TaskExecutor,
     genesis_hash: Hash,
     chain_cfg: ChainConfig,
@@ -1555,8 +1579,7 @@ pub struct WalletService {
     accounts: HashMap<AccountId, AccountHandle>,
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
     events: mpsc::UnboundedReceiver<WalletEvent>,
-    chain_notifications: ChainSubscription,
-    last_epoch: u64,
+    replication: Replication,
 }
 
 impl WalletService {
@@ -1565,22 +1588,22 @@ impl WalletService {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         network: Network,
-        node: Node,
+        peer_id: PeerId,
+        replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
         executor: TaskExecutor,
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
-        last_epoch: u64,
     ) -> Result<(Self, Wallet), Error> {
         let (outbox, events) = mpsc::unbounded::<WalletEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<WalletNotification>> = Vec::new();
-        let chain_notifications = ChainSubscription::new(&node, last_epoch, 0);
+        let light = true;
+        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
             network_skey,
             network_pkey,
             network,
-            node,
             executor,
             genesis_hash,
             chain_cfg,
@@ -1588,8 +1611,7 @@ impl WalletService {
             accounts: HashMap::new(),
             subscribers,
             events,
-            chain_notifications,
-            last_epoch,
+            replication,
         };
 
         info!("Scanning directory {:?} for accounts", accounts_dir);
@@ -1650,27 +1672,33 @@ impl WalletService {
         // TODO: implement the fast recovery for freshly created accounts.
         drop(is_new);
 
+        // TODO: determine optimal block size.
+        let (chain_tx, chain_rx) = mpsc::channel(2);
         let (account_service, account) = AccountService::new(
             &account_database_dir,
             &account_dir,
             self.network_skey.clone(),
             self.network_pkey.clone(),
             self.network.clone(),
-            self.node.clone(),
             self.genesis_hash.clone(),
             self.chain_cfg.clone(),
             self.max_inputs_in_tx,
+            chain_rx,
         )?;
         let account_notifications = account.subscribe();
+
         let handle = AccountHandle {
             account_pkey,
             account,
+            epoch: 0,
+            offset: 0,
+            unsealed: false,
             account_notifications,
+            chain_tx,
         };
         let prev = self.accounts.insert(account_id.to_string(), handle);
         assert!(prev.is_none(), "account_id is unique");
         self.executor.spawn(account_service);
-        info!("Recovered account {}, is_new:{}", account_pkey, is_new);
         Ok(())
     }
 
@@ -1714,12 +1742,14 @@ impl WalletService {
                 let accounts = self
                     .accounts
                     .iter()
-                    .map(|(account_id, AccountHandle { account_pkey, .. })| {
+                    .map(|(account_id, handle)| {
                         (
                             account_id.clone(),
                             AccountInfo {
-                                account_pkey: account_pkey.clone(),
+                                account_pkey: handle.account_pkey.clone(),
                                 network_pkey: self.network_pkey.clone(),
+                                epoch: handle.epoch,
+                                offset: handle.offset,
                             },
                         )
                     })
@@ -1753,6 +1783,9 @@ impl WalletService {
             WalletControlRequest::DeleteAccount { .. } => {
                 unreachable!("Delete account should be already processed in different routine")
             }
+            WalletControlRequest::LightReplicationInfo {} => Ok(
+                WalletControlResponse::LightReplicationInfo(self.replication.info()),
+            ),
         }
     }
 
@@ -1857,6 +1890,19 @@ impl WalletService {
             std::io::Error::new(std::io::ErrorKind::NotFound, "Account dir was not found").into(),
         );
     }
+
+    /// Handle incoming blocks received from network.
+    fn handle_block(&mut self, block: LightBlock) -> Result<(), Error> {
+        for (account_id, handle) in &mut self.accounts {
+            if !handle.unsealed {
+                continue;
+            }
+            if let Err(e) = handle.chain_tx.try_send(block.clone()) {
+                warn!("{}: account_id={}", e, account_id);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Future for WalletService {
@@ -1866,6 +1912,7 @@ impl Future for WalletService {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         // Process events.
         loop {
+            trace!("Poll events");
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => match event {
                     WalletEvent::Subscribe { tx } => {
@@ -1902,8 +1949,27 @@ impl Future for WalletService {
         // Forward notifications.
         for (account_id, handle) in self.accounts.iter_mut() {
             loop {
+                trace!("Poll notifications");
                 match handle.account_notifications.poll().unwrap() {
                     Async::Ready(Some(notification)) => {
+                        if let AccountNotification::StatusChanged(status_info) = &notification {
+                            handle.epoch = status_info.epoch;
+                            handle.offset = status_info.offset;
+                            debug!(
+                                "Account changed: account_id={}, epoch={}, offset={}",
+                                account_id, handle.epoch, handle.offset
+                            );
+                            continue;
+                        } else if let AccountNotification::Unsealed = &notification {
+                            debug!("Account unsealed: account_id={}", account_id);
+                            handle.unsealed = true;
+                            self.replication.change_upstream();
+                            continue;
+                        } else if let AccountNotification::Sealed = &notification {
+                            debug!("Account sealed: account_id={}", account_id);
+                            handle.unsealed = false;
+                            continue;
+                        }
                         let notification = WalletNotification {
                             account_id: account_id.clone(),
                             notification,
@@ -1917,28 +1983,79 @@ impl Future for WalletService {
             }
         }
 
-        loop {
-            let rx = match self.chain_notifications.poll_subscribed() {
-                Ok(Async::Ready(rx)) => rx,
-                Ok(Async::NotReady) => break,
-                Err(e) => panic!("Failed to subscribe for chain changes: {:?}", e),
-            };
-            match rx.poll().unwrap() {
-                Async::Ready(Some(ChainNotification::MacroBlockCommitted(info))) => {
-                    let epoch = info.block.header.epoch;
-                    trace!(
-                        "Update last known epoch in wallet control service: epoch={}",
-                        epoch
-                    );
-                    self.last_epoch = epoch;
+        // Replication
+        'outer: while self.accounts.len() > 0 {
+            // Sic: check that all accounts are ready before polling the replication.
+            let mut current_epoch = std::u64::MAX;
+            let mut current_offset = std::u32::MAX;
+            let mut unsealed = false;
+            for (_account_id, handle) in &mut self.accounts {
+                if !handle.unsealed {
+                    continue;
                 }
-                Async::Ready(Some(_)) => {} // ignore.
+                unsealed = true;
+                match handle.chain_tx.poll_ready() {
+                    Ok(Async::Ready(_)) => true,
+                    _ => break 'outer,
+                };
+                if handle.epoch <= current_epoch {
+                    current_epoch = handle.epoch;
+                    if handle.offset <= current_offset {
+                        current_offset = handle.offset;
+                    }
+                }
+            }
+
+            if !unsealed {
+                break;
+            }
+
+            let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
+            let block_reader = DummyBlockReady {};
+            trace!(
+                "Poll replication: current_epoch={}, current_offset={}",
+                current_epoch,
+                current_offset
+            );
+            match self.replication.poll(
+                current_epoch,
+                current_offset,
+                micro_blocks_in_epoch,
+                &block_reader,
+            ) {
+                Async::Ready(Some(ReplicationRow::LightBlock(block))) => {
+                    if let Err(e) = self.handle_block(block) {
+                        error!("Invalid block received from replication: {}", e);
+                    }
+                }
+                Async::Ready(Some(ReplicationRow::Block(_block))) => {
+                    panic!("The full block received from replication");
+                }
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => break,
-            };
+            }
         }
 
         Ok(Async::NotReady)
+    }
+}
+
+struct DummyBlockReady {}
+
+impl BlockReader for DummyBlockReady {
+    fn iter_starting<'a>(
+        &'a self,
+        _epoch: u64,
+        _offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error> {
+        return Err(format_err!("The light node can't be used a an upstream"));
+    }
+    fn light_iter_starting<'a>(
+        &'a self,
+        _epoch: u64,
+        _offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error> {
+        return Err(format_err!("The light node can't be used a an upstream"));
     }
 }
 

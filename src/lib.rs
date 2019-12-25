@@ -19,23 +19,62 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#[cfg(target_os = "android")]
+use android_logger;
 use failure::{format_err, Error};
 use jni::objects::{JClass, JString};
 use jni::sys::jint;
 use jni::JNIEnv;
 use log::*;
+#[cfg(not(target_os = "android"))]
+use log4rs::append::console::ConsoleAppender;
+#[cfg(not(target_os = "android"))]
+use log4rs::config::{Appender, Config as LogConfig, Logger, Root};
+#[cfg(not(target_os = "android"))]
+use log4rs::encode::pattern::PatternEncoder;
+#[cfg(not(target_os = "android"))]
+use log4rs::Handle as LogHandle;
 use std::fs;
 use std::path::PathBuf;
 use stegos_api::{ApiToken, WebSocketServer};
-use stegos_blockchain::{
-    chain_to_prefix, initialize_chain, Blockchain, ConsistencyCheck, Timestamp,
-};
+use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
-use stegos_network::Libp2pNetwork;
-use stegos_node::{NodeConfig, NodeService};
+use stegos_network::{Libp2pNetwork, NetworkConfig};
+use stegos_node::NodeConfig;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
+
+#[cfg(target_os = "android")]
+fn load_logger_configuration() -> () {
+    android_logger::init_once(android_logger::Config::default().with_min_level(Level::Trace));
+}
+
+#[cfg(not(target_os = "android"))]
+fn load_logger_configuration() -> LogHandle {
+    let pattern = "{d(%Y-%m-%d %H:%M:%S)(local)} {h({l})} [{t}] {m}{n}";
+    let console = ConsoleAppender::builder()
+        .encoder(Box::new(PatternEncoder::new(pattern)))
+        .build();
+    let config = LogConfig::builder()
+        .appender(Appender::builder().build("console", Box::new(console)))
+        .logger(Logger::builder().build("stegos", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegosd", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_api", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_blockchain", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_crypto", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_consensus", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_keychain", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_node", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_node::replication", log::LevelFilter::Debug))
+        .logger(Logger::builder().build("stegos_network", log::LevelFilter::Info))
+        .logger(Logger::builder().build("stegos_wallet", log::LevelFilter::Debug))
+        .logger(Logger::builder().build("trust-dns-resolver", log::LevelFilter::Trace))
+        .build(Root::builder().appender("console").build(LevelFilter::Warn))
+        .expect("Failed to initialize logger");
+
+    log4rs::init_config(config).expect("Failed to initialize logger")
+}
 
 fn init(
     chain_name: String,
@@ -89,49 +128,33 @@ fn init(
     network_cfg.dns_servers.push("8.8.8.8:53".to_string());
 
     // Initialize network
+    let mut network_config = NetworkConfig::default();
+    if chain_name != "dev" {
+        network_config.seed_pool = format!("_stegos._tcp.{}.stegos.com", chain_name).to_string();
+    }
     let mut rt = Runtime::new()?;
     let (network, network_service, peer_id, replication_rx) =
-        Libp2pNetwork::new(network_cfg, network_skey.clone(), network_pkey.clone())?;
-
-    // Initialize blockchain
-    let (genesis, chain_cfg) = initialize_chain(&chain_name)?;
-    let genesis_hash = Hash::digest(&genesis);
-    info!("Using '{}' chain, genesis={}", chain_name, genesis_hash);
-    let timestamp = Timestamp::now();
-    let chain = Blockchain::new(
-        chain_cfg.clone(),
-        &chain_dir,
-        ConsistencyCheck::None,
-        genesis,
-        timestamp,
-    )?;
-
-    let epoch = chain.epoch() - 1;
-    // Initialize node
-    let node_cfg: NodeConfig = Default::default();
-    let (mut node_service, node) = NodeService::new(
-        node_cfg.clone(),
-        chain,
-        network_skey.clone(),
-        network_pkey.clone(),
-        network.clone(),
-        chain_name.clone(),
-        peer_id,
-        replication_rx,
-    )?;
+        Libp2pNetwork::new(network_config, network_skey.clone(), network_pkey.clone())?;
 
     // Initialize Wallet.
+    let (genesis, chain_cfg) = initialize_chain(&chain_name)?;
+    info!(
+        "Using '{}' chain, genesis={}",
+        chain_name,
+        Hash::digest(&genesis)
+    );
+    let node_cfg = NodeConfig::default();
     let (wallet_service, wallet) = WalletService::new(
         &accounts_dir,
         network_skey,
         network_pkey,
         network.clone(),
-        node.clone(),
+        peer_id,
+        replication_rx,
         rt.executor(),
-        genesis_hash,
+        Hash::digest(&genesis),
         chain_cfg,
         node_cfg.max_inputs_in_tx,
-        epoch,
     )?;
     rt.spawn(wallet_service);
 
@@ -142,14 +165,11 @@ fn init(
         api_token,
         rt.executor(),
         network.clone(),
-        wallet.clone(),
-        node.clone(),
+        Some(wallet.clone()),
+        None,
         version,
         chain_name,
     )?;
-
-    node_service.init().expect("shit happens");
-    rt.spawn(node_service);
 
     // Start main event loop
     rt.block_on(network_service)
@@ -158,9 +178,7 @@ fn init(
     Ok(())
 }
 
-#[cfg(target_os = "android")]
 #[no_mangle]
-//#![allow(non_snake_case)]
 pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     env: JNIEnv,
     _class: JClass,
@@ -169,7 +187,8 @@ pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     api_token: JString,
     api_endpoint: JString,
 ) -> jint {
-    android_logger::init_once(android_logger::Config::default().with_min_level(Level::Trace));
+    let _log = load_logger_configuration();
+
     let chain: String = env.get_string(chain).unwrap().into();
     let data_dir: String = env.get_string(data_dir).unwrap().into();
     let api_token: String = env.get_string(api_token).unwrap().into();

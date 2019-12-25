@@ -27,10 +27,12 @@ use std::collections::BTreeMap;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
-use stegos_blockchain::TransactionStatus;
+pub use stegos_blockchain::TransactionStatus;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
+pub use stegos_replication::api::*;
+
 pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
@@ -119,6 +121,13 @@ pub struct AccountRecovery {
     pub recovery: String,
 }
 
+/// Notification about synchronization status.
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+pub struct AccountStatusInfo {
+    pub epoch: u64,
+    pub offset: u32,
+}
+
 ///
 /// Out-of-band notifications.
 ///
@@ -126,6 +135,9 @@ pub struct AccountRecovery {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
+    StatusChanged(AccountStatusInfo),
+    Unsealed,
+    Sealed,
     BalanceChanged(AccountBalance),
     SnowballStatus(SnowballStatus),
     TransactionStatus {
@@ -233,6 +245,7 @@ pub enum WalletControlRequest {
     DeleteAccount {
         account_id: AccountId,
     },
+    LightReplicationInfo {},
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +306,10 @@ pub enum AccountResponse {
 pub struct AccountInfo {
     pub account_pkey: scc::PublicKey,
     pub network_pkey: pbc::PublicKey,
+    #[serde(default)]
+    pub epoch: u64,
+    #[serde(default)]
+    pub offset: u32,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +325,7 @@ pub enum WalletControlResponse {
     AccountDeleted {
         account_id: AccountId,
     },
+    LightReplicationInfo(ReplicationInfo),
     Error {
         error: String,
     },

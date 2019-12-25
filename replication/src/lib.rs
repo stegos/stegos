@@ -26,6 +26,7 @@ mod peer;
 mod protos;
 
 use self::api::*;
+pub use self::peer::MAX_BLOCKS_PER_BATCH;
 use futures::sync::mpsc;
 use futures::{Async, Future, Stream};
 use log::*;

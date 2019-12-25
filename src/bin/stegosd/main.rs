@@ -480,6 +480,11 @@ fn run() -> Result<(), Error> {
                 .help("Force recovery using blocks saved on disk, rather than Snapshot.")
                 .long("recover"),
         )
+        .arg(
+            Arg::with_name("light")
+                .help("Start the light node.")
+                .long("light"),
+        )
         .get_matches();
 
     // Parse configuration
@@ -557,43 +562,71 @@ fn run() -> Result<(), Error> {
         cfg.general.chain,
         Hash::digest(&genesis)
     );
-    let timestamp = Timestamp::now();
-    let genesis_hash = Hash::digest(&genesis.header);
-    let chain = Blockchain::new(
-        chain_cfg.clone(),
-        &chain_dir,
-        cfg.general.consistency_check,
-        genesis,
-        timestamp,
-    )?;
 
-    let epoch = chain.epoch() - 1;
-    // Initialize node
-    let (mut node_service, node) = NodeService::new(
-        cfg.node.clone(),
-        chain,
-        network_skey.clone(),
-        network_pkey.clone(),
-        network.clone(),
-        cfg.general.chain.clone(),
-        peer_id,
-        replication_rx,
-    )?;
+    let (node, wallet) = if !args.is_present("light") {
+        info!("Starting the full node");
+        let timestamp = Timestamp::now();
+        let chain = Blockchain::new(
+            chain_cfg.clone(),
+            &chain_dir,
+            cfg.general.consistency_check,
+            genesis,
+            timestamp,
+        )?;
 
-    // Initialize Wallet.
-    let (wallet_service, wallet) = WalletService::new(
-        &accounts_dir,
-        network_skey,
-        network_pkey,
-        network.clone(),
-        node.clone(),
-        rt.executor(),
-        genesis_hash,
-        chain_cfg,
-        cfg.node.max_inputs_in_tx,
-        epoch,
-    )?;
-    rt.spawn(wallet_service);
+        // Initialize node
+        let (mut node_service, node) = NodeService::new(
+            cfg.node.clone(),
+            chain,
+            network_skey.clone(),
+            network_pkey.clone(),
+            network.clone(),
+            cfg.general.chain.clone(),
+            peer_id,
+            replication_rx,
+        )?;
+
+        // Start all services when network is ready.
+        let executor = rt.executor();
+        let network_ready_future = network
+            .subscribe(&NETWORK_STATUS_TOPIC)?
+            .into_future()
+            .map_err(drop)
+            .and_then(|_s| {
+                // Sic: NetworkReady doesn't wait until unicast networking is initialized.
+                // https://github.com/stegos/stegos/issues/1192
+                // Fire a timer here to wait until unicast networking is fully initialized.
+                // This duration (30 secs) was experimentally found on the real network.
+                let network_grace_period = std::time::Duration::from_secs(0);
+                tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
+            })
+            .and_then(move |()| {
+                info!("Network is ready");
+                // TODO: how to handle errors here?
+                node_service.init().expect("shit happens");
+                executor.spawn(node_service);
+                Ok(())
+            });
+        rt.spawn(network_ready_future);
+
+        (Some(node), None)
+    } else {
+        info!("Starting the light node");
+        let (wallet_service, wallet) = WalletService::new(
+            &accounts_dir,
+            network_skey,
+            network_pkey,
+            network.clone(),
+            peer_id,
+            replication_rx,
+            rt.executor(),
+            Hash::digest(&genesis),
+            chain_cfg,
+            cfg.node.max_inputs_in_tx,
+        )?;
+        rt.spawn(wallet_service);
+        (None, Some(wallet))
+    };
 
     // Start WebSocket API server.
     if cfg.general.api_endpoint != "" {
@@ -604,35 +637,12 @@ fn run() -> Result<(), Error> {
             api_token,
             rt.executor(),
             network.clone(),
-            wallet.clone(),
-            node.clone(),
+            wallet,
+            node,
             version,
             cfg.general.chain,
         )?;
     }
-
-    // Start all services when network is ready.
-    let executor = rt.executor();
-    let network_ready_future = network
-        .subscribe(&NETWORK_STATUS_TOPIC)?
-        .into_future()
-        .map_err(drop)
-        .and_then(|_s| {
-            // Sic: NetworkReady doesn't wait until unicast networking is initialized.
-            // https://github.com/stegos/stegos/issues/1192
-            // Fire a timer here to wait until unicast networking is fully initialized.
-            // This duration (30 secs) was experimentally found on the real network.
-            let network_grace_period = std::time::Duration::from_secs(0);
-            tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
-        })
-        .and_then(move |()| {
-            info!("Network is ready");
-            // TODO: how to handle errors here?
-            node_service.init().expect("shit happens");
-            executor.spawn(node_service);
-            Ok(())
-        });
-    rt.spawn(network_ready_future);
 
     // Start main event loop
     rt.block_on(network_service)

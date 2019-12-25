@@ -31,8 +31,8 @@ mod protos;
 mod recovery;
 mod snowball;
 mod storage;
-#[cfg(test)]
-mod test;
+//#[cfg(test)]
+//mod test;
 mod transaction;
 
 use self::error::WalletError;

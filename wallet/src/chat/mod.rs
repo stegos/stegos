@@ -30,7 +30,7 @@ use stegos_blockchain::{
     MessagePayload, OutgoingChatPayload, PaymentOutput, PaymentPayloadData, Timestamp,
     PAIRS_PER_MEMBER_LIST, PAYMENT_DATA_LEN, PTS_PER_CHAIN_LIST,
 };
-use stegos_crypto::hash::Hash;
+use stegos_crypto::hash::{Hash, Hashable, Hasher};
 // use crate::{BlockchainError, OutputError};
 // use curve25519_dalek::scalar::Scalar;
 // use failure::{Error, Fail};
@@ -41,7 +41,7 @@ use rand::Rng;
 // use std::fmt;
 // use std::mem::transmute;
 // use std::time::Duration;
-use stegos_crypto::scc::{Fr, Pt, PublicKey, SecretKey};
+use stegos_crypto::scc::{sign_hash, validate_sig, Fr, Pt, PublicKey, SchnorrSig, SecretKey};
 // use stegos_crypto::CryptoError;
 use byteorder::{ByteOrder, LittleEndian};
 use stegos_serialization::traits::ProtoConvert;
@@ -721,40 +721,47 @@ impl GroupOwnerInfo {
         let mut msgs = Vec::<NewMemberMessage>::new();
         let grpinfo = self.members.find_member(mem).expect("ok");
         let num_members = self.members.0.len();
-        let initial_count = if num_members > 11 { 11 } else { num_members };
+        let initial_count = if num_members > 10 { 10 } else { num_members };
         let initial_list = self.members.0.clone()[0..initial_count]
             .iter()
             .map(|g| (g.pkey.clone(), g.chain.clone()))
             .collect();
-        let info = PrivateMessage::NewMemberInfo(NewMemberInfo {
+        let mut msg = NewMemberInfo {
             owner_pkey: self.owner_pkey.clone(),
             owner_chain: self.owner_chain.clone(),
             rekeying_chain: self.owner_rekeying_chain.clone(),
             my_initial_chain: grpinfo.chain.clone(),
             num_members: num_members as u32,
             members: initial_list,
-        });
+            signature: SchnorrSig::new(),
+        };
+        msg.signature = sign_hash(&Hash::digest(&msg), &self.owner_skey);
+        let info = PrivateMessage::NewMemberInfo(msg);
         let raw_info = info.encode().expect("ok");
         let data = PaymentPayloadData::Data(raw_info);
         let msg_stuff =
             PaymentOutput::with_payload(Some(&self.owner_skey), mem, 0, data).expect("okay");
         msgs.push(NewMemberMessage::PrivateMessage(msg_stuff));
 
-        if num_members > 11 {
-            let mut index = 11;
+        if num_members > 10 {
+            let mut index = 10;
             while index < num_members {
                 let remaining = num_members - index;
-                let nel = if remaining > 13 { 13 } else { remaining };
+                let nel = if remaining > 12 { 12 } else { remaining };
                 let sublist = self.members.0.clone()[index..index + nel]
                     .iter()
                     .map(|g| (g.pkey.clone(), g.chain.clone()))
                     .collect();
-                let info = PrivateMessage::NewMemberInfoCont(NewMemberInfoCont {
+                let mut msg = NewMemberInfoCont {
                     owner_pkey: self.owner_pkey.clone(),
                     num_members: num_members as u32,
                     member_index: index as u32,
                     members: sublist,
-                });
+                    signature: SchnorrSig::new(),
+                };
+                msg.signature = sign_hash(&Hash::digest(&msg), &self.owner_skey);
+
+                let info = PrivateMessage::NewMemberInfoCont(msg);
                 let raw_info = info.encode().expect("ok");
                 let data = PaymentPayloadData::Data(raw_info);
                 let msg_stuff = PaymentOutput::with_payload(Some(&self.owner_skey), mem, 0, data)
@@ -785,17 +792,47 @@ pub struct NewMemberInfo {
     pub my_initial_chain: Fr,
     // total number of members, including self,
     pub num_members: u32,
-    // members [0..11) (Pubkey, Chain)
+    // members [0..10) (Pubkey, Chain)
     pub members: Vec<(PublicKey, Fr)>,
+    // owner signature on this payload info
+    pub signature: SchnorrSig,
 }
 
 #[derive(Clone)]
 pub struct NewMemberInfoCont {
-    owner_pkey: PublicKey,
-    num_members: u32,
-    member_index: u32,
-    // up to 13 more members (Pubkey, chain)
-    members: Vec<(PublicKey, Fr)>,
+    pub owner_pkey: PublicKey,
+    pub num_members: u32,
+    pub member_index: u32,
+    // up to 12 more members (Pubkey, chain)
+    pub members: Vec<(PublicKey, Fr)>,
+    // owner signature on this payload info
+    pub signature: SchnorrSig,
+}
+
+impl Hashable for NewMemberInfo {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.owner_pkey.hash(hasher);
+        self.owner_chain.hash(hasher);
+        self.rekeying_chain.hash(hasher);
+        self.my_initial_chain.hash(hasher);
+        self.num_members.hash(hasher);
+        for (pkey, chain) in self.members.iter() {
+            pkey.hash(hasher);
+            chain.hash(hasher);
+        }
+    }
+}
+
+impl Hashable for NewMemberInfoCont {
+    fn hash(&self, hasher: &mut Hasher) {
+        self.owner_pkey.hash(hasher);
+        self.num_members.hash(hasher);
+        self.member_index.hash(hasher);
+        for (pkey, chain) in self.members.iter() {
+            pkey.hash(hasher);
+            chain.hash(hasher);
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -832,7 +869,7 @@ impl PrivateMessage {
         let mut enc = [0u8; PAYMENT_DATA_LEN - 2];
         match self {
             PrivateMessage::NewMemberInfo(data) => {
-                if data.members.len() > 11 {
+                if data.members.len() > 10 {
                     return Err(ChatError::DataTooLong);
                 }
                 enc[0] = 0u8;
@@ -857,10 +894,12 @@ impl PrivateMessage {
                     enc[pos..pos + 32].copy_from_slice(&bytes[..]);
                     pos += 32;
                 }
+                let bytes = data.signature.to_bytes();
+                enc[pos..pos + 64].copy_from_slice(&bytes[..]);
                 Ok(enc.to_vec())
             }
             PrivateMessage::NewMemberInfoCont(data) => {
-                if data.members.len() > 13 {
+                if data.members.len() > 12 {
                     return Err(ChatError::DataTooLong);
                 }
                 enc[0] = 1u8;
@@ -881,6 +920,8 @@ impl PrivateMessage {
                     enc[pos..pos + 32].copy_from_slice(&bytes[..]);
                     pos += 32;
                 }
+                let bytes = data.signature.to_bytes();
+                enc[pos..pos + 64].copy_from_slice(&bytes[..]);
                 Ok(enc.to_vec())
             }
             PrivateMessage::OtherData(data) => {
@@ -910,6 +951,9 @@ impl PrivateMessage {
                 let num_members = LittleEndian::read_u32(&bytes[129..133]);
                 let mut members = Vec::<(PublicKey, Fr)>::new();
                 let nmem = bytes[133] as usize;
+                if nmem > 10 {
+                    return Err(ChatError::DataTooLong.into());
+                }
                 let mut pos = 134;
                 for _ in 0..nmem {
                     let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
@@ -918,6 +962,7 @@ impl PrivateMessage {
                     pos += 32;
                     members.push((pkey, chain));
                 }
+                let signature = SchnorrSig::try_from_bytes(&bytes[pos..pos + 64])?;
                 let info = NewMemberInfo {
                     owner_pkey,
                     owner_chain,
@@ -925,7 +970,9 @@ impl PrivateMessage {
                     my_initial_chain,
                     num_members,
                     members,
+                    signature,
                 };
+                validate_sig(&Hash::digest(&info), &signature, &info.owner_pkey)?;
                 Ok(PrivateMessage::NewMemberInfo(info))
             }
             1 => {
@@ -934,6 +981,9 @@ impl PrivateMessage {
                 let member_index = LittleEndian::read_u32(&bytes[37..41]);
                 let mut members = Vec::<(PublicKey, Fr)>::new();
                 let nmem = bytes[41] as usize;
+                if nmem > 12 {
+                    return Err(ChatError::DataTooLong.into());
+                }
                 let mut pos = 42;
                 for _ in 0..nmem {
                     let pkey = PublicKey::try_from_bytes(&bytes[pos..pos + 32])?;
@@ -942,20 +992,22 @@ impl PrivateMessage {
                     pos += 32;
                     members.push((pkey, chain));
                 }
+                let signature = SchnorrSig::try_from_bytes(&bytes[pos..pos + 64])?;
                 let info = NewMemberInfoCont {
                     owner_pkey,
                     num_members,
                     member_index,
                     members,
+                    signature,
                 };
+                validate_sig(&Hash::digest(&info), &signature, &info.owner_pkey)?;
                 Ok(PrivateMessage::NewMemberInfoCont(info))
             }
-            2 => {
-                let mut msg = [0u8; PAYMENT_DATA_LEN - 3];
-                msg.copy_from_slice(&bytes[1..]);
+            _ => {
+                let mut msg = [0u8; PAYMENT_DATA_LEN - 2];
+                msg.copy_from_slice(&bytes[..]);
                 Ok(PrivateMessage::OtherData(msg.to_vec()))
             }
-            _ => Err(ChatError::UnknownChatPayload(bytes[0]).into()),
         }
     }
 }

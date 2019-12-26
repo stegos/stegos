@@ -963,6 +963,24 @@ impl SchnorrSig {
             K: Pt::identity(),
         }
     }
+
+    pub fn to_bytes(&self) -> [u8; 64] {
+        let mut out = [0u8; 64];
+        let bytes = self.u.to_bytes();
+        out[0..32].copy_from_slice(&bytes[..]);
+        let bytes = self.K.to_bytes();
+        out[32..64].copy_from_slice(&bytes[..]);
+        out
+    }
+
+    pub fn try_from_bytes(bytes: &[u8]) -> Result<Self, CryptoError> {
+        if bytes.len() < 64 {
+            return Err(CryptoError::BadKeyingSignature);
+        }
+        let u = Fr::try_from_bytes(&bytes[0..32])?;
+        let K = Pt::try_from_bytes(&bytes[32..64])?;
+        Ok(SchnorrSig { u, K })
+    }
 }
 
 impl Hashable for SchnorrSig {

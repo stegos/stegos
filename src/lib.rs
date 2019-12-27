@@ -104,7 +104,7 @@ fn init(
         timestamp,
     )?;
 
-    let epoch = chain.epoch();
+    let epoch = chain.epoch() - 1;
     // Initialize node
     let node_cfg: NodeConfig = Default::default();
     let (mut node_service, node) = NodeService::new(
@@ -154,9 +154,10 @@ fn init(
     Ok(())
 }
 
+#[cfg(target_os = "android")]
 #[no_mangle]
 //#![allow(non_snake_case)]
-pub extern "system" fn Java_Stegos_init(
+pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     env: JNIEnv,
     _class: JClass,
     chain: JString,
@@ -164,8 +165,7 @@ pub extern "system" fn Java_Stegos_init(
     api_token: JString,
     api_endpoint: JString,
 ) -> jint {
-    simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
-
+    android_logger::init_once(android_logger::Config::default().with_min_level(Level::Trace));
     let chain: String = env.get_string(chain).unwrap().into();
     let data_dir: String = env.get_string(data_dir).unwrap().into();
     let api_token: String = env.get_string(api_token).unwrap().into();

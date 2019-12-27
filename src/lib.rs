@@ -80,13 +80,18 @@ fn init(
     let network_pkey_file = data_dir.join("network.pkey");
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
+    let mut network_cfg: stegos_network::NetworkConfig = Default::default();
+
+    // set pool that used for specific network
+    network_cfg.seed_pool = format!("_stegos._tcp.{}.stegos.com", chain_name).to_string();
+    // set dns server to cloudflare and google
+    network_cfg.dns_servers.push("1.1.1.1:53".to_string());
+    network_cfg.dns_servers.push("8.8.8.8:53".to_string());
+
     // Initialize network
     let mut rt = Runtime::new()?;
-    let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
-        Default::default(),
-        network_skey.clone(),
-        network_pkey.clone(),
-    )?;
+    let (network, network_service, peer_id, replication_rx) =
+        Libp2pNetwork::new(network_cfg, network_skey.clone(), network_pkey.clone())?;
 
     // Initialize blockchain
     let (genesis, chain_cfg) = initialize_chain(&chain_name)?;

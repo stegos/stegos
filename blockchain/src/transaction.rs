@@ -535,8 +535,8 @@ impl RestakeTransaction {
 
 /// Transaction.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
+#[serde(from = "crate::api::TransactionInfo")]
+#[serde(into = "crate::api::TransactionInfo")]
 pub enum Transaction {
     CoinbaseTransaction(CoinbaseTransaction),
     PaymentTransaction(PaymentTransaction),

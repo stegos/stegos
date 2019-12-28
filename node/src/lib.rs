@@ -228,7 +228,7 @@ impl ChainReader {
                         if block.header.offset + 1 < chain.cfg().micro_blocks_in_epoch {
                             (block.header.epoch, block.header.offset + 1)
                         } else {
-                            (block.header.epoch + 1, 0)
+                            (block.header.epoch, stegos_blockchain::MACRO_BLOCK_OFFSET)
                         };
                     let msg = ChainNotification::MicroBlockPrepared(block);
                     (msg, next_epoch, next_offset)

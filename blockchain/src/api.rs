@@ -20,7 +20,10 @@
 // SOFTWARE.
 use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, MicroBlockHeader};
 use crate::output::{Output, PaymentOutput, PublicPaymentOutput, StakeOutput};
-use crate::transaction::Transaction;
+use crate::transaction::{
+    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, ServiceAwardTransaction,
+    SlashingTransaction, Transaction,
+};
 use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::{hash::Hash, pbc};
@@ -108,6 +111,52 @@ impl From<MicroBlockInfo> for MicroBlock {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum OriginalTransaction {
+    CoinbaseTransaction(CoinbaseTransaction),
+    PaymentTransaction(PaymentTransaction),
+    RestakeTransaction(RestakeTransaction),
+    SlashingTransaction(SlashingTransaction),
+    ServiceAwardTransaction(ServiceAwardTransaction),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TransactionInfo {
+    tx_hash: Hash,
+    #[serde(flatten)]
+    tx: OriginalTransaction,
+}
+
+impl From<Transaction> for OriginalTransaction {
+    fn from(b: Transaction) -> OriginalTransaction {
+        match b {
+            Transaction::CoinbaseTransaction(p) => OriginalTransaction::CoinbaseTransaction(p),
+            Transaction::PaymentTransaction(p) => OriginalTransaction::PaymentTransaction(p),
+            Transaction::RestakeTransaction(p) => OriginalTransaction::RestakeTransaction(p),
+            Transaction::SlashingTransaction(p) => OriginalTransaction::SlashingTransaction(p),
+            Transaction::ServiceAwardTransaction(p) => {
+                OriginalTransaction::ServiceAwardTransaction(p)
+            }
+        }
+    }
+}
+
+impl From<OriginalTransaction> for Transaction {
+    fn from(b: OriginalTransaction) -> Transaction {
+        match b {
+            OriginalTransaction::CoinbaseTransaction(p) => Transaction::CoinbaseTransaction(p),
+            OriginalTransaction::PaymentTransaction(p) => Transaction::PaymentTransaction(p),
+            OriginalTransaction::RestakeTransaction(p) => Transaction::RestakeTransaction(p),
+            OriginalTransaction::SlashingTransaction(p) => Transaction::SlashingTransaction(p),
+            OriginalTransaction::ServiceAwardTransaction(p) => {
+                Transaction::ServiceAwardTransaction(p)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
@@ -155,5 +204,20 @@ impl From<Output> for OutputInfo {
 impl From<OutputInfo> for Output {
     fn from(b: OutputInfo) -> Output {
         b.output.into()
+    }
+}
+
+impl From<Transaction> for TransactionInfo {
+    fn from(b: Transaction) -> TransactionInfo {
+        TransactionInfo {
+            tx_hash: Hash::digest(&b),
+            tx: b.into(),
+        }
+    }
+}
+
+impl From<TransactionInfo> for Transaction {
+    fn from(b: TransactionInfo) -> Transaction {
+        b.tx.into()
     }
 }

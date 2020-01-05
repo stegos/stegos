@@ -22,3 +22,6 @@
 /.vscode
 /.idea
 /idea
+
+# release files
+/release

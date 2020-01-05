@@ -4,7 +4,7 @@ LABEL maintainer="Stegos AG <info@stegos.com>"
 
 COPY . /usr/src/stegos
 WORKDIR /usr/src/stegos
-RUN cargo install --bins --path /usr/src/stegos --root /usr/local
+RUN cargo install --bins --locked --path /usr/src/stegos --root /usr/local
 
 FROM scratch
 LABEL maintainer="Stegos AG <info@stegos.com>"

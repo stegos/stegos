@@ -20,3 +20,7 @@ core
 /.vscode
 /.idea
 /idea
+
+
+# Release files
+/release

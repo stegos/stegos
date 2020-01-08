@@ -1131,14 +1131,14 @@ impl Future for UnsealedAccountService {
             match transaction_response.poll().expect("connected") {
                 Async::Ready(response) => {
                     match response {
-                        NodeResponse::AddTransaction { hash, status } => {
+                        NodeResponse::BroadcastTransaction { hash, status } => {
                             // Recover state.
                             self.on_tx_status(&hash, &status);
                         }
                         NodeResponse::Error { error } => {
                             error!("Failed to get transaction status: {:?}", error);
                         }
-                        _ => unreachable!("Expected AddTransaction|Error response"),
+                        _ => unreachable!("Expected BroadcastTransaction|Error response"),
                     };
                 }
                 Async::NotReady => self.transaction_response = Some(transaction_response),

@@ -44,7 +44,7 @@ use crate::replication::Replication;
 use crate::txpool::TransactionPoolService;
 pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
-use failure::{format_err, Error};
+use failure::{bail, format_err, Error};
 use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
@@ -61,7 +61,8 @@ use stegos_consensus::optimistic::{
 };
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::pbc;
+use stegos_crypto::scc::Fr;
+use stegos_crypto::{pbc, scc};
 use stegos_network::{Network, ReplicationEvent};
 use stegos_network::{PeerId, UnicastMessage};
 use stegos_serialization::traits::ProtoConvert;
@@ -83,7 +84,7 @@ impl Node {
     /// Send transaction to node and to the network.
     pub fn send_transaction(&self, transaction: Transaction) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
-        let request = NodeRequest::AddTransaction(transaction);
+        let request = NodeRequest::BroadcastTransaction { data: transaction };
         let msg = NodeMessage::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
@@ -490,7 +491,7 @@ impl NodeService {
                 tx.txouts().iter().map(Hash::digest),
                 tx.fee()
             );
-            return Ok(());
+            return Err(NodeTransactionError::NotSynchronized(tx_hash).into());
         }
         sinfo!(
             self,
@@ -1320,25 +1321,28 @@ impl NodeService {
         Ok(rx)
     }
 
-    /// Handler for NodeRequest::AddTransaction
-    fn handle_add_tx(&mut self, tx: Transaction) -> TransactionStatus {
+    /// Handler for NodeRequest::BroadcastTransaction
+    fn handle_add_tx(&mut self, tx: Transaction) -> Result<TransactionStatus, Error> {
         match self.send_transaction(tx.clone()) {
             Ok(()) => {}
             Err(e) => match e.downcast::<NodeTransactionError>() {
                 Ok(NodeTransactionError::AlreadyExists(_)) => {}
+                Ok(NodeTransactionError::NotSynchronized(hash)) => {
+                    return Err(NodeTransactionError::NotSynchronized(hash).into())
+                }
                 Ok(v) => {
-                    return TransactionStatus::Rejected {
+                    return Ok(TransactionStatus::Rejected {
                         error: v.to_string(),
-                    }
+                    })
                 }
                 Err(e) => {
-                    return TransactionStatus::Rejected {
+                    return Ok(TransactionStatus::Rejected {
                         error: e.to_string(),
-                    }
+                    })
                 }
             },
         }
-        TransactionStatus::Accepted {}
+        Ok(TransactionStatus::Accepted {})
     }
 
     ///
@@ -2113,6 +2117,47 @@ impl NodeService {
         let block = self.chain.micro_block(epoch, offset)?.into_owned();
         Ok(block)
     }
+
+    fn handle_create_raw_tx(
+        &mut self,
+        txins: Vec<Hash>,
+        txouts: Vec<NewOutputInfo>,
+        secret_key: scc::SecretKey,
+        fee: i64,
+    ) -> Result<Transaction, Error> {
+        let mut inputs = Vec::new();
+        for txin in txins {
+            let input = self.chain.output_by_hash(&txin)?;
+            match input {
+                Some(input) => inputs.push(input),
+                None => bail!("Input not found = {}", txin),
+            }
+        }
+        let mut outputs_gamma = Fr::zero();
+        let mut outputs = Vec::new();
+        for txout in txouts {
+            let output = match txout.output_type {
+                OutputType::PublicPayment => {
+                    outputs_gamma = outputs_gamma + Fr::zero();
+                    PublicPaymentOutput::new(&txout.recipient, txout.amount).into()
+                }
+                OutputType::Payment { comment } => {
+                    let (output, gamma, _) = PaymentOutput::with_payload(
+                        None,
+                        &txout.recipient,
+                        txout.amount,
+                        PaymentPayloadData::Comment(comment),
+                    )?;
+                    outputs_gamma = outputs_gamma + gamma;
+                    output.into()
+                }
+            };
+            outputs.push(output)
+        }
+
+        let tx = PaymentTransaction::new(&secret_key, &inputs, &outputs, &outputs_gamma, fee)?;
+        Ok(tx.into())
+    }
 }
 
 // Event loop.
@@ -2238,11 +2283,38 @@ impl Future for NodeService {
                                         },
                                     }
                                 }
-                                NodeRequest::AddTransaction(tx) => {
+                                NodeRequest::CreateRawTransaction {
+                                    txins,
+                                    txouts,
+                                    secret_key,
+                                    fee,
+                                } => {
+                                    match scc::SecretKey::try_from_bytes(&secret_key)
+                                        .map_err(Into::into)
+                                        .and_then(|secret_key| {
+                                            self.handle_create_raw_tx(
+                                                txins, txouts, secret_key, fee,
+                                            )
+                                        }) {
+                                        Ok(tx) => {
+                                            let txouts =
+                                                tx.txouts().iter().map(Hash::digest).collect();
+                                            NodeResponse::CreateRawTransaction { txouts, data: tx }
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: e.to_string(),
+                                        },
+                                    }
+                                }
+                                NodeRequest::BroadcastTransaction { data: tx } => {
                                     let hash = Hash::digest(&tx);
-                                    NodeResponse::AddTransaction {
-                                        hash,
-                                        status: self.handle_add_tx(tx),
+                                    match self.handle_add_tx(tx) {
+                                        Ok(status) => {
+                                            NodeResponse::BroadcastTransaction { hash, status }
+                                        }
+                                        Err(e) => NodeResponse::Error {
+                                            error: e.to_string(),
+                                        },
                                     }
                                 }
                                 NodeRequest::ValidateCertificate {
@@ -2382,8 +2454,17 @@ impl Future for NodeService {
                             tx.send(response).ok(); // ignore errors.
                             Ok(())
                         }
-                        NodeMessage::Transaction(msg) => Transaction::from_buffer(&msg)
-                            .and_then(|msg| self.handle_transaction(msg)),
+                        NodeMessage::Transaction(msg) => {
+                            match Transaction::from_buffer(&msg)
+                                .and_then(|msg| self.handle_transaction(msg))
+                            {
+                                Ok(()) => Ok(()),
+                                Err(e) => match e.downcast_ref::<NodeTransactionError>() {
+                                    Some(NodeTransactionError::NotSynchronized(_)) => Ok(()),
+                                    _ => Err(e),
+                                },
+                            }
+                        }
                         NodeMessage::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
                         NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)

@@ -28,9 +28,26 @@ use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
     ValidatorKeyInfo,
 };
+
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
+use stegos_crypto::utils::{deserialize_protobuf_from_hex, serialize_protobuf_to_hex};
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "output_type")]
+#[serde(rename_all = "snake_case")]
+pub enum OutputType {
+    PublicPayment,
+    Payment { comment: String },
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NewOutputInfo {
+    #[serde(flatten)]
+    pub output_type: OutputType,
+    pub recipient: scc::PublicKey,
+    pub amount: i64,
+}
 ///
 /// RPC requests.
 ///
@@ -43,8 +60,19 @@ pub enum NodeRequest {
     ReplicationInfo {},
     PopMicroBlock {},
     ChainName {},
-    #[serde(skip)]
-    AddTransaction(Transaction),
+    BroadcastTransaction {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
+    /// Create transaction From inputs, and information about outputs.
+    CreateRawTransaction {
+        /// Transaction inputs ids, Currently should be from same sender.
+        txins: Vec<Hash>,
+        txouts: Vec<NewOutputInfo>,
+        secret_key: [u8; 32],
+        fee: i64,
+    },
     ValidateCertificate {
         output_hash: Hash,
         spender: scc::PublicKey,
@@ -84,8 +112,13 @@ pub enum NodeResponse {
     ChainName {
         name: String,
     },
-    #[serde(skip)]
-    AddTransaction {
+    CreateRawTransaction {
+        txouts: Vec<Hash>,
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
+    BroadcastTransaction {
         hash: Hash,
         status: TransactionStatus,
     },

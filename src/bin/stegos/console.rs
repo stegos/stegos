@@ -316,7 +316,6 @@ impl ConsoleService {
         eprintln!("stake AMOUNT - stake money");
         eprintln!("stake all - stake all available money");
         eprintln!("unstake [AMOUNT] - unstake money");
-        eprintln!("restake - restake all available stakes");
         eprintln!("enable restaking - enable automatic re-staking (default)");
         eprintln!("disable restaking - disable automatic re-staking");
         eprintln!("cloak - exchange all available public outputs");
@@ -822,9 +821,6 @@ impl ConsoleService {
                 amount,
                 payment_fee,
             };
-            self.send_account_request(request)?
-        } else if msg == "restake" {
-            let request = AccountRequest::RestakeAll {};
             self.send_account_request(request)?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;

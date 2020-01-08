@@ -2124,9 +2124,21 @@ impl NodeService {
         txouts: Vec<NewOutputInfo>,
         secret_key: scc::SecretKey,
         fee: i64,
+        unspent_list: Vec<Output>,
     ) -> Result<Transaction, Error> {
+        let unspent: HashMap<Hash, Output> = unspent_list
+            .into_iter()
+            .map(|v| (Hash::digest(&v), v))
+            .collect();
+
         let mut inputs = Vec::new();
         for txin in txins {
+            // Try to get input from list that user provide.
+            if let Some(input) = unspent.get(&txin) {
+                inputs.push(input.clone());
+                continue;
+            }
+            // if fail, try to get input from chain.
             let input = self.chain.output_by_hash(&txin)?;
             match input {
                 Some(input) => inputs.push(input),
@@ -2283,17 +2295,46 @@ impl Future for NodeService {
                                         },
                                     }
                                 }
+                                NodeRequest::OutputsList { utxos } => {
+                                    let mut outputs = Vec::new();
+                                    let mut error = None;
+                                    for item in utxos {
+                                        match self.chain.output_by_hash(&item) {
+                                            Ok(Some(item)) => outputs.push(item),
+                                            Ok(None) => {
+                                                error =
+                                                    format!("Output was not found hash={}", item)
+                                                        .into();
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                error = e.to_string().into();
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Some(error) = error {
+                                        NodeResponse::Error { error }
+                                    } else {
+                                        NodeResponse::OutputsList { utxos: outputs }
+                                    }
+                                }
                                 NodeRequest::CreateRawTransaction {
                                     txins,
                                     txouts,
                                     secret_key,
                                     fee,
+                                    unspent_list,
                                 } => {
                                     match scc::SecretKey::try_from_bytes(&secret_key)
                                         .map_err(Into::into)
                                         .and_then(|secret_key| {
                                             self.handle_create_raw_tx(
-                                                txins, txouts, secret_key, fee,
+                                                txins,
+                                                txouts,
+                                                secret_key,
+                                                fee,
+                                                unspent_list,
                                             )
                                         }) {
                                         Ok(tx) => {

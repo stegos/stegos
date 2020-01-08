@@ -238,7 +238,39 @@ pub fn trim_bitvec(vec: &mut BitVec) {
         }
     }
 }
+/// Function to deserialize Array of protobuf items
+pub fn deserialize_protobuf_array_from_hex<'de, T, D>(deserializer: D) -> Result<Vec<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: ProtoConvert,
+{
+    let array_of_hexs = Vec::<String>::deserialize(deserializer)?;
+    let mut result = Vec::new();
+    for item in array_of_hexs {
+        let buffer = hex::decode(&item).map_err(de::Error::custom)?;
+        result.push(<T as ProtoConvert>::from_buffer(&buffer).map_err(de::Error::custom)?)
+    }
+    Ok(result)
+}
 
+pub fn serialize_protobuf_array_to_hex<T, S>(
+    array: &Vec<T>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: ProtoConvert,
+{
+    use serde::Serialize;
+    let mut result = Vec::new();
+    for item in array {
+        let buffer = item.into_buffer().map_err(ser::Error::custom)?;
+        result.push(hex::encode(buffer));
+    }
+    result.serialize(serializer)
+}
+
+// Function to deserialize protobuf items
 pub fn deserialize_protobuf_from_hex<'de, T, D>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
@@ -257,6 +289,7 @@ where
     vec_serialize_to_hex(&buffer, serializer)
 }
 
+/// Function to deserialize from hex represented bytearray.
 pub fn vec_deserialize_from_hex<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
 where
     D: Deserializer<'de>,

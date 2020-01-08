@@ -31,7 +31,10 @@ use stegos_blockchain::{
 
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;
-use stegos_crypto::utils::{deserialize_protobuf_from_hex, serialize_protobuf_to_hex};
+use stegos_crypto::utils::{
+    deserialize_protobuf_array_from_hex, deserialize_protobuf_from_hex,
+    serialize_protobuf_array_to_hex, serialize_protobuf_to_hex,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "output_type")]
@@ -65,6 +68,10 @@ pub enum NodeRequest {
         #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
         data: Transaction,
     },
+    /// Get full output corresponding to output id.
+    OutputsList {
+        utxos: Vec<Hash>,
+    },
     /// Create transaction From inputs, and information about outputs.
     CreateRawTransaction {
         /// Transaction inputs ids, Currently should be from same sender.
@@ -72,6 +79,11 @@ pub enum NodeRequest {
         txouts: Vec<NewOutputInfo>,
         secret_key: [u8; 32],
         fee: i64,
+
+        #[serde(default)]
+        #[serde(serialize_with = "serialize_protobuf_array_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_array_from_hex")]
+        unspent_list: Vec<Output>,
     },
     ValidateCertificate {
         output_hash: Hash,
@@ -111,6 +123,11 @@ pub enum NodeResponse {
     MicroBlockPopped,
     ChainName {
         name: String,
+    },
+    OutputsList {
+        #[serde(serialize_with = "serialize_protobuf_array_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_array_from_hex")]
+        utxos: Vec<Output>,
     },
     CreateRawTransaction {
         txouts: Vec<Hash>,

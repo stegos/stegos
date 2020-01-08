@@ -88,6 +88,13 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("raw")
+                .short("R")
+                .long("raw")
+                .help("Use stegos CLI to send prevalidated raw requests.")
+                .takes_value(false),
+        )
+        .arg(
             Arg::with_name("data-dir")
                 .short("d")
                 .long("data-dir")
@@ -137,6 +144,7 @@ fn main() {
             // Ignore this error.
         }
     }
+    let raw = args.is_present("raw");
     let history_file = data_dir.join("stegos.history");
     let api_token_file = if let Some(api_token_file) = args.value_of("api-token-file") {
         PathBuf::from(api_token_file)
@@ -162,6 +170,7 @@ fn main() {
         api_token,
         history_file,
         formatter,
+        raw,
     );
     rt.block_on(console_service)
         .expect("errors are handled earlier");

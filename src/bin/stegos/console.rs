@@ -176,6 +176,8 @@ pub struct ConsoleService {
     stdin_th: thread::JoinHandle<()>,
     /// Display formatter.
     formatter: Formatter,
+    /// Parse stdin line as JSON request.
+    raw: bool,
 }
 
 impl ConsoleService {
@@ -188,6 +190,7 @@ impl ConsoleService {
         api_token: ApiToken,
         history_file: PathBuf,
         formatter: Formatter,
+        raw: bool,
     ) -> ConsoleService {
         let (tx, rx) = channel::<String>(1);
         let client = WebSocketClient::new(uri, api_token);
@@ -198,14 +201,20 @@ impl ConsoleService {
             stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
                 .expect("Network prefix not initialised.");
         }
-        let stdin_th = if atty::is(atty::Stream::Stdin) {
+        let (stdin_th, raw) = if atty::is(atty::Stream::Stdin) {
             println!("{} {}", name, version);
             println!("Type 'help' to get help");
             println!();
             let th_account_id = account_id.clone();
-            thread::spawn(move || Self::interactive_thread_f(tx, history_file, th_account_id))
+            (
+                thread::spawn(move || Self::interactive_thread_f(tx, history_file, th_account_id)),
+                false,
+            )
         } else {
-            thread::spawn(move || Self::noninteractive_thread_f(tx))
+            (
+                thread::spawn(move || Self::noninteractive_thread_f(tx)),
+                raw,
+            )
         };
         let stdin = rx;
         ConsoleService {
@@ -215,6 +224,7 @@ impl ConsoleService {
             stdin,
             stdin_th,
             formatter,
+            raw,
         }
     }
 
@@ -498,6 +508,28 @@ impl ConsoleService {
 
     /// Called when line is typed on standard input.
     fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
+        if self.raw {
+            let request: Request = serde_json::from_str(msg)?;
+            match request.kind {
+                RequestKind::NetworkRequest(request) => self.send_network_request(request)?,
+                RequestKind::WalletsRequest(WalletRequest::AccountRequest {
+                    account_id,
+                    request,
+                }) => {
+                    {
+                        let mut locked = self.account_id.lock().unwrap();
+                        std::mem::replace(&mut *locked, account_id);
+                    }
+                    self.send_account_request(request)?
+                }
+                RequestKind::WalletsRequest(WalletRequest::WalletControlRequest(request)) => {
+                    self.send_wallet_control_request(request)?
+                }
+                RequestKind::NodeRequest(request) => self.send_node_request(request)?,
+            }
+            return Ok(false); // keep stdin parked until response received.
+        }
+
         let msg = msg.trim();
         if msg == "lock" || msg == "seal" {
             self.send_account_request(AccountRequest::Seal {})?;

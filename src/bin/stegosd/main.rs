@@ -275,6 +275,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if let Some(endpoint) = args.value_of("node-endpoint") {
         cfg.network.endpoint = endpoint.to_string();
     }
+
     if cfg.network.endpoint != "" {
         SocketAddr::from_str(&cfg.network.endpoint).map_err(|e| {
             format_err!("Invalid network.endpoint '{}': {}", cfg.network.endpoint, e)
@@ -299,6 +300,13 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     if cfg.general.chain != "dev" && cfg.network.seed_pool == "" {
         cfg.network.seed_pool =
             format!("_stegos._tcp.{}.stegos.com", cfg.general.chain).to_string();
+    }
+
+    if args.is_present("no-network") {
+        cfg.network.min_connections = 0;
+        cfg.network.max_connections = 0;
+        cfg.network.readiness_threshold = 0;
+        cfg.network.seed_pool = String::from("");
     }
 
     // Override global.prometheus_endpoint via command-line or environment.
@@ -375,6 +383,13 @@ fn run() -> Result<(), Error> {
                 .value_name("FILE")
                 .help("Path to stegos-log4rs.toml configuration file")
                 .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("no-network")
+                .short("-X")
+                .long("no-network")
+                .help("Run node in offline mode")
+                .takes_value(false),
         )
         .arg(
             Arg::with_name("data-dir")
@@ -475,7 +490,9 @@ fn run() -> Result<(), Error> {
     // Print welcome message
     info!("{} {}", name, version);
     debug!("Configuration:\n{}", serde_yaml::to_string(&cfg).unwrap());
-
+    if args.is_present("no-network") {
+        warn!("Starting node in offline mode.");
+    }
     // Append chain name if dir default.
     // But keep root_dir for api.token unchanged.
     let root_dir = cfg.general.data_dir.clone();

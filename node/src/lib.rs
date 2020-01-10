@@ -2538,11 +2538,9 @@ impl Future for NodeService {
         // Replication
         loop {
             match self.replication.poll(&self.chain) {
-                Async::Ready(Some(blocks)) => {
-                    for block in blocks {
-                        if let Err(e) = self.handle_block(block) {
-                            serror!(self, "Invalid block received from replication: {}", e);
-                        }
+                Async::Ready(Some(block)) => {
+                    if let Err(e) = self.handle_block(block) {
+                        serror!(self, "Invalid block received from replication: {}", e);
                     }
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.

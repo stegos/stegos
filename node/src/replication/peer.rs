@@ -486,7 +486,7 @@ impl Peer {
     ///
     /// The state machine.
     ///
-    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Vec<Block>> {
+    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Block> {
         match self {
             //--------------------------------------------------------------------------------------
             // Discovered
@@ -750,9 +750,7 @@ impl Peer {
                     return Async::NotReady;
                 }
 
-                let mut bytes_received: u64 = 0;
-                let mut blocks: Vec<Block> = Vec::with_capacity(MAX_BLOCKS_PER_BATCH);
-                loop {
+                {
                     match rx.poll().unwrap() {
                         Async::Ready(Some(response)) => {
                             //
@@ -777,7 +775,7 @@ impl Peer {
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    break;
+                                    return Async::NotReady;
                                 }
                             };
                             //
@@ -805,24 +803,11 @@ impl Peer {
                                             );
                                         }
                                     }
-                                    blocks.push(block);
                                     *total_blocks_received += 1;
-                                    bytes_received += response_len as u64;
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    if blocks.len() >= MAX_BLOCKS_PER_BATCH
-                                        || bytes_received >= MAX_BYTES_PER_BATCH
-                                    {
-                                        debug!(
-                                            "[{}] Read enough: bytes={}, blocks={}",
-                                            peer_id,
-                                            bytes_received,
-                                            blocks.len()
-                                        );
-                                        task::current().notify();
-                                        break;
-                                    }
+                                    return Async::Ready(block);
                                 }
                                 response => {
                                     let error = format!(
@@ -839,33 +824,23 @@ impl Peer {
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    break;
+                                    return Async::NotReady;
                                 }
                             }
                         }
                         Async::Ready(None) => {
                             self.disconnected();
-                            break;
+                            return Async::NotReady;
                         }
                         Async::NotReady => {
-                            debug!(
-                                "[{}] Not ready for reading: bytes={}, blocks={}",
-                                peer_id,
-                                bytes_received,
-                                blocks.len()
-                            );
+                            debug!("[{}] Not ready for reading", peer_id,);
                             if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                                 debug!("[{}] Peer is not active, disconnecting", peer_id);
                                 self.disconnected();
                             }
-                            break;
+                            return Async::NotReady;
                         }
                     }
-                }
-                if blocks.is_empty() {
-                    Async::NotReady
-                } else {
-                    Async::Ready(blocks)
                 }
             }
 

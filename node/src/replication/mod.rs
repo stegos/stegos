@@ -136,7 +136,7 @@ impl Replication {
     ///
     /// Polls events.
     ///
-    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Option<Vec<Block>>> {
+    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Option<Block>> {
         trace!("Poll");
 
         // Process replication events.
@@ -183,8 +183,8 @@ impl Replication {
         let mut has_upstream = false;
         for (_peer_id, peer) in self.peers.iter_mut() {
             match peer.poll(chain) {
-                Async::Ready(blocks) => {
-                    return Async::Ready(Some(blocks));
+                Async::Ready(block) => {
+                    return Async::Ready(Some(block));
                 }
                 Async::NotReady => {}
             }

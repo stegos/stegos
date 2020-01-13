@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use super::api::PeerInfo;
 use super::protos::{ReplicationRequest, ReplicationResponse};
-use crate::replication::api::PeerInfo;
 use futures::sync::mpsc;
 use futures::{task, Async, AsyncSink, Sink, Stream};
 use log::*;

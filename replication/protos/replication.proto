@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.loader;
+package stegos.replication;
 
 import "crypto.proto";
 import "blockchain.proto";

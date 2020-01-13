@@ -118,7 +118,7 @@ impl Replication {
     ///
     /// Polls events.
     ///
-    pub(super) fn poll(
+    pub fn poll(
         &mut self,
         current_epoch: u64,
         current_offset: u32,

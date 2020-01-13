@@ -21,12 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::protos::replication;
 use failure::Error;
 use serde_derive::{Deserialize, Serialize};
 use stegos_blockchain::protos::ProtoError;
 use stegos_blockchain::Block;
 use stegos_serialization::traits::*;
+// link protobuf dependencies
+use stegos_blockchain::protos::*;
+include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum ReplicationRequest {

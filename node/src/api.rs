@@ -20,7 +20,6 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use super::replication::api::*;
 use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -28,6 +27,7 @@ use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
     ValidatorKeyInfo,
 };
+use stegos_replication::api::*;
 
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::scc;

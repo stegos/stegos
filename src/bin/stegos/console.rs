@@ -1059,7 +1059,7 @@ impl ConsoleService {
                 }
 
                 let request = Request {
-                    kind: RequestKind::NodeRequest(NodeRequest::ChainName {}),
+                    kind: RequestKind::NetworkRequest(NetworkRequest::ChainName {}),
                     id: 0,
                 };
 
@@ -1077,7 +1077,8 @@ impl ConsoleService {
                     Async::Ready(response) => {
                         let chain = match response.unwrap() {
                             Response {
-                                kind: ResponseKind::NodeResponse(NodeResponse::ChainName { name }),
+                                kind:
+                                    ResponseKind::NetworkResponse(NetworkResponse::ChainName { name }),
                                 ..
                             } => name,
                             response => {

@@ -607,6 +607,7 @@ fn run() -> Result<(), Error> {
             wallet.clone(),
             node.clone(),
             version,
+            cfg.general.chain,
         )?;
     }
 

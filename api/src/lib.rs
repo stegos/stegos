@@ -55,6 +55,7 @@ fn is_request_id_default(id: &RequestId) -> bool {
 pub enum NetworkRequest {
     // VersionInfo is not about Network, but let's keep it here to simplify all things.
     VersionInfo {},
+    ChainName {},
     SubscribeUnicast {
         topic: String,
     },
@@ -84,6 +85,7 @@ pub enum NetworkRequest {
 #[serde(rename_all = "snake_case")]
 pub enum NetworkResponse {
     VersionInfo { version: String },
+    ChainName { name: String },
     SubscribedUnicast,
     SubscribedBroadcast,
     UnsubscribedUnicast,

@@ -318,7 +318,7 @@ impl ConsoleService {
         eprintln!("unlock - unlock the account");
         eprintln!();
         eprintln!(
-            "pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE] [/certificate] - send money"
+            "pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/fee FEE] [/certificate] - send money"
         );
         eprintln!("validate certificate UTXO SENDER_ADDRESS RECIPIENT_ADDRESS RVALUE - check that payment certificate is valid");
         eprintln!("msg ADDRESS MESSAGE - send a message via blockchain");
@@ -368,14 +368,13 @@ impl ConsoleService {
 
     fn help_pay() {
         eprintln!(
-            "Usage: pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/lock DATETIME] [/fee FEE] [/certificate]"
+            "Usage: pay ADDRESS AMOUNT [COMMENT] [/snowball] [/public] [/fee FEE] [/certificate]"
         );
         eprintln!(" - ADDRESS recipient's address");
         eprintln!(" - AMOUNT amount in μSTG");
         eprintln!(" - COMMENT purpose of payment");
         eprintln!(" - /snowball use Snowball mixing protocol");
         eprintln!(" - /public don't encrypt recipient and amount (not recommended)");
-        eprintln!(" - /lock DATETIME lock money until the specified time:");
         eprintln!("       '2019-07-01 12:52:11', '2019-07-01T12:52:11Z', '15days 2min 2s'");
         eprintln!(" - /fee FEE set fee in μSTG per each created UTXO");
         eprintln!(" - /certificate create payment certificate");

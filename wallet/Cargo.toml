@@ -17,6 +17,7 @@ stegos_blockchain = { version = "1.0.0", path = "../blockchain" }
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
 stegos_keychain = { version = "1.0.0", path = "../keychain" }
 stegos_network = { version = "1.0.0", path = "../network" }
+stegos_txpool = { version = "1.0.0", path = "../txpool" }
 stegos_node = { version = "1.0.0", path = "../node" }
 stegos_serialization = { version = "1.0.0", path = "../serialization" }
 serde = "1.0"

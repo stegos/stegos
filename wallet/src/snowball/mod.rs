@@ -111,12 +111,12 @@ use stegos_crypto::scc::{
 };
 use stegos_crypto::{dicemix, CryptoError};
 use stegos_network::Network;
-use stegos_node::txpool::PoolJoin;
-use stegos_node::txpool::PoolNotification;
-use stegos_node::txpool::POOL_ANNOUNCE_TOPIC;
-use stegos_node::txpool::POOL_JOIN_TOPIC;
 use stegos_node::Node;
 use stegos_serialization::traits::ProtoConvert;
+use stegos_txpool::PoolJoin;
+use stegos_txpool::PoolNotification;
+use stegos_txpool::POOL_ANNOUNCE_TOPIC;
+use stegos_txpool::POOL_JOIN_TOPIC;
 use tokio_timer::{clock, Delay};
 
 /// A topic used for Snowball unicast communication.

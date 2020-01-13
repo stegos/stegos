@@ -32,15 +32,12 @@ pub mod metrics;
 pub mod protos;
 #[doc(hidden)]
 pub mod test;
-pub mod txpool;
 mod validation;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
-use crate::txpool::TransactionPoolService;
-pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
 use failure::{bail, format_err, Error};
 use futures::sync::{mpsc, oneshot};
@@ -65,6 +62,8 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_network::{PeerId, UnicastMessage};
 use stegos_replication::Replication;
 use stegos_serialization::traits::ProtoConvert;
+use stegos_txpool::TransactionPoolService;
+pub use stegos_txpool::MAX_PARTICIPANTS;
 use tokio_timer::{clock, Delay, Interval};
 use Validation::*;
 
@@ -316,8 +315,6 @@ pub struct NodeService {
     /// Subscribers for chain events which are fed from the disk.
     /// Automatically promoted to chain_subscribers after synchronization.
     chain_readers: Vec<ChainReader>,
-    /// Node interface (needed to create TransactionPoolService).
-    node: Node,
     /// Network interface.
     network: Network,
     /// Aggregated stream of events.
@@ -428,7 +425,6 @@ impl NodeService {
             is_restaking_enabled,
             chain_readers,
             chain_subscribers,
-            node: node.clone(),
             network: network.clone(),
             check_sync,
             events,
@@ -1513,8 +1509,7 @@ impl NodeService {
         let facilitator = self.chain.facilitator();
         if facilitator == &self.network_pkey {
             sinfo!(self, "I am facilitator");
-            let txpool_service =
-                TransactionPoolService::new(self.network.clone(), self.node.clone());
+            let txpool_service = TransactionPoolService::new(self.network.clone());
             self.txpool_service = Some(txpool_service);
         } else {
             sinfo!(self, "Facilitator is {}", facilitator);

@@ -589,14 +589,6 @@ impl Hashable for MacroBlock {
     }
 }
 
-impl PartialEq for MacroBlock {
-    fn eq(&self, other: &MacroBlock) -> bool {
-        Hash::digest(self) == Hash::digest(other)
-    }
-}
-
-impl Eq for MacroBlock {}
-
 //--------------------------------------------------------------------------------------------------
 // Block (enum).
 //--------------------------------------------------------------------------------------------------

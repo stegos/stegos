@@ -37,6 +37,8 @@ pub enum ProtoError {
     MissingField(String, String),
     #[fail(display = "Duplicate value in field '{}'.", _0)]
     DuplicateValue(String),
+    #[fail(display = "Invalid canary length: expected={}, got={}", _0, _1)]
+    InvalidCanaryLength(usize, usize),
 }
 
 // link protobuf dependencies
@@ -460,6 +462,31 @@ impl ProtoConvert for PaymentOutput {
     }
 }
 
+impl ProtoConvert for PaymentCanary {
+    type Proto = blockchain::PaymentCanary;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::PaymentCanary::new();
+        proto.set_ag(self.ag.into_proto());
+        proto.set_canary(self.canary.to_vec());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let ag = Pt::from_proto(proto.get_ag())?;
+        let canary_vec = proto.get_canary().to_vec();
+        if canary_vec.len() != PAYMENT_PAYLOAD_CANARY_LEN {
+            return Err(ProtoError::InvalidCanaryLength(
+                PAYMENT_PAYLOAD_CANARY_LEN,
+                canary_vec.len(),
+            )
+            .into());
+        }
+        let mut canary = [0u8; PAYMENT_PAYLOAD_CANARY_LEN];
+        canary.copy_from_slice(&canary_vec);
+        Ok(PaymentCanary { ag, canary })
+    }
+}
+
 impl ProtoConvert for PublicPaymentOutput {
     type Proto = blockchain::PublicPaymentOutput;
     fn into_proto(&self) -> Self::Proto {
@@ -479,6 +506,20 @@ impl ProtoConvert for PublicPaymentOutput {
             amount,
             serno,
         })
+    }
+}
+
+impl ProtoConvert for PublicPaymentCanary {
+    type Proto = blockchain::PublicPaymentCanary;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::PublicPaymentCanary::new();
+        proto.set_recipient(self.recipient.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        Ok(PublicPaymentCanary { recipient })
     }
 }
 
@@ -507,6 +548,20 @@ impl ProtoConvert for StakeOutput {
             serno,
             signature,
         })
+    }
+}
+
+impl ProtoConvert for StakeCanary {
+    type Proto = blockchain::StakeCanary;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::StakeCanary::new();
+        proto.set_recipient(self.recipient.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let recipient = PublicKey::from_proto(proto.get_recipient())?;
+        Ok(StakeCanary { recipient })
     }
 }
 
@@ -540,6 +595,41 @@ impl ProtoConvert for Output {
             }
             None => {
                 Err(ProtoError::MissingField("output".to_string(), "output".to_string()).into())
+            }
+        }
+    }
+}
+
+impl ProtoConvert for Canary {
+    type Proto = blockchain::Canary;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::Canary::new();
+        match self {
+            Canary::PaymentCanary(canary) => proto.set_payment_canary(canary.into_proto()),
+            Canary::PublicPaymentCanary(canary) => {
+                proto.set_public_payment_canary(canary.into_proto())
+            }
+            Canary::StakeCanary(canary) => proto.set_stake_canary(canary.into_proto()),
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        match proto.canary {
+            Some(blockchain::Canary_oneof_canary::payment_canary(ref canary)) => {
+                let canary = PaymentCanary::from_proto(canary)?;
+                Ok(Canary::PaymentCanary(canary))
+            }
+            Some(blockchain::Canary_oneof_canary::public_payment_canary(ref canary)) => {
+                let canary = PublicPaymentCanary::from_proto(canary)?;
+                Ok(Canary::PublicPaymentCanary(canary))
+            }
+            Some(blockchain::Canary_oneof_canary::stake_canary(ref canary)) => {
+                let canary = StakeCanary::from_proto(canary)?;
+                Ok(Canary::StakeCanary(canary))
+            }
+            None => {
+                Err(ProtoError::MissingField("canary".to_string(), "canary".to_string()).into())
             }
         }
     }
@@ -867,6 +957,57 @@ impl ProtoConvert for MicroBlock {
     }
 }
 
+impl ProtoConvert for LightMicroBlock {
+    type Proto = blockchain::LightMicroBlock;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::LightMicroBlock::new();
+        proto.set_header(self.header.into_proto());
+        proto.set_sig(self.sig.into_proto());
+        for input_hash in &self.input_hashes {
+            proto.input_hashes.push(input_hash.into_proto());
+        }
+        for output_hash in &self.output_hashes {
+            proto.output_hashes.push(output_hash.into_proto());
+        }
+        for canary in &self.canaries {
+            proto.canaries.push(canary.into_proto());
+        }
+        for output in &self.outputs {
+            proto.outputs.push(output.into_proto());
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let header = MicroBlockHeader::from_proto(proto.get_header())?;
+        let sig = pbc::Signature::from_proto(proto.get_sig())?;
+        let mut input_hashes = Vec::<Hash>::with_capacity(proto.input_hashes.len());
+        for input_hash in proto.input_hashes.iter() {
+            input_hashes.push(Hash::from_proto(input_hash)?);
+        }
+        let mut output_hashes = Vec::<Hash>::with_capacity(proto.output_hashes.len());
+        for output in proto.output_hashes.iter() {
+            output_hashes.push(Hash::from_proto(output)?);
+        }
+        let mut canaries = Vec::with_capacity(proto.canaries.len());
+        for canary in proto.canaries.iter() {
+            canaries.push(Canary::from_proto(canary)?);
+        }
+        let mut outputs = Vec::with_capacity(proto.outputs.len());
+        for output in proto.outputs.iter() {
+            outputs.push(Output::from_proto(output)?);
+        }
+        Ok(LightMicroBlock {
+            header,
+            sig,
+            input_hashes,
+            output_hashes,
+            canaries,
+            outputs,
+        })
+    }
+}
+
 impl ProtoConvert for MacroBlockHeader {
     type Proto = blockchain::MacroBlockHeader;
     fn into_proto(&self) -> Self::Proto {
@@ -979,6 +1120,78 @@ impl ProtoConvert for MacroBlock {
     }
 }
 
+impl ProtoConvert for LightMacroBlock {
+    type Proto = blockchain::LightMacroBlock;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::LightMacroBlock::new();
+        proto.set_header(self.header.into_proto());
+        proto.set_multisig(self.multisig.into_proto());
+        proto.multisigmap.extend(self.multisigmap.iter());
+        for validator in &self.validators {
+            let mut staker = blockchain::Staker::new();
+            staker.set_network_pkey(validator.0.into_proto());
+            staker.set_amount(validator.1);
+            proto.validators.push(staker)
+        }
+        for input_hash in &self.input_hashes {
+            proto.input_hashes.push(input_hash.into_proto());
+        }
+        for output_hash in &self.output_hashes {
+            proto.output_hashes.push(output_hash.into_proto());
+        }
+        for canary in &self.canaries {
+            proto.canaries.push(canary.into_proto());
+        }
+        for output in &self.outputs {
+            proto.outputs.push(output.into_proto());
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let multisig = if proto.has_multisig() {
+            pbc::Signature::from_proto(proto.get_multisig())?
+        } else {
+            pbc::Signature::zero()
+        };
+        let multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
+        let mut validators = Vec::new();
+        for staker in &proto.validators {
+            validators.push((
+                ProtoConvert::from_proto(staker.get_network_pkey())?,
+                staker.get_amount(),
+            ))
+        }
+        let mut input_hashes = Vec::<Hash>::with_capacity(proto.input_hashes.len());
+        for input_hash in proto.input_hashes.iter() {
+            input_hashes.push(Hash::from_proto(input_hash)?);
+        }
+        let mut output_hashes = Vec::<Hash>::with_capacity(proto.output_hashes.len());
+        for output in proto.output_hashes.iter() {
+            output_hashes.push(Hash::from_proto(output)?);
+        }
+        let mut canaries = Vec::with_capacity(proto.canaries.len());
+        for canary in proto.canaries.iter() {
+            canaries.push(Canary::from_proto(canary)?);
+        }
+        let mut outputs = Vec::with_capacity(proto.outputs.len());
+        for output in proto.outputs.iter() {
+            outputs.push(Output::from_proto(output)?);
+        }
+        Ok(LightMacroBlock {
+            header,
+            multisig,
+            multisigmap,
+            validators,
+            input_hashes,
+            output_hashes,
+            canaries,
+            outputs,
+        })
+    }
+}
+
 impl ProtoConvert for Block {
     type Proto = blockchain::Block;
     fn into_proto(&self) -> Self::Proto {
@@ -999,6 +1212,41 @@ impl ProtoConvert for Block {
             Some(blockchain::Block_oneof_block::micro_block(ref micro_block)) => {
                 let micro_block = MicroBlock::from_proto(micro_block)?;
                 Block::MicroBlock(micro_block)
+            }
+            None => {
+                return Err(
+                    ProtoError::MissingField("block".to_string(), "block".to_string()).into(),
+                );
+            }
+        };
+        Ok(block)
+    }
+}
+
+impl ProtoConvert for LightBlock {
+    type Proto = blockchain::LightBlock;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::LightBlock::new();
+        match self {
+            LightBlock::LightMacroBlock(macro_block) => {
+                proto.set_light_macro_block(macro_block.into_proto())
+            }
+            LightBlock::LightMicroBlock(micro_block) => {
+                proto.set_light_micro_block(micro_block.into_proto())
+            }
+        }
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let block = match proto.block {
+            Some(blockchain::LightBlock_oneof_block::light_macro_block(ref macro_block)) => {
+                let macro_block = LightMacroBlock::from_proto(macro_block)?;
+                LightBlock::LightMacroBlock(macro_block)
+            }
+            Some(blockchain::LightBlock_oneof_block::light_micro_block(ref micro_block)) => {
+                let micro_block = LightMicroBlock::from_proto(micro_block)?;
+                LightBlock::LightMicroBlock(micro_block)
             }
             None => {
                 return Err(
@@ -1105,10 +1353,16 @@ mod tests {
 
         let (output, _gamma) = Output::new_payment(&pkey1, amount).expect("keys are valid");
         roundtrip(&output);
+        roundtrip(&output.canary());
+
+        let output: Output = PublicPaymentOutput::new(&pkey1, amount).into();
+        roundtrip(&output);
+        roundtrip(&output.canary());
 
         let output = Output::new_stake(&pkey1, &network_skey1, &network_pkey1, amount)
             .expect("keys are valid");
         roundtrip(&output);
+        roundtrip(&output.canary());
 
         let mut buf = output.into_buffer().unwrap();
         buf.pop();
@@ -1226,11 +1480,19 @@ mod tests {
         roundtrip(&block.header);
         block.sign(&skeypbc, &pkeypbc);
         let block2 = roundtrip(&block);
-        assert_eq!(block2.sig, block.sig);
-        assert_eq!(block2.transactions.len(), block.transactions.len());
-        for (tx1, tx2) in block2.transactions.iter().zip(block.transactions.iter()) {
-            assert_eq!(Hash::digest(&tx1), Hash::digest(&tx2));
-        }
+        assert_eq!(block, block2);
+
+        let light_block = block.clone().into_light_micro_block();
+        let light_block2 = roundtrip(&light_block);
+        assert_eq!(light_block2, light_block);
+
+        let block = Block::MicroBlock(block);
+        let block2 = roundtrip(&block);
+        assert_eq!(block, block2);
+
+        let light_block = LightBlock::LightMicroBlock(light_block);
+        let light_block2 = roundtrip(&light_block);
+        assert_eq!(light_block, light_block2);
     }
 
     #[test]
@@ -1272,25 +1534,26 @@ mod tests {
             block_reward,
             gamma,
             activity_map,
-            validators,
+            validators.clone(),
             inputs1,
             outputs1,
         );
         roundtrip(&block.header);
         roundtrip(&block);
         let block2 = roundtrip(&block);
-        assert_eq!(block2.multisig, block.multisig);
-        assert_eq!(block2.multisigmap, block.multisigmap);
-        assert_eq!(block2.inputs.len(), block.inputs.len());
-        for (input1, input2) in block.inputs.iter().zip(block2.inputs.iter()) {
-            assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
-        }
-        let outputs1 = block.outputs;
-        let outputs2 = block2.outputs;
-        assert_eq!(outputs1.len(), outputs2.len());
-        for (input1, input2) in outputs1.iter().zip(outputs2.iter()) {
-            assert_eq!(Hash::digest(&input1), Hash::digest(&input2));
-        }
+        assert_eq!(block, block2);
+
+        let light_block = block.clone().into_light_macro_block(validators);
+        let light_block2 = roundtrip(&light_block);
+        assert_eq!(light_block, light_block2);
+
+        let block = Block::MacroBlock(block);
+        let block2 = roundtrip(&block);
+        assert_eq!(block, block2);
+
+        let light_block = LightBlock::LightMacroBlock(light_block);
+        let light_block2 = roundtrip(&light_block);
+        assert_eq!(light_block, light_block2);
     }
 
     #[test]

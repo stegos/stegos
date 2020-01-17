@@ -108,4 +108,10 @@ pub trait BlockReader {
         epoch: u64,
         offset: u32,
     ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error>;
+
+    fn light_iter_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error>;
 }

@@ -37,7 +37,7 @@ use stegos_crypto::scc::{
 use stegos_crypto::CryptoError;
 
 /// Size of the canary (hint) string stored in encrypted payload.
-const PAYMENT_PAYLOAD_CANARY_LEN: usize = 4;
+pub(crate) const PAYMENT_PAYLOAD_CANARY_LEN: usize = 4;
 
 /// Exact size of encrypted payload of PaymentOutput.
 const PAYMENT_PAYLOAD_LEN: usize = 1024;

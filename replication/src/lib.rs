@@ -34,9 +34,14 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
 use std::time::Duration;
-use stegos_blockchain::{Block, BlockReader};
+use stegos_blockchain::{Block, BlockReader, LightBlock};
 use stegos_network::{Network, PeerId, ReplicationEvent};
 use tokio_timer::{clock, Delay};
+
+pub enum ReplicationRow {
+    Block(Block),
+    LightBlock(LightBlock),
+}
 
 pub struct Replication {
     /// My Peer ID.
@@ -47,6 +52,9 @@ pub struct Replication {
 
     /// A timer to handle periodic events.
     periodic_delay: Delay,
+
+    /// True if the light node protocol is used.
+    light: bool,
 
     /// A channel with incoming replication events.
     events: mpsc::UnboundedReceiver<ReplicationEvent>,
@@ -64,6 +72,7 @@ impl Replication {
     pub fn new(
         peer_id: PeerId,
         network: Network,
+        light: bool,
         events: mpsc::UnboundedReceiver<ReplicationEvent>,
     ) -> Self {
         let peers = HashMap::new();
@@ -72,6 +81,7 @@ impl Replication {
             peer_id,
             peers,
             periodic_delay,
+            light,
             events,
             network,
         }
@@ -93,9 +103,9 @@ impl Replication {
     ///
     /// Processes a new block.
     ///
-    pub fn on_block(&mut self, block: Block, micro_blocks_in_epoch: u32) {
+    pub fn on_block(&mut self, block: Block, light_block: LightBlock, micro_blocks_in_epoch: u32) {
         for (_peer_id, peer) in self.peers.iter_mut() {
-            peer.on_block(&block, micro_blocks_in_epoch);
+            peer.on_block(&block, &light_block, micro_blocks_in_epoch);
         }
     }
 
@@ -124,7 +134,7 @@ impl Replication {
         current_offset: u32,
         micro_blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
-    ) -> Async<Option<Block>> {
+    ) -> Async<Option<ReplicationRow>> {
         trace!("Poll");
 
         // Process replication events.
@@ -146,7 +156,7 @@ impl Replication {
                     ReplicationEvent::Connected { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
-                        peer.connected(current_epoch, current_offset, rx, tx);
+                        peer.connected(self.light, current_epoch, current_offset, rx, tx);
                     }
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
@@ -155,7 +165,7 @@ impl Replication {
                     }
                     ReplicationEvent::ConnectionFailed { peer_id, error } => {
                         assert_ne!(peer_id, self.peer_id);
-                        error!("[{}] Connection failed: {:?}", peer_id, error);
+                        debug!("[{}] Connection failed: {:?}", peer_id, error);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
                         peer.disconnected();
                     }

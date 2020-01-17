@@ -42,6 +42,27 @@ message Output {
     }
 }
 
+message PaymentCanary {
+    stegos.crypto.Pt ag = 1;
+    bytes canary = 2;
+}
+
+message PublicPaymentCanary {
+    stegos.crypto.PublicKey recipient = 1;
+}
+
+message StakeCanary {
+    stegos.crypto.PublicKey recipient = 1;
+}
+
+message Canary {
+    oneof canary {
+        PaymentCanary payment_canary = 1;
+        PublicPaymentCanary public_payment_canary= 2;
+        StakeCanary stake_canary = 3;
+    }
+}
+
 message SlashingTransaction {
     SlashingProof proof = 1;
     repeated stegos.crypto.Hash txins = 2;
@@ -112,6 +133,18 @@ message MacroBlock {
     repeated Output outputs = 5;
 }
 
+message LightMacroBlock {
+    MacroBlockHeader header = 1;
+    stegos.crypto.SecureSignature multisig = 2;
+    repeated bool multisigmap = 3;
+    repeated Staker validators = 4;
+    repeated stegos.crypto.Hash input_hashes = 5;
+    repeated stegos.crypto.Hash output_hashes = 6;
+    repeated Canary canaries = 7;
+    /// TODO: this transitional member will be removed when the light node is fully finished.
+    repeated Output outputs = 8;
+}
+
 message MicroBlockHeader {
     uint64 version = 1;
     stegos.crypto.Hash previous = 2;
@@ -138,10 +171,27 @@ message MicroBlock {
     repeated Transaction transactions = 3;
 }
 
+message LightMicroBlock {
+    MicroBlockHeader header = 1;
+    stegos.crypto.SecureSignature sig = 2;
+    repeated stegos.crypto.Hash input_hashes = 5;
+    repeated stegos.crypto.Hash output_hashes = 6;
+    repeated Canary canaries = 7;
+    /// TODO: this transitional member will be removed when the light node is fully finished.
+    repeated Output outputs = 8;
+}
+
 message Block {
     oneof block {
         MacroBlock macro_block = 1;
         MicroBlock micro_block = 2;
+    }
+}
+
+message LightBlock {
+    oneof block {
+        LightMacroBlock light_macro_block = 1;
+        LightMicroBlock light_micro_block = 2;
     }
 }
 

@@ -60,7 +60,7 @@ use stegos_crypto::scc::Fr;
 use stegos_crypto::{pbc, scc};
 use stegos_network::{Network, ReplicationEvent};
 use stegos_network::{PeerId, UnicastMessage};
-use stegos_replication::Replication;
+use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 use stegos_txpool::TransactionPoolService;
 pub use stegos_txpool::MAX_PARTICIPANTS;
@@ -409,7 +409,8 @@ impl NodeService {
             network: network.clone(),
         };
         let txpool_service = None;
-        let replication = Replication::new(peer_id, network.clone(), replication_rx);
+        let light = false;
+        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
 
         let service = NodeService {
             cfg,
@@ -1248,8 +1249,15 @@ impl NodeService {
         notify_subscribers(&mut self.chain_subscribers, notification);
 
         // Send block to replication.
+        let light_block: LightBlock = match &block {
+            Block::MacroBlock(block) => block
+                .clone()
+                .into_light_macro_block(self.chain.validators_at_epoch_start())
+                .into(),
+            Block::MicroBlock(block) => block.clone().into_light_micro_block().into(),
+        };
         self.replication
-            .on_block(block, self.chain.cfg().micro_blocks_in_epoch);
+            .on_block(block, light_block, self.chain.cfg().micro_blocks_in_epoch);
 
         // Re-stake expiring stakes.
         if self.chain.offset() == self.restaking_offset
@@ -2531,7 +2539,10 @@ impl Future for NodeService {
                 micro_blocks_in_epoch,
                 block_reader,
             ) {
-                Async::Ready(Some(block)) => {
+                Async::Ready(Some(ReplicationRow::LightBlock(_block))) => {
+                    panic!("Received the light block from the replication");
+                }
+                Async::Ready(Some(ReplicationRow::Block(block))) => {
                     if let Err(e) = self.handle_block(block) {
                         serror!(self, "Invalid block received from replication: {}", e);
                     }

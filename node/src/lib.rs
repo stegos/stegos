@@ -473,12 +473,10 @@ impl NodeService {
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
         if !tx.is_restaking() && !self.is_synchronized() {
-            sdebug!(self,
-                "Node is not synchronized - ignore transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
-                &tx_hash,
-                tx.txins(),
-                tx.txouts().iter().map(Hash::digest),
-                tx.fee()
+            sdebug!(
+                self,
+                "Node is not synchronized - ignore transaction from the network: tx={}",
+                &tx_hash
             );
             return Err(NodeTransactionError::NotSynchronized(tx_hash).into());
         }

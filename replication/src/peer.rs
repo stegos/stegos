@@ -436,9 +436,11 @@ impl Peer {
                     *total_blocks_sent += 1;
                 }
                 Ok(AsyncSink::NotReady(_response)) => {
-                    debug!(
+                    trace!(
                         "[{}] Not ready for writing: bytes={}, blocks={}",
-                        peer_id, bytes_sent, blocks_sent
+                        peer_id,
+                        bytes_sent,
+                        blocks_sent
                     );
                     if clock::now().duration_since(*clock) >= MAX_IDLE_DURATION {
                         debug!("[{}] Peer is not active, disconnecting", peer_id);
@@ -839,7 +841,7 @@ impl Peer {
                             return Async::NotReady;
                         }
                         Async::NotReady => {
-                            debug!("[{}] Not ready for reading", peer_id,);
+                            trace!("[{}] Not ready for reading", peer_id,);
                             if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                                 debug!("[{}] Peer is not active, disconnecting", peer_id);
                                 self.disconnected();

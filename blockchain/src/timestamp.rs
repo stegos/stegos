@@ -68,7 +68,7 @@ impl Timestamp {
     ///
     pub fn format_rfc3339(&self) -> String {
         let timestamp: SystemTime = self.clone().into();
-        humantime::format_rfc3339_millis(timestamp).to_string()
+        humantime::format_rfc3339_nanos(timestamp).to_string()
     }
 
     /// Parses ISO 8601/RFC 3339 date and time string such as `1996-12-19T16:39:57-08:00Z`,

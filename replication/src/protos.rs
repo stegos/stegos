@@ -211,10 +211,15 @@ mod tests {
     impl Hashable for ReplicationRequest {
         fn hash(&self, state: &mut Hasher) {
             match self {
-                ReplicationRequest::Subscribe { epoch, offset } => {
+                ReplicationRequest::Subscribe {
+                    epoch,
+                    offset,
+                    light,
+                } => {
                     "ReplicationRequest::Subscribe".hash(state);
                     epoch.hash(state);
                     offset.hash(state);
+                    light.hash(state);
                 }
             }
         }
@@ -241,6 +246,16 @@ mod tests {
                     current_offset.hash(state);
                     block.hash(state);
                 }
+                ReplicationResponse::LightBlock {
+                    current_epoch,
+                    current_offset,
+                    block,
+                } => {
+                    "ReplicationResponse::LightBlock".hash(state);
+                    current_epoch.hash(state);
+                    current_offset.hash(state);
+                    block.hash(state);
+                }
             }
         }
     }
@@ -259,6 +274,7 @@ mod tests {
         let request = ReplicationRequest::Subscribe {
             epoch: 100500,
             offset: 12345,
+            light: true,
         };
         roundtrip(&request);
     }

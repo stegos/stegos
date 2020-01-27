@@ -31,7 +31,7 @@ use futures::Async;
 use std::string::ToString;
 use std::time::Duration;
 use stegos_crypto::scc::PublicKey;
-use stegos_node::txpool;
+use stegos_txpool;
 
 const PAYMENT_FEE: i64 = 1_000; // 0.001 STG
 
@@ -871,12 +871,12 @@ fn create_snowball_tx() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -893,7 +893,7 @@ fn create_snowball_tx() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         debug!("===== ANONCING TXPOOL =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -1150,7 +1150,7 @@ fn snowball_lock_utxo() {
             snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
 
-        s.filter_unicast(&[stegos_node::txpool::POOL_JOIN_TOPIC]);
+        s.filter_unicast(&[stegos_txpool::POOL_JOIN_TOPIC]);
         let balance = balance_request(&mut accounts[0]);
         assert!(balance.payment.available < balance.payment.current);
 
@@ -1246,7 +1246,7 @@ fn snowball_failed_join() {
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         s.wait(crate::PENDING_UTXO_TIME);
@@ -1339,20 +1339,20 @@ fn snowball_with_wrong_facilitator_pool() {
 
         let (_, key) = pbc::make_random_keys();
 
-        let msg = txpool::messages::PoolInfo {
+        let msg = stegos_txpool::PoolInfo {
             participants: vec![],
             session_id: Hash::digest("test"),
         };
 
         accounts[0]
             .network
-            .receive_unicast(key, txpool::POOL_ANNOUNCE_TOPIC, msg);
+            .receive_unicast(key, stegos_txpool::POOL_ANNOUNCE_TOPIC, msg);
         accounts[0].poll();
         assert!(accounts[0].account_service.snowball.is_some());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
-        s.filter_unicast(&[txpool::POOL_JOIN_TOPIC]);
+        s.filter_unicast(&[stegos_txpool::POOL_JOIN_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
     });
 }
@@ -1393,12 +1393,12 @@ fn create_snowball_simple() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -1415,7 +1415,7 @@ fn create_snowball_simple() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== ANONCING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -1512,12 +1512,12 @@ fn create_snowball_fail_share_key() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -1535,7 +1535,7 @@ fn create_snowball_fail_share_key() {
 
         debug!("===== ANONCING TXPOOL =====");
 
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         let last_account = accounts.pop();
         drop(last_account);
@@ -1636,12 +1636,12 @@ fn create_snowball_fail_commitment() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -1659,7 +1659,7 @@ fn create_snowball_fail_commitment() {
 
         debug!("===== ANONCING TXPOOL =====");
 
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
@@ -1771,12 +1771,12 @@ fn create_snowball_fail_cloacked_vals() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -1794,7 +1794,7 @@ fn create_snowball_fail_cloacked_vals() {
 
         debug!("===== ANONCING TXPOOL =====");
 
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
         s.deliver_unicast(crate::snowball::SNOWBALL_TOPIC);
@@ -2004,12 +2004,12 @@ fn create_snowball_asymetric_dropouts_sharing() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -2026,7 +2026,7 @@ fn create_snowball_asymetric_dropouts_sharing() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== ANONCING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -2082,12 +2082,12 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -2104,7 +2104,7 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== ANONCING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);
@@ -2164,12 +2164,12 @@ fn create_snowball_asymetric_dropouts_commitment() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== JOINING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_JOIN_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_JOIN_TOPIC);
         s.poll();
 
         // this code are done just to work with different timeout configuration.
         {
-            let sleep_time = stegos_node::txpool::MESSAGE_TIMEOUT;
+            let sleep_time = stegos_txpool::MESSAGE_TIMEOUT;
 
             s.wait(sleep_time);
             // if not, just poll to triger txpoll_anouncment
@@ -2186,7 +2186,7 @@ fn create_snowball_asymetric_dropouts_commitment() {
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
 
         debug!("===== ANONCING TXPOOL =====");
-        s.deliver_unicast(stegos_node::txpool::POOL_ANNOUNCE_TOPIC);
+        s.deliver_unicast(stegos_txpool::POOL_ANNOUNCE_TOPIC);
 
         debug!("===== SB STARTED NEW POOL: Send::SharedKeying =====");
         accounts.iter_mut().for_each(AccountSandbox::poll);

@@ -30,19 +30,14 @@ mod loader;
 mod mempool;
 pub mod metrics;
 pub mod protos;
-mod replication;
 #[doc(hidden)]
 pub mod test;
-pub mod txpool;
 mod validation;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
-use crate::replication::Replication;
-use crate::txpool::TransactionPoolService;
-pub use crate::txpool::MAX_PARTICIPANTS;
 use crate::validation::*;
 use failure::{bail, format_err, Error};
 use futures::sync::{mpsc, oneshot};
@@ -65,7 +60,10 @@ use stegos_crypto::scc::Fr;
 use stegos_crypto::{pbc, scc};
 use stegos_network::{Network, ReplicationEvent};
 use stegos_network::{PeerId, UnicastMessage};
+use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
+use stegos_txpool::TransactionPoolService;
+pub use stegos_txpool::MAX_PARTICIPANTS;
 use tokio_timer::{clock, Delay, Interval};
 use Validation::*;
 
@@ -317,8 +315,6 @@ pub struct NodeService {
     /// Subscribers for chain events which are fed from the disk.
     /// Automatically promoted to chain_subscribers after synchronization.
     chain_readers: Vec<ChainReader>,
-    /// Node interface (needed to create TransactionPoolService).
-    node: Node,
     /// Network interface.
     network: Network,
     /// Aggregated stream of events.
@@ -413,13 +409,8 @@ impl NodeService {
             network: network.clone(),
         };
         let txpool_service = None;
-        let replication = Replication::new(
-            chain.epoch(),
-            chain.offset(),
-            peer_id,
-            network.clone(),
-            replication_rx,
-        );
+        let light = false;
+        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
 
         let service = NodeService {
             cfg,
@@ -435,7 +426,6 @@ impl NodeService {
             is_restaking_enabled,
             chain_readers,
             chain_subscribers,
-            node: node.clone(),
             network: network.clone(),
             check_sync,
             events,
@@ -484,12 +474,10 @@ impl NodeService {
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
         if !tx.is_restaking() && !self.is_synchronized() {
-            sdebug!(self,
-                "Node is not synchronized - ignore transaction from the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
-                &tx_hash,
-                tx.txins(),
-                tx.txouts().iter().map(Hash::digest),
-                tx.fee()
+            sdebug!(
+                self,
+                "Node is not synchronized - ignore transaction from the network: tx={}",
+                &tx_hash
             );
             return Err(NodeTransactionError::NotSynchronized(tx_hash).into());
         }
@@ -1261,8 +1249,15 @@ impl NodeService {
         notify_subscribers(&mut self.chain_subscribers, notification);
 
         // Send block to replication.
+        let light_block: LightBlock = match &block {
+            Block::MacroBlock(block) => block
+                .clone()
+                .into_light_macro_block(self.chain.validators_at_epoch_start())
+                .into(),
+            Block::MicroBlock(block) => block.clone().into_light_micro_block().into(),
+        };
         self.replication
-            .on_block(block, self.chain.cfg().micro_blocks_in_epoch);
+            .on_block(block, light_block, self.chain.cfg().micro_blocks_in_epoch);
 
         // Re-stake expiring stakes.
         if self.chain.offset() == self.restaking_offset
@@ -1520,8 +1515,7 @@ impl NodeService {
         let facilitator = self.chain.facilitator();
         if facilitator == &self.network_pkey {
             sinfo!(self, "I am facilitator");
-            let txpool_service =
-                TransactionPoolService::new(self.network.clone(), self.node.clone());
+            let txpool_service = TransactionPoolService::new(self.network.clone());
             self.txpool_service = Some(txpool_service);
         } else {
             sinfo!(self, "Facilitator is {}", facilitator);
@@ -2537,19 +2531,26 @@ impl Future for NodeService {
         }
         // Replication
         loop {
-            match self.replication.poll(&self.chain) {
-                Async::Ready(Some(blocks)) => {
-                    for block in blocks {
-                        if let Err(e) = self.handle_block(block) {
-                            serror!(self, "Invalid block received from replication: {}", e);
-                        }
+            let micro_blocks_in_epoch = self.chain.cfg().micro_blocks_in_epoch;
+            let block_reader: &dyn BlockReader = &self.chain;
+            match self.replication.poll(
+                self.chain.epoch(),
+                self.chain.offset(),
+                micro_blocks_in_epoch,
+                block_reader,
+            ) {
+                Async::Ready(Some(ReplicationRow::LightBlock(_block))) => {
+                    panic!("Received the light block from the replication");
+                }
+                Async::Ready(Some(ReplicationRow::Block(block))) => {
+                    if let Err(e) = self.handle_block(block) {
+                        serror!(self, "Invalid block received from replication: {}", e);
                     }
                 }
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => break,
             }
         }
-
         Ok(Async::NotReady)
     }
 }

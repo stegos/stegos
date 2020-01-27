@@ -30,8 +30,6 @@ use std::time::Duration;
 pub enum PeerInfo {
     Localhost {
         peer_id: String,
-        epoch: u64,
-        offset: u32,
     },
     Discovered {
         peer_id: String,

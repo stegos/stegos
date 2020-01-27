@@ -36,8 +36,10 @@ use crate::output::*;
 use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
+use crate::BlockReader;
 use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
+use failure::Error;
 use log::*;
 use rocksdb;
 use rocksdb::{ColumnFamily, Snapshot, WriteBatch};
@@ -850,6 +852,39 @@ impl Blockchain {
         self.database
             .iterator(mode)
             .map(|(_, v)| Block::from_buffer(&*v).expect("couldn't deserialize block."))
+    }
+
+    /// Returns iterator over saved light blocks.
+    pub fn light_blocks_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> impl Iterator<Item = LightBlock> + 'a {
+        let key = Self::block_key(LSN(epoch, offset));
+        let mode = rocksdb::IteratorMode::From(&key, rocksdb::Direction::Forward);
+        let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).expect("I/O error");
+        self.database.iterator(mode).map(move |(key, v)| {
+            let block = Block::from_buffer(&*v).expect("couldn't deserialize block.");
+            match block {
+                Block::MicroBlock(block) => block.into_light_micro_block().into(),
+                Block::MacroBlock(block) => {
+                    // TODO: epoch_info should be stored alongside blocks.
+                    let epoch_info = self
+                        .database
+                        .get_cf(cf_epoch_infos, key)
+                        .expect("I/O error")
+                        .expect("epoch info for macro block");
+                    let epoch_info =
+                        EpochInfo::from_buffer(&epoch_info).expect("couldn't deserialize block.");
+                    let validators: StakersGroup = epoch_info
+                        .validators
+                        .into_iter()
+                        .map(|x| (x.network_pkey, x.slots))
+                        .collect();
+                    block.into_light_macro_block(validators).into()
+                }
+            }
+        })
     }
 
     /// Returns start epoch info for any past epoch.
@@ -2594,7 +2629,7 @@ pub mod tests {
         let mut cfg: ChainConfig = Default::default();
         cfg.micro_blocks_in_epoch = 100500;
         let stake = cfg.min_stake_amount;
-        let (keychains, blocks) = test::fake_genesis(
+        let (keychains, genesis) = test::fake_genesis(
             stake,
             10 * cfg.min_stake_amount,
             cfg.max_slot_count,
@@ -2607,10 +2642,34 @@ pub mod tests {
             cfg,
             chain_dir.path(),
             ConsistencyCheck::None,
-            blocks,
+            genesis.clone(),
             timestamp,
         )
         .expect("Failed to create blockchain");
+
+        match blockchain.blocks_starting(0, 0).next().unwrap() {
+            Block::MacroBlock(block) => {
+                assert_eq!(&block, &genesis);
+            }
+            _ => panic!("Expected macro block"),
+        }
+
+        match blockchain.light_blocks_starting(0, 0).next().unwrap() {
+            LightBlock::LightMacroBlock(block) => {
+                assert_eq!(&block.header, &genesis.header);
+                assert_eq!(&block.input_hashes, &genesis.inputs);
+                assert_eq!(&block.outputs, &genesis.outputs);
+                assert_eq!(&block.multisig, &genesis.multisig);
+                assert_eq!(&block.multisigmap, &genesis.multisigmap);
+                assert_eq!(&block.outputs, &genesis.outputs);
+                let output_hashes: Vec<Hash> = genesis.outputs.iter().map(Hash::digest).collect();
+                assert_eq!(&block.output_hashes, &output_hashes);
+                let canaries: Vec<Canary> = genesis.outputs.iter().map(|o| o.canary()).collect();
+                assert_eq!(&block.canaries, &canaries);
+            }
+            _ => panic!("Expected macro block"),
+        }
+
         let epoch = blockchain.epoch();
         let starting_offset = blockchain.offset();
         // len of genesis
@@ -2633,11 +2692,27 @@ pub mod tests {
 
         assert_eq!(
             blockchain
+                .light_blocks_starting(epoch, starting_offset)
+                .take(1)
+                .count(),
+            1
+        );
+
+        assert_eq!(
+            blockchain
                 .blocks_starting(epoch, starting_offset)
                 .take(4)
                 .count(),
             4
         );
+        assert_eq!(
+            blockchain
+                .light_blocks_starting(epoch, starting_offset)
+                .take(4)
+                .count(),
+            4
+        );
+
         // limit
         assert_eq!(
             blockchain
@@ -2646,10 +2721,24 @@ pub mod tests {
                 .count(),
             10
         );
+        assert_eq!(
+            blockchain
+                .light_blocks_starting(epoch, starting_offset)
+                .take(20)
+                .count(),
+            10
+        );
         // empty
         assert_eq!(
             blockchain
                 .blocks_starting(epoch, blockchain.offset())
+                .take(1)
+                .count(),
+            0
+        );
+        assert_eq!(
+            blockchain
+                .light_blocks_starting(epoch, blockchain.offset())
                 .take(1)
                 .count(),
             0
@@ -2764,5 +2853,25 @@ pub mod tests {
             unspent_output_proof.timestamp,
             chain.last_macro_block_timestamp()
         );
+    }
+}
+
+impl BlockReader for Blockchain {
+    /// Returns iterator over saved blocks.
+    fn iter_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error> {
+        Ok(Box::new(self.blocks_starting(epoch, offset)))
+    }
+
+    /// Returns iterator over saved blocks.
+    fn light_iter_starting<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error> {
+        Ok(Box::new(self.light_blocks_starting(epoch, offset)))
     }
 }

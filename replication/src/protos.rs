@@ -21,16 +21,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::protos::replication;
 use failure::Error;
 use serde_derive::{Deserialize, Serialize};
 use stegos_blockchain::protos::ProtoError;
-use stegos_blockchain::Block;
+use stegos_blockchain::{Block, LightBlock};
 use stegos_serialization::traits::*;
+// link protobuf dependencies
+use stegos_blockchain::protos::*;
+include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum ReplicationRequest {
-    Subscribe { epoch: u64, offset: u32 },
+    Subscribe {
+        epoch: u64,
+        offset: u32,
+        light: bool,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +50,21 @@ pub(super) enum ReplicationResponse {
         current_offset: u32,
         block: Block,
     },
+    LightBlock {
+        current_epoch: u64,
+        current_offset: u32,
+        block: LightBlock,
+    },
+}
+
+impl ReplicationResponse {
+    pub fn name(&self) -> &'static str {
+        match self {
+            ReplicationResponse::Subscribed { .. } => "Subscribed",
+            ReplicationResponse::Block { .. } => "Block",
+            ReplicationResponse::LightBlock { .. } => "LightBlock",
+        }
+    }
 }
 
 impl ProtoConvert for ReplicationRequest {
@@ -51,21 +72,45 @@ impl ProtoConvert for ReplicationRequest {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = replication::ReplicationRequest::new();
         match self {
-            ReplicationRequest::Subscribe { epoch, offset } => {
+            ReplicationRequest::Subscribe {
+                epoch,
+                offset,
+                light,
+            } => {
                 let mut request = replication::Subscribe::new();
                 request.set_epoch(*epoch);
                 request.set_offset(*offset);
-                proto.set_subscribe(request);
+                if !*light {
+                    proto.set_subscribe_full(request);
+                } else {
+                    proto.set_subscribe_light(request);
+                }
             }
         }
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         match proto.request {
-            Some(replication::ReplicationRequest_oneof_request::subscribe(ref subscribe)) => {
+            Some(replication::ReplicationRequest_oneof_request::subscribe_full(ref subscribe)) => {
                 let epoch = subscribe.get_epoch();
                 let offset = subscribe.get_offset();
-                let request = ReplicationRequest::Subscribe { epoch, offset };
+                let light = false;
+                let request = ReplicationRequest::Subscribe {
+                    epoch,
+                    offset,
+                    light,
+                };
+                Ok(request)
+            }
+            Some(replication::ReplicationRequest_oneof_request::subscribe_light(ref subscribe)) => {
+                let epoch = subscribe.get_epoch();
+                let offset = subscribe.get_offset();
+                let light = true;
+                let request = ReplicationRequest::Subscribe {
+                    epoch,
+                    offset,
+                    light,
+                };
                 Ok(request)
             }
             None => {
@@ -102,6 +147,17 @@ impl ProtoConvert for ReplicationResponse {
                 response.set_block(block.into_proto());
                 proto.set_block(response);
             }
+            ReplicationResponse::LightBlock {
+                current_epoch,
+                current_offset,
+                block,
+            } => {
+                let mut response = replication::LightBlock::new();
+                response.set_current_epoch(*current_epoch);
+                response.set_current_offset(*current_offset);
+                response.set_block(block.into_proto());
+                proto.set_light_block(response);
+            }
         }
         proto
     }
@@ -121,6 +177,17 @@ impl ProtoConvert for ReplicationResponse {
                 let current_offset = block.get_current_offset();
                 let block = Block::from_proto(block.get_block())?;
                 let response = ReplicationResponse::Block {
+                    current_epoch,
+                    current_offset,
+                    block,
+                };
+                Ok(response)
+            }
+            Some(replication::ReplicationResponse_oneof_response::light_block(ref block)) => {
+                let current_epoch = block.get_current_epoch();
+                let current_offset = block.get_current_offset();
+                let block = LightBlock::from_proto(block.get_block())?;
+                let response = ReplicationResponse::LightBlock {
                     current_epoch,
                     current_offset,
                     block,

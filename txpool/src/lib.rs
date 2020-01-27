@@ -21,10 +21,9 @@
 
 #![deny(warnings)]
 
-pub mod messages;
-pub use self::messages::*;
+pub mod protos;
+pub use self::protos::*;
 
-use crate::Node;
 use futures::sync::mpsc;
 use futures::{Async, Future, Poll, Stream};
 use log::*;
@@ -57,7 +56,7 @@ pub struct TransactionPoolService {
 
 impl TransactionPoolService {
     /// Crates new TransactionPool.
-    pub fn new(network: Network, _node: Node) -> TransactionPoolService {
+    pub fn new(network: Network) -> TransactionPoolService {
         let participants = HashMap::new();
         let mut timer = Interval::new_interval(MESSAGE_TIMEOUT);
         // register new timer to the current task.

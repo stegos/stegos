@@ -67,7 +67,7 @@ use tokio_timer::{clock, Interval};
 const STAKE_FEE: i64 = 0;
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const PENDING_UTXO_TIME: Duration = Duration::from_secs(5 * 60);
-const CHECK_PENDING_UTXO: Duration = Duration::from_secs(10);
+const CHECK_LOCKED_INPUTS: Duration = Duration::from_secs(10);
 
 ///
 /// Events.
@@ -164,7 +164,7 @@ struct UnsealedAccountService {
     resend_tx: Interval,
 
     /// Check for pending utxos.
-    check_pending_utxos: Interval,
+    expire_locked_inputs: Interval,
     //
     // Snowball state (owned)
     //
@@ -219,7 +219,7 @@ impl UnsealedAccountService {
         debug!("Opened database: epoch={}", epoch);
         let transaction_response = None;
         let resend_tx = Interval::new(clock::now(), RESEND_TX_INTERVAL);
-        let check_pending_utxos = Interval::new(clock::now(), CHECK_PENDING_UTXO);
+        let expire_locked_inputs = Interval::new(clock::now(), CHECK_LOCKED_INPUTS);
         let chain_notifications = ChainSubscription::new(&node, epoch, 0);
 
         info!("Loaded account {}", account_pkey);
@@ -233,7 +233,7 @@ impl UnsealedAccountService {
             database,
             facilitator_pkey,
             resend_tx,
-            check_pending_utxos,
+            expire_locked_inputs,
             snowball,
             stake_epochs,
             max_inputs_in_tx,
@@ -1155,7 +1155,7 @@ impl Future for UnsealedAccountService {
 
         loop {
             match self
-                .check_pending_utxos
+                .expire_locked_inputs
                 .poll()
                 .expect("no errors in timers")
             {

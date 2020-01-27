@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.loader;
+package stegos.replication;
 
 import "crypto.proto";
 import "blockchain.proto";
@@ -11,7 +11,8 @@ message Subscribe {
 
 message ReplicationRequest {
     oneof request {
-        Subscribe subscribe = 1;
+        Subscribe subscribe_full = 1;
+        Subscribe subscribe_light = 2;
     }
 }
 
@@ -26,9 +27,16 @@ message Block {
     stegos.blockchain.Block block = 10;
 }
 
+message LightBlock {
+    uint64 current_epoch = 1;
+    uint32 current_offset = 2;
+    stegos.blockchain.LightBlock block = 10;
+}
+
 message ReplicationResponse {
     oneof response {
         Subscribed subscribed = 1;
         Block block = 2;
+        LightBlock light_block = 3;
     }
 }

@@ -26,7 +26,7 @@ use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewChangeProof {
     #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]

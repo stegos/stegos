@@ -43,7 +43,7 @@ pub const VERSION: u64 = 1;
 //--------------------------------------------------------------------------------------------------
 
 /// Micro Block Header.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MicroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -100,7 +100,7 @@ pub struct MicroBlockHeader {
 }
 
 /// Micro Block.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "crate::api::MicroBlockInfo")]
 #[serde(into = "crate::api::MicroBlockInfo")]
 pub struct MicroBlock {
@@ -112,6 +112,24 @@ pub struct MicroBlock {
 
     /// Transactions.
     pub transactions: Vec<Transaction>,
+}
+
+/// Micro Block for the light node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LightMicroBlock {
+    /// Header.
+    pub header: MicroBlockHeader,
+    /// BLS signature by leader.
+    pub sig: pbc::Signature,
+    /// Input hashes.
+    pub input_hashes: Vec<Hash>,
+    /// Output hashes.
+    pub output_hashes: Vec<Hash>,
+    /// Output canaries.
+    pub canaries: Vec<Canary>,
+    /// Outputs
+    /// TODO: this transitional member will be removed when the light node is fully finished.
+    pub outputs: Vec<Output>,
 }
 
 impl Hashable for MicroBlockHeader {
@@ -287,6 +305,35 @@ impl Hashable for MicroBlock {
     }
 }
 
+impl Hashable for LightMicroBlock {
+    fn hash(&self, state: &mut Hasher) {
+        self.header.hash(state)
+    }
+}
+
+impl MicroBlock {
+    pub fn into_light_micro_block(self) -> LightMicroBlock {
+        let input_hashes: Vec<Hash> = self.inputs().cloned().collect();
+        let outputs: Vec<Output> = self.outputs().cloned().collect();
+        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        LightMicroBlock {
+            header: self.header,
+            sig: self.sig,
+            input_hashes,
+            output_hashes,
+            canaries,
+            outputs,
+        }
+    }
+}
+
+impl From<MicroBlock> for LightMicroBlock {
+    fn from(block: MicroBlock) -> LightMicroBlock {
+        block.into_light_micro_block()
+    }
+}
+
 //--------------------------------------------------------------------------------------------------
 // Macro Blocks.
 //--------------------------------------------------------------------------------------------------
@@ -295,7 +342,7 @@ impl Hashable for MicroBlock {
 pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
 
 /// Macro Block Header.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MacroBlockHeader {
     /// Version number.
     pub version: u64,
@@ -382,14 +429,14 @@ impl Hashable for MacroBlockHeader {
 }
 
 /// Macro Block.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "crate::api::MacroBlockInfo")]
 #[serde(into = "crate::api::MacroBlockInfo")]
 pub struct MacroBlock {
     /// Header.
     pub header: MacroBlockHeader,
 
-    /// BLS (multi-)signature.
+    /// BLS multi-signature.
     pub multisig: pbc::Signature,
 
     /// Bitmap of signers in the multi-signature.
@@ -399,6 +446,30 @@ pub struct MacroBlock {
     pub inputs: Vec<Hash>,
 
     /// The list of transaction outputs in a Merkle Tree.
+    pub outputs: Vec<Output>,
+}
+
+/// Macro Block for the light node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LightMacroBlock {
+    /// Header.
+    pub header: MacroBlockHeader,
+    /// BLS multi-signature.
+    pub multisig: pbc::Signature,
+    /// Bitmap of signers in the multi-signature.
+    #[serde(deserialize_with = "stegos_crypto::utils::deserialize_bitvec")]
+    #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
+    pub multisigmap: BitVec,
+    /// Validators for the new epoch.
+    pub validators: StakersGroup,
+    /// Input hashes.
+    pub input_hashes: Vec<Hash>,
+    /// Output hashes.
+    pub output_hashes: Vec<Hash>,
+    /// Output canaries.
+    pub canaries: Vec<Canary>,
+    /// Outputs
+    /// TODO: this transitional member will be removed when the light node is fully finished.
     pub outputs: Vec<Output>,
 }
 
@@ -581,6 +652,23 @@ impl MacroBlock {
             outputs,
         }
     }
+
+    pub fn into_light_macro_block(self, validators: StakersGroup) -> LightMacroBlock {
+        let input_hashes: Vec<Hash> = self.inputs;
+        let outputs: Vec<Output> = self.outputs;
+        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
+        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        LightMacroBlock {
+            header: self.header,
+            multisig: self.multisig,
+            multisigmap: self.multisigmap,
+            validators,
+            input_hashes,
+            output_hashes,
+            canaries,
+            outputs,
+        }
+    }
 }
 
 impl Hashable for MacroBlock {
@@ -589,20 +677,18 @@ impl Hashable for MacroBlock {
     }
 }
 
-impl PartialEq for MacroBlock {
-    fn eq(&self, other: &MacroBlock) -> bool {
-        Hash::digest(self) == Hash::digest(other)
+impl Hashable for LightMacroBlock {
+    fn hash(&self, state: &mut Hasher) {
+        self.header.hash(state)
     }
 }
-
-impl Eq for MacroBlock {}
 
 //--------------------------------------------------------------------------------------------------
 // Block (enum).
 //--------------------------------------------------------------------------------------------------
 
 /// Types of blocks supported by this blockchain.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "block")]
 pub enum Block {
     MacroBlock(MacroBlock),
@@ -710,6 +796,34 @@ impl Hashable for Block {
         match self {
             Block::MacroBlock(macro_block) => macro_block.hash(state),
             Block::MicroBlock(micro_block) => micro_block.hash(state),
+        }
+    }
+}
+
+/// A container for light-node blocks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LightBlock {
+    LightMacroBlock(LightMacroBlock),
+    LightMicroBlock(LightMicroBlock),
+}
+
+impl From<LightMacroBlock> for LightBlock {
+    fn from(block: LightMacroBlock) -> LightBlock {
+        LightBlock::LightMacroBlock(block)
+    }
+}
+
+impl From<LightMicroBlock> for LightBlock {
+    fn from(block: LightMicroBlock) -> LightBlock {
+        LightBlock::LightMicroBlock(block)
+    }
+}
+
+impl Hashable for LightBlock {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            LightBlock::LightMacroBlock(macro_block) => macro_block.header.hash(state),
+            LightBlock::LightMicroBlock(micro_block) => micro_block.header.hash(state),
         }
     }
 }

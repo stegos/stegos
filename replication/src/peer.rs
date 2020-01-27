@@ -21,13 +21,14 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use super::api::PeerInfo;
 use super::protos::{ReplicationRequest, ReplicationResponse};
-use crate::replication::api::PeerInfo;
+use crate::ReplicationRow;
 use futures::sync::mpsc;
 use futures::{task, Async, AsyncSink, Sink, Stream};
 use log::*;
 use std::time::{Duration, Instant};
-use stegos_blockchain::{Block, Blockchain};
+use stegos_blockchain::{Block, BlockReader, LightBlock, MacroBlockHeader, MicroBlockHeader};
 use stegos_network::{Multiaddr, PeerId};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
@@ -59,6 +60,7 @@ pub(super) enum Peer {
     Connected {
         peer_id: PeerId,
         multiaddr: Multiaddr,
+        light: bool,
         last_clock: Instant,
         tx: mpsc::Sender<Vec<u8>>,
         rx: mpsc::Receiver<Vec<u8>>,
@@ -74,6 +76,7 @@ pub(super) enum Peer {
     Receiving {
         peer_id: PeerId,
         multiaddr: Multiaddr,
+        light: bool,
         last_clock: Instant,
         start_clock: Instant,
         #[allow(unused)] // tx is not currently used by the protocol.
@@ -87,6 +90,7 @@ pub(super) enum Peer {
     Sending {
         peer_id: PeerId,
         multiaddr: Multiaddr,
+        light: bool,
         last_clock: Instant,
         start_clock: Instant,
         tx: mpsc::Sender<Vec<u8>>,
@@ -102,6 +106,84 @@ pub(super) enum Peer {
         last_clock: Instant,
         error: std::io::Error,
     },
+}
+
+trait IntoReplicationResponse: Sized {
+    fn into_replication_response(
+        self,
+        current_epoch: u64,
+        current_offset: u32,
+    ) -> ReplicationResponse;
+}
+
+impl IntoReplicationResponse for Block {
+    fn into_replication_response(
+        self,
+        current_epoch: u64,
+        current_offset: u32,
+    ) -> ReplicationResponse {
+        ReplicationResponse::Block {
+            current_epoch,
+            current_offset,
+            block: self,
+        }
+    }
+}
+
+impl IntoReplicationResponse for LightBlock {
+    fn into_replication_response(
+        self,
+        current_epoch: u64,
+        current_offset: u32,
+    ) -> ReplicationResponse {
+        ReplicationResponse::LightBlock {
+            current_epoch,
+            current_offset,
+            block: self,
+        }
+    }
+}
+
+trait NextEpochOffset {
+    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32);
+}
+
+impl NextEpochOffset for MacroBlockHeader {
+    fn next_epoch_offset(&self, _micro_blocks_in_epoch: u32) -> (u64, u32) {
+        (self.epoch + 1, 0)
+    }
+}
+
+impl NextEpochOffset for MicroBlockHeader {
+    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
+        if self.offset + 1 >= micro_blocks_in_epoch {
+            (self.epoch + 1, 0)
+        } else {
+            (self.epoch, self.offset + 1)
+        }
+    }
+}
+
+impl NextEpochOffset for Block {
+    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
+        match self {
+            Block::MacroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
+            Block::MicroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
+        }
+    }
+}
+
+impl NextEpochOffset for LightBlock {
+    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
+        match self {
+            LightBlock::LightMacroBlock(block) => {
+                block.header.next_epoch_offset(micro_blocks_in_epoch)
+            }
+            LightBlock::LightMicroBlock(block) => {
+                block.header.next_epoch_offset(micro_blocks_in_epoch)
+            }
+        }
+    }
 }
 
 impl Peer {
@@ -152,6 +234,7 @@ impl Peer {
     ///
     pub(super) fn connected(
         &mut self,
+        light: bool,
         epoch: u64,
         offset: u32,
         rx: mpsc::Receiver<Vec<u8>>,
@@ -166,7 +249,11 @@ impl Peer {
                 return self.disconnected();
             }
         };
-        let request = ReplicationRequest::Subscribe { epoch, offset };
+        let request = ReplicationRequest::Subscribe {
+            epoch,
+            offset,
+            light,
+        };
         trace!("[{}] <- {:?}", peer_id, request);
         let request = request.into_buffer().unwrap();
         let new_state = match tx.try_send(request) {
@@ -175,6 +262,7 @@ impl Peer {
                 Peer::Connected {
                     peer_id,
                     multiaddr,
+                    light,
                     last_clock: clock::now(),
                     tx,
                     rx,
@@ -256,6 +344,7 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                ..
             } => PeerInfo::Discovered {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
@@ -265,6 +354,7 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                ..
             } => PeerInfo::Connecting {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
@@ -354,14 +444,15 @@ impl Peer {
     ///
     /// A helper for Receiving state and on_block().
     ///
-    fn send_blocks<BlocksIter>(
+    fn send_blocks<BlocksIter, I>(
         &mut self,
         blocks: BlocksIter,
         current_epoch: u64,
         current_offset: u32,
         micro_blocks_in_epoch: u32,
     ) where
-        BlocksIter: IntoIterator<Item = Block>,
+        BlocksIter: IntoIterator<Item = I>,
+        I: IntoReplicationResponse + NextEpochOffset + Sized,
     {
         let (peer_id, tx, epoch, offset, total_bytes_sent, total_blocks_sent, clock) = match self {
             Peer::Sending {
@@ -389,41 +480,18 @@ impl Peer {
         let mut blocks_sent: usize = 0;
         for block in blocks {
             if blocks_sent >= MAX_BLOCKS_PER_BATCH || bytes_sent >= MAX_BYTES_PER_BATCH {
-                debug!(
+                trace!(
                     "[{}] Wrote enough: bytes={}, blocks={}",
-                    peer_id, bytes_sent, blocks_sent
+                    peer_id,
+                    bytes_sent,
+                    blocks_sent
                 );
                 task::current().notify();
                 break;
             }
-            let (next_epoch, next_offset) = match &block {
-                Block::MacroBlock(block) => {
-                    assert_eq!(block.header.epoch, *epoch);
-                    debug!(
-                        "[{}] <- MacroBlock {{ epoch = {} }}",
-                        peer_id, block.header.epoch
-                    );
-                    (block.header.epoch + 1, 0)
-                }
-                Block::MicroBlock(block) => {
-                    assert_eq!(block.header.epoch, *epoch);
-                    assert_eq!(block.header.offset, *offset);
-                    debug!(
-                        "[{}] <- MicroBlock {{ epoch = {}, offset = {} }}",
-                        peer_id, block.header.epoch, block.header.offset,
-                    );
-                    if block.header.offset + 1 >= micro_blocks_in_epoch {
-                        (block.header.epoch + 1, 0)
-                    } else {
-                        (block.header.epoch, block.header.offset + 1)
-                    }
-                }
-            };
-            let response = ReplicationResponse::Block {
-                current_epoch,
-                current_offset,
-                block,
-            };
+            let (next_epoch, next_offset) = block.next_epoch_offset(micro_blocks_in_epoch);
+            let response: ReplicationResponse =
+                block.into_replication_response(current_epoch, current_offset);
             let response = response.into_buffer().unwrap();
             let response_len = response.len();
             match tx.start_send(response) {
@@ -436,9 +504,11 @@ impl Peer {
                     *total_blocks_sent += 1;
                 }
                 Ok(AsyncSink::NotReady(_response)) => {
-                    debug!(
+                    trace!(
                         "[{}] Not ready for writing: bytes={}, blocks={}",
-                        peer_id, bytes_sent, blocks_sent
+                        peer_id,
+                        bytes_sent,
+                        blocks_sent
                     );
                     if clock::now().duration_since(*clock) >= MAX_IDLE_DURATION {
                         debug!("[{}] Peer is not active, disconnecting", peer_id);
@@ -460,22 +530,40 @@ impl Peer {
     }
 
     // Called when a new block is registered.
-    pub(super) fn on_block(&mut self, block: &Block, micro_blocks_in_epoch: u32) {
+    pub(super) fn on_block(
+        &mut self,
+        block: &Block,
+        light_block: &LightBlock,
+        micro_blocks_in_epoch: u32,
+    ) {
         let (current_epoch, current_offset) = match &block {
             Block::MacroBlock(block) => (block.header.epoch, 0),
             Block::MicroBlock(block) => (block.header.epoch, block.header.offset),
         };
         match self {
-            Peer::Sending { epoch, offset, .. }
-                if *epoch == current_epoch && *offset == current_offset =>
-            {
-                let blocks = vec![block.clone()];
-                self.send_blocks(
-                    blocks.into_iter(),
-                    current_epoch,
-                    current_offset,
-                    micro_blocks_in_epoch,
-                );
+            Peer::Sending {
+                epoch,
+                offset,
+                light,
+                ..
+            } if *epoch == current_epoch && *offset == current_offset => {
+                if !*light {
+                    let blocks = vec![block.clone()];
+                    self.send_blocks(
+                        blocks.into_iter(),
+                        current_epoch,
+                        current_offset,
+                        micro_blocks_in_epoch,
+                    );
+                } else {
+                    let light_blocks = vec![light_block.clone()];
+                    self.send_blocks(
+                        light_blocks.into_iter(),
+                        current_epoch,
+                        current_offset,
+                        micro_blocks_in_epoch,
+                    );
+                }
             }
             _ => {
                 return;
@@ -486,7 +574,13 @@ impl Peer {
     ///
     /// The state machine.
     ///
-    pub(super) fn poll(&mut self, chain: &Blockchain) -> Async<Vec<Block>> {
+    pub(super) fn poll(
+        &mut self,
+        current_epoch: u64,
+        current_offset: u32,
+        micro_blocks_in_epoch: u32,
+        block_reader: &dyn BlockReader,
+    ) -> Async<ReplicationRow> {
         match self {
             //--------------------------------------------------------------------------------------
             // Discovered
@@ -563,14 +657,15 @@ impl Peer {
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
                 let tmp_state = Self::registered(peer_id.clone(), multiaddr.clone());
-                let (peer_id, multiaddr, rx, tx) = match std::mem::replace(self, tmp_state) {
+                let (peer_id, multiaddr, light, rx, tx) = match std::mem::replace(self, tmp_state) {
                     Peer::Connected {
                         peer_id,
                         multiaddr,
                         rx,
                         tx,
+                        light,
                         ..
-                    } => (peer_id, multiaddr, rx, tx),
+                    } => (peer_id, multiaddr, light, rx, tx),
                     _ => unreachable!("Expected Connected state"),
                 };
                 let new_state = match response {
@@ -583,6 +678,7 @@ impl Peer {
                         Peer::Receiving {
                             peer_id,
                             multiaddr,
+                            light,
                             last_clock: now.clone(),
                             start_clock: now,
                             tx,
@@ -595,8 +691,8 @@ impl Peer {
                     }
                     response => {
                         let error = format!(
-                            "Unexpected response: expected=Subscribed, got={:?}",
-                            response
+                            "Unexpected response: expected=Subscribed, got={}",
+                            response.name()
                         );
                         error!("[{}] {}", peer_id, error);
                         let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
@@ -682,17 +778,21 @@ impl Peer {
                     _ => unreachable!("Expected Accepted state"),
                 };
                 match request {
-                    ReplicationRequest::Subscribe { epoch, offset } => {
-                        if epoch > chain.epoch() {
+                    ReplicationRequest::Subscribe {
+                        epoch,
+                        offset,
+                        light,
+                    } => {
+                        if epoch > current_epoch {
                             trace!("[{}] Subscribe from the future: epoch={}, offset={}, local_epoch={}, local_offset={}",
-                                   peer_id, epoch, offset, chain.epoch(), chain.offset());
+                                   peer_id, epoch, offset, current_epoch, current_offset);
                             let new_state = Self::registered(peer_id, multiaddr);
                             std::mem::replace(self, new_state);
                             return Async::NotReady;
                         }
                         let response = ReplicationResponse::Subscribed {
-                            current_epoch: chain.epoch(),
-                            current_offset: chain.offset(),
+                            current_epoch,
+                            current_offset,
                         };
                         trace!("[{}] <- {:?}", peer_id, response);
                         let response = response.into_buffer().unwrap();
@@ -702,6 +802,7 @@ impl Peer {
                                 let new_state = Peer::Sending {
                                     peer_id,
                                     multiaddr,
+                                    light,
                                     last_clock: clock::now(),
                                     start_clock: clock::now(),
                                     tx,
@@ -730,6 +831,7 @@ impl Peer {
             Peer::Receiving {
                 peer_id,
                 multiaddr,
+                light,
                 last_clock,
                 start_clock,
                 rx,
@@ -750,9 +852,7 @@ impl Peer {
                     return Async::NotReady;
                 }
 
-                let mut bytes_received: u64 = 0;
-                let mut blocks: Vec<Block> = Vec::with_capacity(MAX_BLOCKS_PER_BATCH);
-                loop {
+                {
                     match rx.poll().unwrap() {
                         Async::Ready(Some(response)) => {
                             //
@@ -777,7 +877,7 @@ impl Peer {
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    break;
+                                    return Async::NotReady;
                                 }
                             };
                             //
@@ -789,7 +889,7 @@ impl Peer {
                                     current_epoch,
                                     current_offset,
                                     block,
-                                } => {
+                                } if !*light => {
                                     std::mem::replace(last_clock, clock::now());
                                     match &block {
                                         Block::MacroBlock(block) => {
@@ -805,31 +905,45 @@ impl Peer {
                                             );
                                         }
                                     }
-                                    blocks.push(block);
                                     *total_blocks_received += 1;
-                                    bytes_received += response_len as u64;
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    if blocks.len() >= MAX_BLOCKS_PER_BATCH
-                                        || bytes_received >= MAX_BYTES_PER_BATCH
-                                    {
-                                        debug!(
-                                            "[{}] Read enough: bytes={}, blocks={}",
-                                            peer_id,
-                                            bytes_received,
-                                            blocks.len()
-                                        );
-                                        task::current().notify();
-                                        break;
+                                    return Async::Ready(ReplicationRow::Block(block));
+                                }
+                                ReplicationResponse::LightBlock {
+                                    current_epoch,
+                                    current_offset,
+                                    block,
+                                } if *light => {
+                                    std::mem::replace(last_clock, clock::now());
+                                    match &block {
+                                        LightBlock::LightMacroBlock(block) => {
+                                            debug!(
+                                                "[{}] -> LightMacroBlock {{ epoch = {} }}",
+                                                peer_id, block.header.epoch
+                                            );
+                                        }
+                                        LightBlock::LightMicroBlock(block) => {
+                                            debug!(
+                                                "[{}] -> LightMicroBlock {{ epoch = {}, offset = {} }}",
+                                                peer_id, block.header.epoch, block.header.offset
+                                            );
+                                        }
                                     }
+                                    *total_blocks_received += 1;
+                                    *total_bytes_received += response_len as u64;
+                                    *epoch = current_epoch;
+                                    *offset = current_offset;
+                                    return Async::Ready(ReplicationRow::LightBlock(block));
                                 }
                                 response => {
                                     let error = format!(
-                                        "Unexpected response: expected=Blocks, got={:?}",
-                                        response
+                                        "Unexpected response: expected={}, got={}",
+                                        if *light { "LightBlock" } else { "Block" },
+                                        response.name()
                                     );
-                                    error!("[{}] {}", peer_id, error);
+                                    trace!("[{}] {}", peer_id, error);
                                     let error =
                                         std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                                     let new_state = Peer::Failed {
@@ -839,33 +953,23 @@ impl Peer {
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    break;
+                                    return Async::NotReady;
                                 }
                             }
                         }
                         Async::Ready(None) => {
                             self.disconnected();
-                            break;
+                            return Async::NotReady;
                         }
                         Async::NotReady => {
-                            debug!(
-                                "[{}] Not ready for reading: bytes={}, blocks={}",
-                                peer_id,
-                                bytes_received,
-                                blocks.len()
-                            );
+                            trace!("[{}] Not ready for reading", peer_id,);
                             if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                                 debug!("[{}] Peer is not active, disconnecting", peer_id);
                                 self.disconnected();
                             }
-                            break;
+                            return Async::NotReady;
                         }
                     }
-                }
-                if blocks.is_empty() {
-                    Async::NotReady
-                } else {
-                    Async::Ready(blocks)
                 }
             }
 
@@ -875,6 +979,7 @@ impl Peer {
             Peer::Sending {
                 peer_id,
                 multiaddr,
+                light,
                 start_clock,
                 rx,
                 epoch,
@@ -920,14 +1025,39 @@ impl Peer {
                 //
                 // Send blocks.
                 //
-                let current_epoch = chain.epoch();
-                let current_offset = chain.offset();
                 if *epoch != current_epoch || *offset != current_offset {
-                    let micro_blocks_in_epoch = chain.cfg().micro_blocks_in_epoch;
-                    let blocks = chain.blocks_starting(*epoch, *offset);
-                    self.send_blocks(blocks, current_epoch, current_offset, micro_blocks_in_epoch);
+                    if *light {
+                        let blocks = match block_reader.light_iter_starting(*epoch, *offset) {
+                            Ok(blocks) => blocks,
+                            Err(e) => {
+                                error!("[{}] Failed to send blocks: {}", peer_id, e);
+                                self.disconnected();
+                                return Async::NotReady;
+                            }
+                        };
+                        self.send_blocks(
+                            blocks,
+                            current_epoch,
+                            current_offset,
+                            micro_blocks_in_epoch,
+                        );
+                    } else {
+                        let blocks = match block_reader.iter_starting(*epoch, *offset) {
+                            Ok(blocks) => blocks,
+                            Err(e) => {
+                                error!("[{}] Failed to send blocks: {}", peer_id, e);
+                                self.disconnected();
+                                return Async::NotReady;
+                            }
+                        };
+                        self.send_blocks(
+                            blocks,
+                            current_epoch,
+                            current_offset,
+                            micro_blocks_in_epoch,
+                        );
+                    }
                 }
-
                 Async::NotReady
             }
 

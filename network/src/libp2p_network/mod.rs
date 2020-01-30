@@ -867,7 +867,7 @@ fn resolve_seed_nodes(seed_pool: &str, dns_servers: &[String]) -> Result<Vec<Str
             Resolver::new(config, ResolverOpts::default())?
         };
         info!("Trying to resolve seed nodes SRV records.");
-        let srv_records = resolver.lookup_srv(seed_pool)?;
+        let srv_records = resolver.srv_lookup(seed_pool)?;
         for srv in srv_records.iter() {
             let addr_records = resolver
                 .ipv4_lookup(&srv.target().to_utf8())

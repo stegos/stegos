@@ -104,7 +104,24 @@ install_packages_linux() {
             tar \
             zip \
             zlib-devel
-    else
+    elif test -f /etc/arch-release; then
+        sudo pacman -S --noconfirm --needed \
+            binutils \
+            clang \
+            curl \
+            gcc \
+            git \
+            gzip \
+            linux-headers \
+            make \
+            m4 \
+            openssl \
+            jdk8-openjdk \
+            pkg-config \
+            tar \
+            zip \
+            zlib      
+    else 
         echo 2>&1 "Unsupported Linux distro"
         exit 1
     fi

@@ -20,6 +20,7 @@
 // SOFTWARE.
 use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, MicroBlockHeader};
 use crate::output::{Output, PaymentOutput, PublicPaymentOutput, StakeOutput};
+use crate::timestamp::Timestamp;
 use crate::transaction::Transaction;
 use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
@@ -156,4 +157,17 @@ impl From<OutputInfo> for Output {
     fn from(b: OutputInfo) -> Output {
         b.output.into()
     }
+}
+
+/// Notification about synchronization status.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct StatusInfo {
+    pub is_synchronized: bool,
+    pub epoch: u64,
+    pub offset: u32,
+    pub view_change: u32,
+    pub last_block_hash: Hash,
+    pub last_macro_block_hash: Hash,
+    pub last_macro_block_timestamp: Timestamp,
+    pub local_timestamp: Timestamp,
 }

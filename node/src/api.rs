@@ -24,6 +24,7 @@
 use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
+use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::{
     ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
     TransactionStatus, ValidatorKeyInfo,
@@ -173,19 +174,6 @@ pub enum NodeResponse {
     Error {
         error: String,
     },
-}
-
-/// Notification about synchronization status.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct StatusInfo {
-    pub is_synchronized: bool,
-    pub epoch: u64,
-    pub offset: u32,
-    pub view_change: u32,
-    pub last_block_hash: Hash,
-    pub last_macro_block_hash: Hash,
-    pub last_macro_block_timestamp: Timestamp,
-    pub local_timestamp: Timestamp,
 }
 
 /// Status notifications.

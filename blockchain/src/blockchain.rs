@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::api::StatusInfo;
 use crate::awards::{Awards, ValidatorAwardState};
 use crate::block::*;
 use crate::config::*;
@@ -1194,6 +1195,29 @@ impl Blockchain {
     pub fn total_slots(&self) -> i64 {
         self.cfg.max_slot_count
     }
+
+    /// Returns true if the chain is synchronized with the network.
+    pub fn is_synchronized(&self) -> bool {
+        let timestamp = Timestamp::now();
+        let block_timestamp = self.last_block_timestamp;
+        block_timestamp + self.cfg.sync_timeout >= timestamp
+    }
+
+    /// Returns the chain status.
+    pub fn status(&self) -> StatusInfo {
+        let is_synchronized = self.is_synchronized();
+        StatusInfo {
+            is_synchronized,
+            epoch: self.epoch(),
+            offset: self.offset(),
+            view_change: self.view_change(),
+            last_block_hash: self.last_block_hash,
+            last_macro_block_hash: self.last_macro_block_hash,
+            last_macro_block_timestamp: self.last_macro_block_timestamp,
+            local_timestamp: Timestamp::now(),
+        }
+    }
+
     /// Sets new blockchain view_change.
     /// ## Panics
     /// if new_view_change not greater than current.

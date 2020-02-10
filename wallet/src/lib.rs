@@ -52,6 +52,7 @@ use std::fs;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::TransactionStatus;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
@@ -938,10 +939,7 @@ impl UnsealedAccountService {
     }
 
     fn notify_status(&mut self) {
-        let status = AccountStatusInfo {
-            epoch: self.database.epoch(),
-            offset: self.database.offset(),
-        };
+        let status = self.database.status();
         self.notify(AccountNotification::StatusChanged(status));
     }
 
@@ -1120,8 +1118,7 @@ impl Future for UnsealedAccountService {
                                 let account_info = AccountInfo {
                                     account_pkey: self.account_pkey.clone(),
                                     network_pkey: self.network_pkey.clone(),
-                                    epoch: self.database.epoch(),
-                                    offset: self.database.offset(),
+                                    status: self.database.status(),
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
@@ -1363,8 +1360,7 @@ impl Future for SealedAccountService {
                                 let account_info = AccountInfo {
                                     account_pkey: self.account_pkey,
                                     network_pkey: self.network_pkey,
-                                    epoch: 0,
-                                    offset: 0,
+                                    status: Default::default(),
                                 };
                                 AccountResponse::AccountInfo(account_info)
                             }
@@ -1555,10 +1551,8 @@ struct AccountHandle {
     account_pkey: scc::PublicKey,
     /// Account API.
     account: Account,
-    /// Current epoch.
-    epoch: u64,
-    /// Current offset.
-    offset: u32,
+    /// Current status,
+    status: StatusInfo,
     /// True if unsealed.
     unsealed: bool,
     /// Account Notifications.
@@ -1690,8 +1684,16 @@ impl WalletService {
         let handle = AccountHandle {
             account_pkey,
             account,
-            epoch: 0,
-            offset: 0,
+            status: StatusInfo {
+                is_synchronized: false,
+                epoch: 0,
+                offset: 0,
+                view_change: 0,
+                last_block_hash: Hash::zero(),
+                last_macro_block_hash: Hash::zero(),
+                last_macro_block_timestamp: Timestamp::now(),
+                local_timestamp: Timestamp::now(),
+            },
             unsealed: false,
             account_notifications,
             chain_tx,
@@ -1748,8 +1750,7 @@ impl WalletService {
                             AccountInfo {
                                 account_pkey: handle.account_pkey.clone(),
                                 network_pkey: self.network_pkey.clone(),
-                                epoch: handle.epoch,
-                                offset: handle.offset,
+                                status: handle.status.clone(),
                             },
                         )
                     })
@@ -1953,11 +1954,10 @@ impl Future for WalletService {
                 match handle.account_notifications.poll().unwrap() {
                     Async::Ready(Some(notification)) => {
                         if let AccountNotification::StatusChanged(status_info) = &notification {
-                            handle.epoch = status_info.epoch;
-                            handle.offset = status_info.offset;
+                            handle.status = status_info.clone();
                             debug!(
                                 "Account changed: account_id={}, epoch={}, offset={}",
-                                account_id, handle.epoch, handle.offset
+                                account_id, status_info.epoch, status_info.offset
                             );
                             continue;
                         } else if let AccountNotification::Unsealed = &notification {
@@ -1998,10 +1998,10 @@ impl Future for WalletService {
                     Ok(Async::Ready(_)) => true,
                     _ => break 'outer,
                 };
-                if handle.epoch <= current_epoch {
-                    current_epoch = handle.epoch;
-                    if handle.offset <= current_offset {
-                        current_offset = handle.offset;
+                if handle.status.epoch <= current_epoch {
+                    current_epoch = handle.status.epoch;
+                    if handle.status.offset <= current_offset {
+                        current_offset = handle.status.offset;
                     }
                 }
             }

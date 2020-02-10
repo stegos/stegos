@@ -32,6 +32,7 @@ use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
+use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::mvcc::MultiVersionedMap;
 use stegos_blockchain::*;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -79,6 +80,8 @@ pub struct LightDatabase {
     last_macro_block_hash: Hash,
     /// Copy of the last macro block random.
     last_macro_block_random: Hash,
+    /// Copy of the last macro block timestamp.
+    last_macro_block_timestamp: Timestamp,
     /// Validators on the start of the epoch.
     validators: StakersGroup,
     /// Facilitator.
@@ -126,6 +129,7 @@ impl LightDatabase {
             genesis_hash,
             last_macro_block_hash: Hash::digest("genesis"),
             last_macro_block_random: Hash::digest("genesis"),
+            last_macro_block_timestamp: Timestamp::now(),
             validators: vec![],
             facilitator_pkey: pbc::PublicKey::dum(),
             micro_blocks: Vec::new(),
@@ -148,6 +152,28 @@ impl LightDatabase {
         let exist = self.known_changes.contains(&utxo);
         trace!("Checking is change = {}, exist={}", utxo, exist);
         exist
+    }
+
+    /// Returns true if the chain is synchronized with the network.
+    pub fn is_synchronized(&self) -> bool {
+        let timestamp = Timestamp::now();
+        let block_timestamp = self.last_block_timestamp();
+        block_timestamp + self.cfg.sync_timeout >= timestamp
+    }
+
+    /// Returns current status.
+    pub fn status(&self) -> StatusInfo {
+        let is_synchronized = self.is_synchronized();
+        StatusInfo {
+            is_synchronized,
+            epoch: self.epoch(),
+            offset: self.offset(),
+            view_change: 0,
+            last_block_hash: self.last_block_hash(),
+            last_macro_block_hash: self.last_macro_block_hash,
+            last_macro_block_timestamp: self.last_macro_block_timestamp,
+            local_timestamp: Timestamp::now(),
+        }
     }
 
     /// Return the current blockchain epoch.
@@ -195,6 +221,15 @@ impl LightDatabase {
             header.random.rand
         } else {
             self.last_macro_block_random
+        }
+    }
+
+    /// Returns the last block timestamp.
+    pub fn last_block_timestamp(&self) -> Timestamp {
+        if let Some(header) = self.micro_blocks.last() {
+            header.timestamp
+        } else {
+            self.last_macro_block_timestamp
         }
     }
 
@@ -302,6 +337,7 @@ impl LightDatabase {
         assert!(self.micro_blocks.is_empty());
         self.last_macro_block_hash = Hash::digest(&epoch_info.header);
         self.last_macro_block_random = epoch_info.header.random.rand;
+        self.last_macro_block_timestamp = epoch_info.header.timestamp;
         self.facilitator_pkey = epoch_info.facilitator;
         self.validators = epoch_info.validators;
         let lsn = LSN(epoch_info.header.epoch, MACRO_BLOCK_OFFSET);
@@ -916,6 +952,7 @@ impl LightDatabase {
         self.micro_blocks.clear();
         self.last_macro_block_hash = block_hash;
         self.last_macro_block_random = header.random.rand;
+        self.last_macro_block_timestamp = header.timestamp;
         self.validators = validators;
         self.current_epoch_balance_changed = false;
 

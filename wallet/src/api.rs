@@ -24,6 +24,7 @@
 pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use stegos_blockchain::api::StatusInfo;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
@@ -121,21 +122,14 @@ pub struct AccountRecovery {
     pub recovery: String,
 }
 
-/// Notification about synchronization status.
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct AccountStatusInfo {
-    pub epoch: u64,
-    pub offset: u32,
-}
-
 ///
 /// Out-of-band notifications.
 ///
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
-    StatusChanged(AccountStatusInfo),
+    StatusChanged(StatusInfo),
     Unsealed,
     Sealed,
     BalanceChanged(AccountBalance),
@@ -153,7 +147,7 @@ pub enum AccountNotification {
     Unstaked(StakeInfo),
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WalletNotification {
     pub account_id: AccountId,
@@ -307,9 +301,8 @@ pub struct AccountInfo {
     pub account_pkey: scc::PublicKey,
     pub network_pkey: pbc::PublicKey,
     #[serde(default)]
-    pub epoch: u64,
-    #[serde(default)]
-    pub offset: u32,
+    #[serde(flatten)]
+    pub status: StatusInfo,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]

@@ -30,8 +30,6 @@ mod loader;
 mod mempool;
 pub mod metrics;
 pub mod protos;
-#[doc(hidden)]
-pub mod test;
 mod validation;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;

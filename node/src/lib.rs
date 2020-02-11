@@ -2144,6 +2144,249 @@ impl NodeService {
         let tx = PaymentTransaction::new(&secret_key, &inputs, &outputs, &outputs_gamma, fee)?;
         Ok(tx.into())
     }
+
+    fn handle_event(&mut self, event: NodeIncomingEvent) {
+        let result: Result<(), Error> = match event {
+            NodeIncomingEvent::Request { request, tx } => {
+                strace!(self, "=> {:?}", request);
+                let response = match request {
+                    NodeRequest::ElectionInfo {} => {
+                        NodeResponse::ElectionInfo(self.chain.election_info())
+                    }
+                    NodeRequest::ChainName {} => NodeResponse::ChainName {
+                        name: self.chain_name.clone(),
+                    },
+                    NodeRequest::EscrowInfo {} => {
+                        NodeResponse::EscrowInfo(self.chain.escrow_info())
+                    }
+                    NodeRequest::ReplicationInfo {} => {
+                        NodeResponse::ReplicationInfo(self.replication.info())
+                    }
+                    NodeRequest::PopMicroBlock {} => match self.handle_pop_micro_block() {
+                        Ok(()) => NodeResponse::MicroBlockPopped,
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                    },
+                    NodeRequest::OutputsList { utxos } => {
+                        let mut outputs = Vec::new();
+                        let mut error = None;
+                        for item in utxos {
+                            match self.chain.output_by_hash(&item) {
+                                Ok(Some(item)) => outputs.push(item),
+                                Ok(None) => {
+                                    error = format!("Output was not found hash={}", item).into();
+                                    break;
+                                }
+                                Err(e) => {
+                                    error = e.to_string().into();
+                                    break;
+                                }
+                            }
+                        }
+                        if let Some(error) = error {
+                            NodeResponse::Error { error }
+                        } else {
+                            NodeResponse::OutputsList { utxos: outputs }
+                        }
+                    }
+                    NodeRequest::CreateRawTransaction {
+                        txins,
+                        txouts,
+                        secret_key,
+                        fee,
+                        unspent_list,
+                    } => {
+                        match scc::SecretKey::try_from_bytes(&secret_key)
+                            .map_err(Into::into)
+                            .and_then(|secret_key| {
+                                self.handle_create_raw_tx(
+                                    txins,
+                                    txouts,
+                                    secret_key,
+                                    fee,
+                                    unspent_list,
+                                )
+                            }) {
+                            Ok(tx) => {
+                                let txouts = tx.txouts().iter().map(Hash::digest).collect();
+                                NodeResponse::CreateRawTransaction { txouts, data: tx }
+                            }
+                            Err(e) => NodeResponse::Error {
+                                error: e.to_string(),
+                            },
+                        }
+                    }
+                    NodeRequest::BroadcastTransaction { data: tx } => {
+                        let hash = Hash::digest(&tx);
+                        match self.handle_add_tx(tx) {
+                            Ok(status) => NodeResponse::BroadcastTransaction { hash, status },
+                            Err(e) => NodeResponse::Error {
+                                error: e.to_string(),
+                            },
+                        }
+                    }
+                    NodeRequest::ValidateCertificate {
+                        output_hash,
+                        spender,
+                        recipient,
+                        rvalue,
+                    } => match self.chain.historic_output_by_hash_with_proof(&output_hash) {
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                        Ok(None) => NodeResponse::Error {
+                            error: format!("Missing UTXO: {}", output_hash),
+                        },
+                        Ok(Some(OutputRecovery {
+                            output: Output::PaymentOutput(output),
+                            epoch,
+                            block_hash,
+                            is_final,
+                            timestamp,
+                        })) => match output.validate_certificate(&spender, &recipient, &rvalue) {
+                            Ok(amount) => NodeResponse::CertificateValid {
+                                epoch,
+                                block_hash,
+                                is_final,
+                                timestamp,
+                                amount,
+                            },
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        },
+                        Ok(Some(_)) => NodeResponse::Error {
+                            error: format!("Invalid UTXO type: {}", output_hash),
+                        },
+                    },
+                    NodeRequest::EnableRestaking {} => {
+                        if self.is_restaking_enabled {
+                            NodeResponse::Error {
+                                error: format!("Re-staking is already enabled"),
+                            }
+                        } else {
+                            sinfo!(self, "Re-staking enabled");
+                            self.is_restaking_enabled = true;
+                            NodeResponse::RestakingEnabled
+                        }
+                    }
+                    NodeRequest::DisableRestaking {} => {
+                        if !self.is_restaking_enabled {
+                            NodeResponse::Error {
+                                error: format!("Re-staking is already disabled"),
+                            }
+                        } else {
+                            sinfo!(self, "Re-staking disabled");
+                            self.is_restaking_enabled = false;
+                            NodeResponse::RestakingDisabled
+                        }
+                    }
+                    NodeRequest::ChangeUpstream {} => {
+                        self.replication.change_upstream();
+                        NodeResponse::UpstreamChanged
+                    }
+                    NodeRequest::StatusInfo {} => {
+                        let status = self.chain.status();
+                        NodeResponse::StatusInfo(status)
+                    }
+                    NodeRequest::ValidatorsInfo {} => {
+                        let epoch = self.chain.epoch();
+                        let offset = self.chain.offset();
+                        let view_change = self.chain.view_change();
+                        match self.chain.epoch_info(epoch - 1) {
+                            Ok(info) => {
+                                let validators = info.unwrap().validators;
+                                NodeResponse::ValidatorsInfo {
+                                    epoch,
+                                    offset,
+                                    view_change,
+                                    validators,
+                                }
+                            }
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                    NodeRequest::SubscribeStatus {} => match self.handle_subscription_to_status() {
+                        Ok(rx) => {
+                            let status = self.chain.status();
+                            NodeResponse::SubscribedStatus {
+                                status,
+                                rx: Some(rx),
+                            }
+                        }
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                    },
+                    NodeRequest::MacroBlockInfo { epoch } => {
+                        match self.handle_macro_block_info(epoch) {
+                            Ok(block_info) => NodeResponse::MacroBlockInfo(block_info),
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                    NodeRequest::MicroBlockInfo { epoch, offset } => {
+                        match self.handle_micro_block_info(epoch, offset) {
+                            Ok(block_info) => NodeResponse::MicroBlockInfo(block_info),
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                    NodeRequest::SubscribeChain { epoch, offset } => {
+                        match self.handle_subscription_to_chain(epoch, offset) {
+                            Ok(rx) => NodeResponse::SubscribedChain {
+                                current_epoch: self.chain.epoch(),
+                                current_offset: self.chain.offset(),
+                                rx: Some(rx),
+                            },
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                };
+                strace!(self, "<= {:?}", response);
+                tx.send(response).ok(); // ignore errors.
+                Ok(())
+            }
+            NodeIncomingEvent::Transaction(msg) => {
+                match Transaction::from_buffer(&msg).and_then(|msg| self.handle_transaction(msg)) {
+                    Ok(()) => Ok(()),
+                    Err(e) => match e.downcast_ref::<NodeTransactionError>() {
+                        Some(NodeTransactionError::NotSynchronized(_)) => Ok(()),
+                        _ => Err(e),
+                    },
+                }
+            }
+            NodeIncomingEvent::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
+                .and_then(|msg| self.handle_consensus_message(msg)),
+            NodeIncomingEvent::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
+                .and_then(|msg| self.handle_view_change_message(msg)),
+            NodeIncomingEvent::ViewChangeProof(msg) => AddressedViewChangeProof::from_buffer(&msg)
+                .and_then(|proof| {
+                    self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
+                }),
+            NodeIncomingEvent::ViewChangeProofMessage(msg) => {
+                SealedViewChangeProof::from_buffer(&msg.data)
+                    .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
+            }
+            NodeIncomingEvent::Block(msg) => {
+                Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
+            }
+            NodeIncomingEvent::ChainLoaderMessage(msg) => {
+                ChainLoaderMessage::from_buffer(&msg.data)
+                    .and_then(|data| self.handle_chain_loader_message(msg.from, data))
+            }
+        };
+        if let Err(e) = result {
+            serror!(self, "Error: {}", e);
+        }
+    }
 }
 
 // Event loop.
@@ -2244,269 +2487,7 @@ impl Future for NodeService {
         // Poll internal events.
         loop {
             match self.events.poll().expect("all errors are already handled") {
-                Async::Ready(Some(event)) => {
-                    let result: Result<(), Error> = match event {
-                        NodeIncomingEvent::Request { request, tx } => {
-                            strace!(self, "=> {:?}", request);
-                            let response = match request {
-                                NodeRequest::ElectionInfo {} => {
-                                    NodeResponse::ElectionInfo(self.chain.election_info())
-                                }
-                                NodeRequest::ChainName {} => NodeResponse::ChainName {
-                                    name: self.chain_name.clone(),
-                                },
-                                NodeRequest::EscrowInfo {} => {
-                                    NodeResponse::EscrowInfo(self.chain.escrow_info())
-                                }
-                                NodeRequest::ReplicationInfo {} => {
-                                    NodeResponse::ReplicationInfo(self.replication.info())
-                                }
-                                NodeRequest::PopMicroBlock {} => {
-                                    match self.handle_pop_micro_block() {
-                                        Ok(()) => NodeResponse::MicroBlockPopped,
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::OutputsList { utxos } => {
-                                    let mut outputs = Vec::new();
-                                    let mut error = None;
-                                    for item in utxos {
-                                        match self.chain.output_by_hash(&item) {
-                                            Ok(Some(item)) => outputs.push(item),
-                                            Ok(None) => {
-                                                error =
-                                                    format!("Output was not found hash={}", item)
-                                                        .into();
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                error = e.to_string().into();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if let Some(error) = error {
-                                        NodeResponse::Error { error }
-                                    } else {
-                                        NodeResponse::OutputsList { utxos: outputs }
-                                    }
-                                }
-                                NodeRequest::CreateRawTransaction {
-                                    txins,
-                                    txouts,
-                                    secret_key,
-                                    fee,
-                                    unspent_list,
-                                } => {
-                                    match scc::SecretKey::try_from_bytes(&secret_key)
-                                        .map_err(Into::into)
-                                        .and_then(|secret_key| {
-                                            self.handle_create_raw_tx(
-                                                txins,
-                                                txouts,
-                                                secret_key,
-                                                fee,
-                                                unspent_list,
-                                            )
-                                        }) {
-                                        Ok(tx) => {
-                                            let txouts =
-                                                tx.txouts().iter().map(Hash::digest).collect();
-                                            NodeResponse::CreateRawTransaction { txouts, data: tx }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: e.to_string(),
-                                        },
-                                    }
-                                }
-                                NodeRequest::BroadcastTransaction { data: tx } => {
-                                    let hash = Hash::digest(&tx);
-                                    match self.handle_add_tx(tx) {
-                                        Ok(status) => {
-                                            NodeResponse::BroadcastTransaction { hash, status }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: e.to_string(),
-                                        },
-                                    }
-                                }
-                                NodeRequest::ValidateCertificate {
-                                    output_hash,
-                                    spender,
-                                    recipient,
-                                    rvalue,
-                                } => match self
-                                    .chain
-                                    .historic_output_by_hash_with_proof(&output_hash)
-                                {
-                                    Err(e) => NodeResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                    Ok(None) => NodeResponse::Error {
-                                        error: format!("Missing UTXO: {}", output_hash),
-                                    },
-                                    Ok(Some(OutputRecovery {
-                                        output: Output::PaymentOutput(output),
-                                        epoch,
-                                        block_hash,
-                                        is_final,
-                                        timestamp,
-                                    })) => {
-                                        match output
-                                            .validate_certificate(&spender, &recipient, &rvalue)
-                                        {
-                                            Ok(amount) => NodeResponse::CertificateValid {
-                                                epoch,
-                                                block_hash,
-                                                is_final,
-                                                timestamp,
-                                                amount,
-                                            },
-                                            Err(e) => NodeResponse::Error {
-                                                error: format!("{}", e),
-                                            },
-                                        }
-                                    }
-                                    Ok(Some(_)) => NodeResponse::Error {
-                                        error: format!("Invalid UTXO type: {}", output_hash),
-                                    },
-                                },
-                                NodeRequest::EnableRestaking {} => {
-                                    if self.is_restaking_enabled {
-                                        NodeResponse::Error {
-                                            error: format!("Re-staking is already enabled"),
-                                        }
-                                    } else {
-                                        sinfo!(self, "Re-staking enabled");
-                                        self.is_restaking_enabled = true;
-                                        NodeResponse::RestakingEnabled
-                                    }
-                                }
-                                NodeRequest::DisableRestaking {} => {
-                                    if !self.is_restaking_enabled {
-                                        NodeResponse::Error {
-                                            error: format!("Re-staking is already disabled"),
-                                        }
-                                    } else {
-                                        sinfo!(self, "Re-staking disabled");
-                                        self.is_restaking_enabled = false;
-                                        NodeResponse::RestakingDisabled
-                                    }
-                                }
-                                NodeRequest::ChangeUpstream {} => {
-                                    self.replication.change_upstream();
-                                    NodeResponse::UpstreamChanged
-                                }
-                                NodeRequest::StatusInfo {} => {
-                                    let status = self.chain.status();
-                                    NodeResponse::StatusInfo(status)
-                                }
-                                NodeRequest::ValidatorsInfo {} => {
-                                    let epoch = self.chain.epoch();
-                                    let offset = self.chain.offset();
-                                    let view_change = self.chain.view_change();
-                                    match self.chain.epoch_info(epoch - 1) {
-                                        Ok(info) => {
-                                            let validators = info.unwrap().validators;
-                                            NodeResponse::ValidatorsInfo {
-                                                epoch,
-                                                offset,
-                                                view_change,
-                                                validators,
-                                            }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::SubscribeStatus {} => {
-                                    match self.handle_subscription_to_status() {
-                                        Ok(rx) => {
-                                            let status = self.chain.status();
-                                            NodeResponse::SubscribedStatus {
-                                                status,
-                                                rx: Some(rx),
-                                            }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::MacroBlockInfo { epoch } => {
-                                    match self.handle_macro_block_info(epoch) {
-                                        Ok(block_info) => NodeResponse::MacroBlockInfo(block_info),
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::MicroBlockInfo { epoch, offset } => {
-                                    match self.handle_micro_block_info(epoch, offset) {
-                                        Ok(block_info) => NodeResponse::MicroBlockInfo(block_info),
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::SubscribeChain { epoch, offset } => {
-                                    match self.handle_subscription_to_chain(epoch, offset) {
-                                        Ok(rx) => NodeResponse::SubscribedChain {
-                                            current_epoch: self.chain.epoch(),
-                                            current_offset: self.chain.offset(),
-                                            rx: Some(rx),
-                                        },
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                            };
-                            strace!(self, "<= {:?}", response);
-                            tx.send(response).ok(); // ignore errors.
-                            Ok(())
-                        }
-                        NodeIncomingEvent::Transaction(msg) => {
-                            match Transaction::from_buffer(&msg)
-                                .and_then(|msg| self.handle_transaction(msg))
-                            {
-                                Ok(()) => Ok(()),
-                                Err(e) => match e.downcast_ref::<NodeTransactionError>() {
-                                    Some(NodeTransactionError::NotSynchronized(_)) => Ok(()),
-                                    _ => Err(e),
-                                },
-                            }
-                        }
-                        NodeIncomingEvent::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
-                            .and_then(|msg| self.handle_consensus_message(msg)),
-                        NodeIncomingEvent::ViewChangeMessage(msg) => {
-                            ViewChangeMessage::from_buffer(&msg)
-                                .and_then(|msg| self.handle_view_change_message(msg))
-                        }
-                        NodeIncomingEvent::ViewChangeProof(msg) => {
-                            AddressedViewChangeProof::from_buffer(&msg).and_then(|proof| {
-                                self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
-                            })
-                        }
-                        NodeIncomingEvent::ViewChangeProofMessage(msg) => {
-                            SealedViewChangeProof::from_buffer(&msg.data)
-                                .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
-                        }
-                        NodeIncomingEvent::Block(msg) => {
-                            Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
-                        }
-                        NodeIncomingEvent::ChainLoaderMessage(msg) => {
-                            ChainLoaderMessage::from_buffer(&msg.data)
-                                .and_then(|data| self.handle_chain_loader_message(msg.from, data))
-                        }
-                    };
-                    if let Err(e) = result {
-                        serror!(self, "Error: {}", e);
-                    }
-                }
+                Async::Ready(Some(event)) => self.handle_event(event),
                 Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
                 Async::NotReady => break,
             }

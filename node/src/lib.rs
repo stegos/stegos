@@ -74,7 +74,7 @@ use Validation::*;
 /// Blockchain Node.
 #[derive(Clone, Debug)]
 pub struct Node {
-    outbox: mpsc::UnboundedSender<NodeMessage>,
+    outbox: mpsc::UnboundedSender<NodeIncomingEvent>,
     network: Network,
 }
 
@@ -83,7 +83,7 @@ impl Node {
     pub fn send_transaction(&self, transaction: Transaction) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
         let request = NodeRequest::BroadcastTransaction { data: transaction };
-        let msg = NodeMessage::Request { request, tx };
+        let msg = NodeIncomingEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -91,7 +91,7 @@ impl Node {
     /// Execute a Node Request.
     pub fn request(&self, request: NodeRequest) -> oneshot::Receiver<NodeResponse> {
         let (tx, rx) = oneshot::channel();
-        let msg = NodeMessage::Request { request, tx };
+        let msg = NodeIncomingEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
         rx
     }
@@ -144,7 +144,7 @@ macro_rules! serror {
 }
 
 #[derive(Debug)]
-pub enum NodeMessage {
+pub enum NodeIncomingEvent {
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -318,7 +318,7 @@ pub struct NodeService {
     /// Network interface.
     network: Network,
     /// Aggregated stream of events.
-    events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
+    events: Box<dyn Stream<Item = NodeIncomingEvent, Error = ()> + Send>,
 
     /// Txpool
     txpool_service: Option<TransactionPoolService>,
@@ -355,7 +355,8 @@ impl NodeService {
 
         let status_subscribers = Vec::new();
 
-        let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
+        let mut streams =
+            Vec::<Box<dyn Stream<Item = NodeIncomingEvent, Error = ()> + Send>>::new();
 
         // Control messages
         streams.push(Box::new(inbox));
@@ -363,40 +364,40 @@ impl NodeService {
         // Transaction Requests
         let transaction_rx = network
             .subscribe(&TX_TOPIC)?
-            .map(|m| NodeMessage::Transaction(m));
+            .map(|m| NodeIncomingEvent::Transaction(m));
         streams.push(Box::new(transaction_rx));
 
         // Consensus Requests
         let consensus_rx = network
             .subscribe(&CONSENSUS_TOPIC)?
-            .map(|m| NodeMessage::Consensus(m));
+            .map(|m| NodeIncomingEvent::Consensus(m));
         streams.push(Box::new(consensus_rx));
 
         let view_change_rx = network
             .subscribe(&VIEW_CHANGE_TOPIC)?
-            .map(|m| NodeMessage::ViewChangeMessage(m));
+            .map(|m| NodeIncomingEvent::ViewChangeMessage(m));
         streams.push(Box::new(view_change_rx));
 
         let view_change_proofs_rx = network
             .subscribe(&VIEW_CHANGE_PROOFS_TOPIC)?
-            .map(|m| NodeMessage::ViewChangeProof(m));
+            .map(|m| NodeIncomingEvent::ViewChangeProof(m));
         streams.push(Box::new(view_change_proofs_rx));
 
         let view_change_unicast_rx = network
             .subscribe_unicast(&VIEW_CHANGE_DIRECT)?
-            .map(|m| NodeMessage::ViewChangeProofMessage(m));
+            .map(|m| NodeIncomingEvent::ViewChangeProofMessage(m));
         streams.push(Box::new(view_change_unicast_rx));
 
         // Sealed blocks broadcast topic.
         let block_rx = network
             .subscribe(&SEALED_BLOCK_TOPIC)?
-            .map(|m| NodeMessage::Block(m));
+            .map(|m| NodeIncomingEvent::Block(m));
         streams.push(Box::new(block_rx));
 
         // Chain loader messages.
         let requests_rx = network
             .subscribe_unicast(loader::CHAIN_LOADER_TOPIC)?
-            .map(NodeMessage::ChainLoaderMessage);
+            .map(NodeIncomingEvent::ChainLoaderMessage);
         streams.push(Box::new(requests_rx));
 
         let events = select_all(streams);
@@ -2245,7 +2246,7 @@ impl Future for NodeService {
             match self.events.poll().expect("all errors are already handled") {
                 Async::Ready(Some(event)) => {
                     let result: Result<(), Error> = match event {
-                        NodeMessage::Request { request, tx } => {
+                        NodeIncomingEvent::Request { request, tx } => {
                             strace!(self, "=> {:?}", request);
                             let response = match request {
                                 NodeRequest::ElectionInfo {} => {
@@ -2468,7 +2469,7 @@ impl Future for NodeService {
                             tx.send(response).ok(); // ignore errors.
                             Ok(())
                         }
-                        NodeMessage::Transaction(msg) => {
+                        NodeIncomingEvent::Transaction(msg) => {
                             match Transaction::from_buffer(&msg)
                                 .and_then(|msg| self.handle_transaction(msg))
                             {
@@ -2479,23 +2480,25 @@ impl Future for NodeService {
                                 },
                             }
                         }
-                        NodeMessage::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
+                        NodeIncomingEvent::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
                             .and_then(|msg| self.handle_consensus_message(msg)),
-                        NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
-                            .and_then(|msg| self.handle_view_change_message(msg)),
-                        NodeMessage::ViewChangeProof(msg) => {
+                        NodeIncomingEvent::ViewChangeMessage(msg) => {
+                            ViewChangeMessage::from_buffer(&msg)
+                                .and_then(|msg| self.handle_view_change_message(msg))
+                        }
+                        NodeIncomingEvent::ViewChangeProof(msg) => {
                             AddressedViewChangeProof::from_buffer(&msg).and_then(|proof| {
                                 self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
                             })
                         }
-                        NodeMessage::ViewChangeProofMessage(msg) => {
+                        NodeIncomingEvent::ViewChangeProofMessage(msg) => {
                             SealedViewChangeProof::from_buffer(&msg.data)
                                 .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
                         }
-                        NodeMessage::Block(msg) => {
+                        NodeIncomingEvent::Block(msg) => {
                             Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
                         }
-                        NodeMessage::ChainLoaderMessage(msg) => {
+                        NodeIncomingEvent::ChainLoaderMessage(msg) => {
                             ChainLoaderMessage::from_buffer(&msg.data)
                                 .and_then(|data| self.handle_chain_loader_message(msg.from, data))
                         }

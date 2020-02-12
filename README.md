@@ -40,7 +40,7 @@ Latest release notes are at https://github.com/stegos/stegos/releases.
 
 ## Installing from Source
 
-Please, refer to [Building instructions](BUILD.md).
+Please, refer to [Building instructions](https://docs.stegos.com/developers/building_from_source/).
 
 ## Kicking the tires
 

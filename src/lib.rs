@@ -119,16 +119,13 @@ fn init(
     let network_pkey_file = data_dir.join("network.pkey");
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
-    let mut network_cfg: stegos_network::NetworkConfig = Default::default();
+    let mut network_config: stegos_network::NetworkConfig = Default::default();
 
-    // set pool that used for specific network
-    network_cfg.seed_pool = format!("_stegos._tcp.{}.stegos.com", chain_name).to_string();
     // set dns server to cloudflare and google
-    network_cfg.dns_servers.push("1.1.1.1:53".to_string());
-    network_cfg.dns_servers.push("8.8.8.8:53".to_string());
+    network_config.dns_servers.push("1.1.1.1:53".to_string());
+    network_config.dns_servers.push("8.8.8.8:53".to_string());
 
     // Initialize network
-    let mut network_config = NetworkConfig::default();
     if chain_name != "dev" {
         network_config.seed_pool = format!("_stegos._tcp.{}.stegos.com", chain_name).to_string();
     }

@@ -641,14 +641,15 @@ impl UnsealedAccountService {
             return Ok(());
         } else if header.epoch > self.database.epoch() || header.offset > self.database.offset() {
             let block_hash = Hash::digest(&header);
-            debug!("Skip a micro block from the future: block={}, block_epoch={}, block_offset={}, our_epoch={}, our_offset={}",
+            let err = format!("A micro block from the future: block={}, block_epoch={}, block_offset={}, our_epoch={}, our_offset={}",
                 block_hash,
                 header.epoch,
                 header.offset,
                 self.database.epoch(),
                 self.database.offset()
             );
-            return Ok(());
+            error!("{}", err);
+            return Err(format_err!("{}", err));
         }
 
         //
@@ -675,7 +676,7 @@ impl UnsealedAccountService {
             outputs.iter(),
             &self.account_pkey,
             &self.account_skey,
-        )?;
+        );
 
         self.notify_status();
         self.on_tx_statuses_changed(&transaction_statuses);
@@ -705,13 +706,14 @@ impl UnsealedAccountService {
             return Ok(());
         } else if header.epoch > self.database.epoch() {
             let block_hash = Hash::digest(&header);
-            debug!(
-                "Skip a macro block from the future: block={}, block_epoch={}, our_epoch={}",
+            let err = format!(
+                "A macro block from the future: block={}, block_epoch={}, our_epoch={}",
                 block_hash,
                 header.epoch,
                 self.database.epoch()
             );
-            return Ok(());
+            error!("{}", err);
+            return Err(format_err!("{}", err));
         }
 
         //
@@ -740,7 +742,7 @@ impl UnsealedAccountService {
             validators,
             &self.account_pkey,
             &self.account_skey,
-        )?;
+        );
 
         if let Some((ref mut snowball, _)) = &mut self.snowball {
             snowball.change_facilitator(self.database.facilitator_pkey().clone());
@@ -1204,33 +1206,36 @@ impl Future for UnsealedAccountService {
         // Blocks
         loop {
             match self.chain_notifications.poll().unwrap() {
-                Async::Ready(Some(block)) => match block {
-                    LightBlock::LightMacroBlock(block) => {
-                        debug!("Got a macro block: epoch={}", block.header.epoch);
-                        self.apply_light_macro_block(
-                            block.header,
-                            block.multisig,
-                            block.multisigmap,
-                            block.input_hashes,
-                            block.outputs,
-                            block.validators,
-                        )
-                        .expect("failed to apply a macro block");
+                Async::Ready(Some(block)) => {
+                    let r = match block {
+                        LightBlock::LightMacroBlock(block) => {
+                            debug!("Got a macro block: epoch={}", block.header.epoch);
+                            self.apply_light_macro_block(
+                                block.header,
+                                block.multisig,
+                                block.multisigmap,
+                                block.input_hashes,
+                                block.outputs,
+                                block.validators,
+                            )
+                        }
+                        LightBlock::LightMicroBlock(block) => {
+                            debug!(
+                                "Got a micro block: epoch={}, offset={}",
+                                block.header.epoch, block.header.offset
+                            );
+                            self.apply_light_micro_block(
+                                block.header,
+                                block.sig,
+                                block.input_hashes,
+                                block.outputs,
+                            )
+                        }
+                    };
+                    if let Err(e) = r {
+                        self.notify(AccountNotification::UpstreamError(format!("{}", e)));
                     }
-                    LightBlock::LightMicroBlock(block) => {
-                        debug!(
-                            "Got a micro block: epoch={}, offset={}",
-                            block.header.epoch, block.header.offset
-                        );
-                        self.apply_light_micro_block(
-                            block.header,
-                            block.sig,
-                            block.input_hashes,
-                            block.outputs,
-                        )
-                        .expect("failed to apply a micro block");
-                    }
-                },
+                }
                 Async::Ready(None) => return Ok(Async::Ready(UnsealedAccountResult::Terminated)), // Shutdown.
                 Async::NotReady => break,
             }
@@ -1968,6 +1973,10 @@ impl Future for WalletService {
                         } else if let AccountNotification::Sealed = &notification {
                             debug!("Account sealed: account_id={}", account_id);
                             handle.unsealed = false;
+                            continue;
+                        } else if let AccountNotification::UpstreamError(e) = &notification {
+                            debug!("Upstream error: {}", e);
+                            self.replication.change_upstream();
                             continue;
                         }
                         let notification = WalletNotification {

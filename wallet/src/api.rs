@@ -130,6 +130,8 @@ pub struct AccountRecovery {
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
     StatusChanged(StatusInfo),
+    #[serde(skip)]
+    UpstreamError(String),
     Unsealed,
     Sealed,
     BalanceChanged(AccountBalance),

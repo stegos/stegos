@@ -407,7 +407,7 @@ impl LightDatabase {
         outputs_iter: OutputsIter,
         account_pkey: &scc::PublicKey,
         account_skey: &scc::SecretKey,
-    ) -> Result<(Vec<Hash>, Vec<OutputValue>), Error>
+    ) -> (Vec<Hash>, Vec<OutputValue>)
     where
         InputsIter: Iterator<Item = &'a Hash>,
         OutputsIter: Iterator<Item = &'a Output>,
@@ -462,7 +462,7 @@ impl LightDatabase {
             if let Some(_o) = my_outputs.remove(&input_hash) {
                 continue; // annihilate this input with an output
             }
-            let _input = match self.output_by_hash(&input_hash)? {
+            let _input = match self.output_by_hash(&input_hash) {
                 Some(_o) => {
                     my_inputs.insert(*input_hash);
                 }
@@ -472,7 +472,7 @@ impl LightDatabase {
 
         let my_inputs: Vec<Hash> = my_inputs.into_iter().collect();
         let my_outputs: Vec<OutputValue> = my_outputs.into_iter().map(|(_k, v)| v).collect();
-        Ok((my_inputs, my_outputs))
+        (my_inputs, my_outputs)
     }
 
     ///
@@ -486,7 +486,7 @@ impl LightDatabase {
         timestamp: Timestamp,
         input_hashes: Vec<Hash>,
         outputs: Vec<OutputValue>,
-    ) -> Result<HashMap<Hash, TransactionStatus>, Error> {
+    ) -> HashMap<Hash, TransactionStatus> {
         //
         // Process inputs.
         //
@@ -546,9 +546,8 @@ impl LightDatabase {
             assert_eq!(self.utxos.current_lsn(), lsn);
 
             // Update history.
-            if let Err(e) = self.push_incoming(timestamp, output_value.clone().into()) {
-                error!("Error when adding incoming tx = {}", e)
-            }
+            self.push_incoming(timestamp, output_value.clone().into())
+                .expect("I/O error");
 
             match output_value {
                 OutputValue::Payment(p) => {
@@ -581,7 +580,8 @@ impl LightDatabase {
         // Update transaction statuses.
         //
         let transaction_statuses = self
-            .prune_txs(input_hashes.iter(), output_hashes.iter())?
+            .prune_txs(input_hashes.iter(), output_hashes.iter())
+            .expect("I/O error")
             .into_iter()
             .map(|(k, v)| {
                 let status = if v.1 {
@@ -603,7 +603,7 @@ impl LightDatabase {
             })
             .collect();
 
-        Ok(transaction_statuses)
+        transaction_statuses
     }
 
     ///
@@ -910,7 +910,7 @@ impl LightDatabase {
         validators: StakersGroup,
         account_pkey: &scc::PublicKey,
         account_skey: &scc::SecretKey,
-    ) -> Result<HashMap<Hash, TransactionStatus>, Error>
+    ) -> HashMap<Hash, TransactionStatus>
     where
         InputsIter: Iterator<Item = &'a Hash>,
         OutputsIter: Iterator<Item = &'a Output>,
@@ -919,14 +919,14 @@ impl LightDatabase {
         let epoch = header.epoch;
 
         let (my_inputs, my_outputs) =
-            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey)?;
+            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
 
         //
         // Revert micro blocks.
         //
         let mut transaction_statuses: HashMap<Hash, TransactionStatus> = HashMap::new();
         while self.micro_blocks.len() > 0 {
-            for (tx_hash, tx_status) in self.revert_micro_block()? {
+            for (tx_hash, tx_status) in self.revert_micro_block() {
                 transaction_statuses.insert(tx_hash, tx_status);
             }
         }
@@ -941,7 +941,7 @@ impl LightDatabase {
             header.timestamp,
             my_inputs,
             my_outputs,
-        )?;
+        );
         for (tx_hash, tx_status) in transaction_statuses2 {
             transaction_statuses.insert(tx_hash, tx_status);
         }
@@ -958,13 +958,19 @@ impl LightDatabase {
 
         let unspent = self.database.cf_handle(UNSPENT).expect("cf created");
         let meta_cf = self.database.cf_handle(META).expect("cf created");
-        Blockchain::write_log(&mut batch, unspent, self.utxos.checkpoint())?;
+        Blockchain::write_log(&mut batch, unspent, self.utxos.checkpoint()).expect("I/O error");
         let epoch_info = LightEpochInfo {
             header,
             validators: self.validators.clone(),
             facilitator: self.facilitator_pkey.clone(),
         };
-        batch.put_cf(meta_cf, EPOCH_KEY, epoch_info.into_buffer()?)?;
+        batch
+            .put_cf(
+                meta_cf,
+                EPOCH_KEY,
+                epoch_info.into_buffer().expect("Serialization error"),
+            )
+            .expect("I/O error");
         for (tx_hash, tx_status) in &transaction_statuses {
             let timestamp = self
                 .tx_entry(tx_hash.clone())
@@ -980,7 +986,8 @@ impl LightDatabase {
                     LogEntry::Incoming { .. } => bail!("Expected outgoing transaction."),
                 };
                 Ok(e)
-            })?;
+            })
+            .expect("I/O error");
 
             if let Some(tx) = updated_tx {
                 self.update_tx_indexes(tx);
@@ -994,7 +1001,7 @@ impl LightDatabase {
             epoch, &block_hash,
         );
 
-        Ok(transaction_statuses)
+        transaction_statuses
     }
 
     ///
@@ -1009,7 +1016,7 @@ impl LightDatabase {
         outputs_iter: OutputsIter,
         account_pkey: &scc::PublicKey,
         account_skey: &scc::SecretKey,
-    ) -> Result<HashMap<Hash, TransactionStatus>, Error>
+    ) -> HashMap<Hash, TransactionStatus>
     where
         InputsIter: Iterator<Item = &'a Hash>,
         OutputsIter: Iterator<Item = &'a Output>,
@@ -1022,7 +1029,7 @@ impl LightDatabase {
         let offset = self.offset();
 
         let (my_inputs, my_outputs) =
-            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey)?;
+            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
         let is_balance_changed = my_outputs.len() > 0;
         if is_balance_changed {
             self.current_epoch_balance_changed = true;
@@ -1037,7 +1044,7 @@ impl LightDatabase {
             header.timestamp,
             my_inputs,
             my_outputs,
-        )?;
+        );
         self.micro_blocks.push(header);
 
         info!(
@@ -1045,13 +1052,13 @@ impl LightDatabase {
             epoch, offset, &block_hash,
         );
 
-        Ok(transaction_statuses)
+        transaction_statuses
     }
 
     ///
     /// Revertts the light micro block.
     ///
-    pub fn revert_micro_block(&mut self) -> Result<HashMap<Hash, TransactionStatus>, Error> {
+    pub fn revert_micro_block(&mut self) -> HashMap<Hash, TransactionStatus> {
         let header = self.micro_blocks.pop().expect("have microblocks");
         let block_hash = Hash::digest(&header);
         let lsn = if self.micro_blocks.len() == 0 {
@@ -1068,9 +1075,10 @@ impl LightDatabase {
             let key = Self::bytes_from_timestamp(*tx_key);
             let value = self
                 .database
-                .get_cf(cf, &key)?
+                .get_cf(cf, &key)
+                .expect("I/O error")
                 .expect("Log entry not found.");
-            let entry = LogEntry::from_buffer(&value)?;
+            let entry = LogEntry::from_buffer(&value).expect("Deserialization error");
             let tx = match entry {
                 LogEntry::Outgoing { tx } => tx,
                 e => panic!("Expected outgoing, found={:?}", e),
@@ -1108,17 +1116,17 @@ impl LightDatabase {
             self.epoch, header.offset, &block_hash,
         );
 
-        Ok(transaction_statuses)
+        transaction_statuses
     }
 
     ///
     /// Resolve UTXO by its hash.
     ///
-    fn output_by_hash(&self, hash: &Hash) -> Result<Option<OutputValue>, Error> {
+    fn output_by_hash(&self, hash: &Hash) -> Option<OutputValue> {
         if let Some(output) = self.utxos.get(hash) {
-            return Ok(Some(output.clone()));
+            return Some(output.clone());
         } else {
-            Ok(None)
+            None
         }
     }
 

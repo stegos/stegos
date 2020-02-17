@@ -63,6 +63,7 @@ use stegos_keychain::keyfile::{
 };
 use stegos_keychain::KeyError;
 use stegos_network::{Network, PeerId, ReplicationEvent};
+use stegos_replication::api::PeerInfo;
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::runtime::TaskExecutor;
@@ -1760,7 +1761,20 @@ impl WalletService {
                         )
                     })
                     .collect();
-                Ok(WalletControlResponse::AccountsInfo { accounts })
+                let replication_info = self.replication.info();
+                let remote_epoch = replication_info
+                    .peers
+                    .into_iter()
+                    .filter_map(|r| match r {
+                        PeerInfo::Receiving { epoch, .. } => Some(epoch),
+                        _ => None,
+                    })
+                    .max()
+                    .unwrap_or(0);
+                Ok(WalletControlResponse::AccountsInfo {
+                    accounts,
+                    remote_epoch,
+                })
             }
             WalletControlRequest::CreateAccount { password } => {
                 let (account_skey, account_pkey) = scc::make_random_keys();

@@ -313,6 +313,7 @@ pub struct AccountInfo {
 pub enum WalletControlResponse {
     AccountsInfo {
         accounts: BTreeMap<AccountId, AccountInfo>,
+        remote_epoch: u64,
     },
     AccountCreated {
         account_id: AccountId,

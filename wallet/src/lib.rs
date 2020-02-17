@@ -1978,7 +1978,7 @@ impl Future for WalletService {
                                 "Account changed: account_id={}, epoch={}, offset={}",
                                 account_id, status_info.epoch, status_info.offset
                             );
-                            continue;
+                        // Dont continue; // Forward status notification
                         } else if let AccountNotification::Unsealed = &notification {
                             debug!("Account unsealed: account_id={}", account_id);
                             handle.unsealed = true;

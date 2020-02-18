@@ -99,7 +99,7 @@ fn rollback_slashing() {
 
         s.wait(s.config.node.micro_block_timeout);
         s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let mut msgs = Vec::new();
         for node in &mut s.iter_except(&[first_leader]) {
             let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
@@ -180,7 +180,7 @@ fn rollback_slashing() {
         }
 
         s.filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -622,7 +622,7 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
 
         // emulate dead leader for other nodes
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         // filter block message from node.
         s.filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
         info!("======= PARTITION BEGIN =======");

@@ -59,9 +59,7 @@ fn dead_leader() {
         s.poll();
         let mut r = s.split(&[leader_pk]);
         // emulate dead leader for other nodes
-        r.parts
-            .1
-            .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        r.parts.1.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let mut msgs = Vec::new();
         for node in &mut r.parts.1.nodes {
@@ -101,7 +99,7 @@ fn dead_leader() {
             .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
         first_leader
             .network_service
-            .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -143,7 +141,7 @@ fn silent_view_change() {
         // emulate dead leader for other nodes
         {
             // filter messages from chain loader.
-            s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
             let mut r = s.split(&[leader_pk]);
 
@@ -263,7 +261,7 @@ fn double_view_change() {
         // emulate dead leader for other nodes
         {
             // filter messages from chain loader.
-            s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
             let mut r = s.split(&[leader_pk]);
 
@@ -316,9 +314,7 @@ fn double_view_change() {
             let mut r = s.split(&[leader_pk, new_leader]);
             r.parts.1.poll();
 
-            r.parts
-                .1
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            r.parts.1.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
             r.parts
                 .1
@@ -381,7 +377,7 @@ fn resolve_fork_for_view_change() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
         // forget block
@@ -397,7 +393,7 @@ fn resolve_fork_for_view_change() {
         // emulate dead leader for other nodes
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         info!("======= PARTITION BEGIN =======");
         let mut r = s.split(&[leader_pk]);
@@ -492,7 +488,7 @@ fn resolve_fork_without_block() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
 
@@ -508,7 +504,7 @@ fn resolve_fork_without_block() {
         // emulate dead leader for other nodes
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         info!("======= PARTITION BEGIN =======");
         let mut r = s.split(&[leader_pk]);
@@ -615,7 +611,7 @@ fn issue_896_resolve_fork() {
         let leader_pk = s.nodes[0].node_service.chain.leader();
 
         s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader = s.node(&leader_pk).unwrap();
 
@@ -631,7 +627,7 @@ fn issue_896_resolve_fork() {
         // emulate dead leader for other nodes
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         info!("======= PARTITION BEGIN =======");
         let mut r = s.split(&[leader_pk]);
@@ -719,7 +715,7 @@ fn issue_896_resolve_fork() {
         let first_leader = r.parts.0.first_mut();
         first_leader
             .network_service
-            .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         // leader can send second block, if tx_wait_time << view_change timeout, and he is lucky
         first_leader
@@ -812,11 +808,11 @@ fn out_of_order_keyblock_proposal() {
         assert_eq!(leader_pk, leader.node_service.network_pkey);
         leader
             .network_service
-            .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         leader
             .network_service
             .filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
     });
 }
 
@@ -830,7 +826,7 @@ fn invalid_microblock() {
     Sandbox::start(config, |mut s| {
         s.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let offset = s.nodes[0].node_service.chain.offset();
 
         s.for_each(|node| assert_eq!(node.chain.offset(), offset));
@@ -934,7 +930,7 @@ fn invalid_microblock() {
             .1
             .for_each(|node| assert_eq!(node.chain.offset(), offset));
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
     });
 }
 

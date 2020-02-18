@@ -606,7 +606,7 @@ pub trait Api<'p> {
         trace!("Acording to partition info, next leader = {}", leader_pk);
         self.node(&leader_pk).unwrap().handle_vdf();
         self.poll();
-        self.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader = self.node(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
@@ -961,7 +961,7 @@ pub fn slash_cheater_inner<'a>(
     leader_pk: PublicKey,
     mut filter_nodes: Vec<PublicKey>,
 ) -> PartitionGuard<'a> {
-    s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+    s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
     filter_nodes.push(leader_pk);
     let mut r = s.split(&filter_nodes);
@@ -1080,7 +1080,7 @@ mod test_framework {
             let r = s.split(&[leader_pk]);
             assert_eq!(r.parts.0.nodes.len(), 1);
             assert_eq!(r.parts.1.nodes.len(), 3);
-            s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+            s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         });
     }
 }

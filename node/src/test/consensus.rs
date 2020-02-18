@@ -192,7 +192,7 @@ fn round() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -298,7 +298,7 @@ fn multiple_rounds() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 1);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -318,7 +318,7 @@ fn multiple_rounds() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 2);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -370,7 +370,7 @@ fn lock() {
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -382,12 +382,12 @@ fn lock() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
         leader_node.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -401,7 +401,7 @@ fn lock() {
         }
         s.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         // for now, every node is locked at leader_propose
         for i in 0..s.num_nodes() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
@@ -430,7 +430,7 @@ fn lock() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&second_leader_pk).unwrap();
@@ -486,7 +486,7 @@ fn lock_with_second_propose() {
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -498,14 +498,14 @@ fn lock_with_second_propose() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&leader_pk).unwrap();
         leader_node.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -519,7 +519,7 @@ fn lock_with_second_propose() {
         }
         s.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let mut prevotes = Vec::new();
         // for now, every node EXCEPT second_leader is locked at leader_propose
         for node in s.iter_except(&[second_leader_pk]) {
@@ -553,7 +553,7 @@ fn lock_with_second_propose() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -617,7 +617,7 @@ fn pack_of_prevotes() {
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -740,7 +740,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -752,14 +752,14 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&leader_pk).unwrap();
         leader_node.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -773,7 +773,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
         }
         s.poll();
 
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let mut prevotes = Vec::new();
         // for now, every node EXCEPT second_leader is locked at leader_propose
         for node in s.iter_except(&[second_leader_pk]) {
@@ -805,7 +805,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
         s.poll();
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -918,7 +918,7 @@ fn pack_of_prevotes_and_precommits() {
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -1020,7 +1020,7 @@ fn out_of_order_micro_block() {
     Sandbox::start(config, |mut s| {
         let topic = crate::CONSENSUS_TOPIC;
         s.poll();
-        s.filter_unicast(&[crate::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let offset = s.nodes[0].node_service.chain.offset();

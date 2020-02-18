@@ -42,6 +42,7 @@ pub mod test;
 mod timestamp;
 mod transaction;
 mod validation;
+mod validation_chain;
 pub mod view_changes;
 
 pub use crate::awards::ValidatorAwardState;

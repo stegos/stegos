@@ -286,6 +286,10 @@ pub struct Blockchain {
     cache: VecDeque<Block>,
 }
 
+fn to_storage_error(error: rocksdb::Error) -> StorageError {
+    StorageError::StorageError(error.into_string())
+}
+
 impl Blockchain {
     //----------------------------------------------------------------------------------------------
     // Constructors.
@@ -305,7 +309,9 @@ impl Blockchain {
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
-        let database = rocksdb::DB::open_cf(&opts, chain_dir, COLON_FAMILIES)?;
+        let database =
+            rocksdb::DB::open_cf(&opts, chain_dir, COLON_FAMILIES).map_err(to_storage_error)?;
+
         let block_by_hash: BlockByHashMap = BlockByHashMap::new();
         let output_by_hash: OutputByHashMap = OutputByHashMap::new();
         let mut balance: BalanceMap = BalanceMap::new();
@@ -394,7 +400,8 @@ impl Blockchain {
                 ProtoConvert::from_buffer(
                     &self
                         .database
-                        .get_cf(cf_meta, $key.as_bytes())?
+                        .get_cf(cf_meta, $key.as_bytes())
+                        .map_err(to_storage_error)?
                         .expect(concat!("Cannot find meta name = ", stringify!($key))),
                 )?
             };
@@ -403,7 +410,11 @@ impl Blockchain {
         macro_rules! recover_map {
             ($cf: ident, $id: expr, $lsn: ident) => {
                 let iter_mode = rocksdb::IteratorMode::Start;
-                for (k, v) in self.database.iterator_cf($cf, iter_mode)? {
+                for (k, v) in self
+                    .database
+                    .iterator_cf($cf, iter_mode)
+                    .map_err(to_storage_error)?
+                {
                     let key = ProtoConvert::from_buffer(&k)?;
                     let value = ProtoConvert::from_buffer(&v)?;
 
@@ -415,7 +426,12 @@ impl Blockchain {
 
         // Awards should be present at every snapshot.
         // Early return if "AWARDS" metadata was not found. (go to recovery)
-        if self.database.get_cf(cf_meta, AWARDS.as_bytes())?.is_none() {
+        if self
+            .database
+            .get_cf(cf_meta, AWARDS.as_bytes())
+            .map_err(to_storage_error)?
+            .is_none()
+        {
             debug!("Not found snapshot, fallback to disk loading");
             return Ok(false);
         }
@@ -814,7 +830,11 @@ impl Blockchain {
                 return Ok(Cow::Borrowed(b));
             }
         }
-        match self.database.get(&Self::block_key(lsn))? {
+        match self
+            .database
+            .get(&Self::block_key(lsn))
+            .map_err(to_storage_error)?
+        {
             Some(buffer) => Ok(Cow::Owned(
                 Block::from_buffer(&buffer).expect("couldn't deserialize block."),
             )),
@@ -899,10 +919,13 @@ impl Blockchain {
     /// Returns start epoch info for any past epoch.
     pub fn epoch_info(&self, epoch: u64) -> Result<Option<EpochInfo>, BlockchainError> {
         let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).unwrap();
-        let epoch_info = self.database.get_cf(
-            cf_epoch_infos,
-            &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
-        )?;
+        let epoch_info = self
+            .database
+            .get_cf(
+                cf_epoch_infos,
+                &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
+            )
+            .map_err(to_storage_error)?;
         Ok(epoch_info
             .map(|some| ProtoConvert::from_buffer(&some))
             .transpose()?)
@@ -1294,7 +1317,9 @@ impl Blockchain {
         let data = block.into_buffer().expect("couldn't serialize block.");
         let mut batch = rocksdb::WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put(&Self::block_key(lsn), &data)?;
+        batch
+            .put(&Self::block_key(lsn), &data)
+            .map_err(to_storage_error)?;
         Ok(batch)
     }
 
@@ -1684,13 +1709,15 @@ impl Blockchain {
         };
 
         let data = epoch_info.into_buffer()?;
-        batch.put_cf(
-            cf_epoch_infos,
-            &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
-            &data,
-        )?;
+        batch
+            .put_cf(
+                cf_epoch_infos,
+                &Self::block_key(LSN(epoch, MACRO_BLOCK_OFFSET)),
+                &data,
+            )
+            .map_err(to_storage_error)?;
         self.epoch_activity.reset();
-        self.database.write(batch)?;
+        self.database.write(batch).map_err(to_storage_error)?;
 
         let mut outputs: HashMap<Hash, Output> =
             outputs.into_iter().map(|(h, (o, _k))| (h, o)).collect();
@@ -1750,7 +1777,7 @@ impl Blockchain {
         //
         let lsn = LSN(self.epoch, self.offset);
         let batch = self.write_block(lsn, Block::MicroBlock(block.clone()))?;
-        self.database.write(batch)?;
+        self.database.write(batch).map_err(to_storage_error)?;
 
         //
         // Update in-memory indexes and metadata.
@@ -2095,7 +2122,8 @@ impl Blockchain {
             (Hash::digest(block.as_ref()), lsn, block.header.timestamp)
         };
         self.database
-            .delete(&Self::block_key(LSN(self.epoch, offset)))?;
+            .delete(&Self::block_key(LSN(self.epoch, offset)))
+            .map_err(to_storage_error)?;
         let block_hash = Hash::digest(&block);
 
         //
@@ -2183,7 +2211,9 @@ impl Blockchain {
         V: ProtoConvert + std::fmt::Debug,
     {
         let value = value.into_buffer()?;
-        batch.put_cf(meta_cf, key.as_bytes(), &value)?;
+        batch
+            .put_cf(meta_cf, key.as_bytes(), &value)
+            .map_err(to_storage_error)?;
         Ok(())
     }
 
@@ -2192,7 +2222,7 @@ impl Blockchain {
         batch: &mut WriteBatch,
         cf: &ColumnFamily,
         diff: BTreeMap<K, Option<V>>,
-    ) -> Result<(), BlockchainError>
+    ) -> Result<(), StorageError>
     where
         K: ProtoConvert + std::fmt::Debug,
         V: ProtoConvert + std::fmt::Debug,
@@ -2202,14 +2232,14 @@ impl Blockchain {
             match value {
                 Some(value) => {
                     trace!("New insert {:?}={:?}", key, value);
-                    let key = key.into_buffer()?;
-                    let value = value.into_buffer()?;
-                    batch.put_cf(cf, &key, &value)?
+                    let key = key.into_buffer().expect("Serialization error");
+                    let value = value.into_buffer().expect("Serialization error");
+                    batch.put_cf(cf, &key, &value).map_err(to_storage_error)?
                 }
                 None => {
                     trace!("Remove {:?}", key);
-                    let key = key.into_buffer()?;
-                    batch.delete_cf(cf, &key)?
+                    let key = key.into_buffer().expect("Serialization error");
+                    batch.delete_cf(cf, &key).map_err(to_storage_error)?
                 }
             }
         }

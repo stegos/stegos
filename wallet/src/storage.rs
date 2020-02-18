@@ -40,7 +40,6 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc::{self, Fr};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
-type StorageError = rocksdb::Error;
 
 // colon families.
 const HISTORY: &'static str = "history";
@@ -111,6 +110,10 @@ pub struct LightDatabase {
     outputs: HashMap<Hash, Hash>,
     /// Transactions that was created in current epoch.
     epoch_transactions: HashSet<Hash>,
+}
+
+fn to_storage_error(error: rocksdb::Error) -> StorageError {
+    StorageError::StorageError(error.into_string())
 }
 
 impl LightDatabase {
@@ -1495,14 +1498,14 @@ impl LightDatabase {
             match value {
                 Some(value) => {
                     trace!("New insert {:?}={:?}", key, value);
-                    let key = key.into_buffer()?;
-                    let value = value.into_buffer()?;
-                    batch.put_cf(cf, &key, &value)?
+                    let key = key.into_buffer().expect("Serialization error");
+                    let value = value.into_buffer().expect("Serialization error");
+                    batch.put_cf(cf, &key, &value).map_err(to_storage_error)?
                 }
                 None => {
                     trace!("Remove {:?}", key);
-                    let key = key.into_buffer()?;
-                    batch.delete_cf(cf, &key)?
+                    let key = key.into_buffer().expect("Serialization error");
+                    batch.delete_cf(cf, &key).map_err(to_storage_error)?
                 }
             }
         }

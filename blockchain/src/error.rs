@@ -25,14 +25,17 @@ use crate::output::OutputError;
 use crate::timestamp::Timestamp;
 use crate::view_changes::ViewChangeProof;
 use failure::Fail;
-use rocksdb;
 use std::str::Utf8Error;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc::PublicKey;
 use stegos_crypto::CryptoError;
 
-pub type StorageError = rocksdb::Error;
+#[derive(Debug, Fail)]
+pub enum StorageError {
+    #[fail(display = "I/O error: {}", _0)]
+    StorageError(String),
+}
 
 #[derive(Debug, Fail)]
 pub enum BlockchainError {
@@ -490,8 +493,8 @@ pub enum SlashingError {
     IncorrectTxouts(Hash),
 }
 
-impl From<rocksdb::Error> for BlockchainError {
-    fn from(error: rocksdb::Error) -> BlockchainError {
+impl From<StorageError> for BlockchainError {
+    fn from(error: StorageError) -> BlockchainError {
         BlockchainError::StorageError(error)
     }
 }

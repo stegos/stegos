@@ -20,7 +20,7 @@
 // SOFTWARE.
 
 // TODO: Choose difficulty.
-use crate::metrics;
+//use crate::metrics;
 use log::{debug, info, trace};
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -105,6 +105,7 @@ impl Awards {
             }
         }
 
+        /*
         metrics::AWARD_VALIDATORS_COUNT.set(self.validators_activity.len() as i64);
         let failed_count = self
             .validators_activity
@@ -113,6 +114,7 @@ impl Awards {
             .map(|(k, _)| k)
             .count();
         metrics::AWARD_FAILED_COUNT.set(failed_count as i64);
+        */
     }
 
     /// Checks if current random decide to pay award.

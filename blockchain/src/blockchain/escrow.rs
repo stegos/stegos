@@ -47,8 +47,8 @@ pub(crate) struct EscrowValue {
     pub(crate) amount: i64,
 }
 
-use crate::LSN;
-pub(crate) type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
+use super::LSN;
+pub(super) type EscrowMap = MultiVersionedMap<EscrowKey, EscrowValue, LSN>;
 
 #[derive(Debug, Clone)]
 pub struct Escrow {

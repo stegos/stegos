@@ -21,16 +21,16 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
-use super::blockchain::{Blockchain, ChainInfo};
-use super::election::mix;
-use super::error::{BlockError, BlockchainError, SlashingError, TransactionError};
-use super::multisignature::check_multi_signature;
-use super::output::{Output, PublicPaymentOutput};
-use super::timestamp::Timestamp;
-use super::transaction::{SlashingTransaction, Transaction};
-use super::view_changes::ViewChangeProof;
-use super::{Merkle, SlashingProof};
+use super::{Blockchain, ChainInfo};
+use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
+use crate::election::mix;
+use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
+use crate::multisignature::check_multi_signature;
+use crate::output::{Output, PublicPaymentOutput};
+use crate::timestamp::Timestamp;
+use crate::transaction::{SlashingTransaction, Transaction};
+use crate::view_changes::ViewChangeProof;
+use crate::{Merkle, SlashingProof};
 use log::*;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};

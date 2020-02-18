@@ -21,6 +21,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub(crate) mod escrow;
+mod metrics;
+pub mod test;
+mod validation;
+
 use crate::api::StatusInfo;
 use crate::awards::{Awards, ValidatorAwardState};
 use crate::block::*;
@@ -29,9 +34,7 @@ use crate::election::mix;
 use crate::election::ElectionInfo;
 use crate::election::{self, ElectionResult};
 use crate::error::*;
-use crate::escrow::*;
 use crate::merkle::Merkle;
-use crate::metrics;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::*;
 use crate::timestamp::Timestamp;
@@ -40,6 +43,7 @@ use crate::view_changes::ViewChangeProof;
 use crate::BlockReader;
 use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
+use escrow::{Escrow, EscrowInfo, EscrowMap};
 use failure::Error;
 use log::*;
 use rocksdb;

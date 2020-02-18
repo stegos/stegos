@@ -43,6 +43,8 @@ pub enum ProtoError {
 
 // link protobuf dependencies
 use crate::awards::Awards;
+use crate::blockchain::escrow::EscrowKey;
+use crate::blockchain::escrow::EscrowValue;
 use bit_vec::BitVec;
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
@@ -1356,6 +1358,7 @@ impl ProtoConvert for SlashingProof {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::escrow::EscrowValue;
     use crate::timestamp::Timestamp;
     use stegos_crypto::hash::{Hash, Hashable};
     use stegos_crypto::pbc;

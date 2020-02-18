@@ -23,17 +23,8 @@
 
 #![allow(dead_code)]
 
-use super::block::{Block, MacroBlock, MicroBlock};
-use super::blockchain::{Blockchain, OutputRecovery};
-use super::election::mix;
-use super::error::BlockchainError;
-use super::multisignature::create_multi_signature;
-use super::output::{Output, PaymentOutput, PaymentPayloadData, StakeOutput};
-use super::timestamp::Timestamp;
-use super::transaction::{
-    CoinbaseTransaction, PaymentTransaction, RestakeTransaction, Transaction,
-};
-use crate::election;
+use super::*;
+use crate::{create_multi_signature, PaymentTransaction, RestakeTransaction};
 use bit_vec::BitVec;
 use log::*;
 use rand::{thread_rng, Rng};

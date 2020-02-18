@@ -26,9 +26,9 @@ use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
 use failure::{bail, Error};
 use log::*;
-use rocksdb::{Direction, IteratorMode, Options, WriteBatch, DB};
+use rocksdb::{ColumnFamily, Direction, IteratorMode, Options, WriteBatch, DB};
 use serde_derive::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::mem;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -40,6 +40,7 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc::{self, Fr};
 use stegos_serialization::traits::ProtoConvert;
 use tokio_timer::clock;
+type StorageError = rocksdb::Error;
 
 // colon families.
 const HISTORY: &'static str = "history";
@@ -958,7 +959,7 @@ impl LightDatabase {
 
         let unspent = self.database.cf_handle(UNSPENT).expect("cf created");
         let meta_cf = self.database.cf_handle(META).expect("cf created");
-        Blockchain::write_log(&mut batch, unspent, self.utxos.checkpoint()).expect("I/O error");
+        Self::write_log(&mut batch, unspent, self.utxos.checkpoint()).expect("I/O error");
         let epoch_info = LightEpochInfo {
             header,
             validators: self.validators.clone(),
@@ -1478,6 +1479,34 @@ impl LightDatabase {
         } else {
             None
         }
+    }
+
+    pub fn write_log<K, V>(
+        batch: &mut WriteBatch,
+        cf: &ColumnFamily,
+        diff: BTreeMap<K, Option<V>>,
+    ) -> Result<(), StorageError>
+    where
+        K: ProtoConvert + std::fmt::Debug,
+        V: ProtoConvert + std::fmt::Debug,
+    {
+        trace!("Persist log");
+        for (key, value) in diff {
+            match value {
+                Some(value) => {
+                    trace!("New insert {:?}={:?}", key, value);
+                    let key = key.into_buffer()?;
+                    let value = value.into_buffer()?;
+                    batch.put_cf(cf, &key, &value)?
+                }
+                None => {
+                    trace!("Remove {:?}", key);
+                    let key = key.into_buffer()?;
+                    batch.delete_cf(cf, &key)?
+                }
+            }
+        }
+        Ok(())
     }
 }
 

@@ -22,14 +22,72 @@
 // SOFTWARE.
 
 #![allow(bare_trait_objects)]
-use stegos_serialization::traits::*;
+//use stegos_serialization::traits::*;
 // link protobuf dependencies
 use stegos_blockchain::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-
-use crate::loader::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use failure::{format_err, Error};
 use protobuf::RepeatedField;
+use stegos_blockchain::Block;
+use stegos_crypto::hash::{Hashable, Hasher};
+use stegos_serialization::traits::ProtoConvert;
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct RequestBlocks {
+    pub epoch: u64,
+}
+
+impl Hashable for RequestBlocks {
+    fn hash(&self, state: &mut Hasher) {
+        self.epoch.hash(state);
+    }
+}
+
+impl RequestBlocks {
+    pub fn new(epoch: u64) -> RequestBlocks {
+        Self { epoch }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResponseBlocks {
+    pub blocks: Vec<Block>,
+}
+
+impl Hashable for ResponseBlocks {
+    fn hash(&self, state: &mut Hasher) {
+        for block in &self.blocks {
+            block.hash(state);
+        }
+    }
+}
+
+impl ResponseBlocks {
+    pub fn new(blocks: Vec<Block>) -> ResponseBlocks {
+        Self { blocks }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ChainLoaderMessage {
+    Request(RequestBlocks),
+    Response(ResponseBlocks),
+}
+
+impl Hashable for ChainLoaderMessage {
+    fn hash(&self, state: &mut Hasher) {
+        match self {
+            ChainLoaderMessage::Request(r) => {
+                "request".hash(state);
+                r.hash(state)
+            }
+            ChainLoaderMessage::Response(r) => {
+                "response".hash(state);
+                r.hash(state)
+            }
+        }
+    }
+}
 
 impl ProtoConvert for RequestBlocks {
     type Proto = loader::RequestBlocks;

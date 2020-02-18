@@ -26,7 +26,6 @@
 pub mod api;
 mod config;
 mod error;
-mod loader;
 mod mempool;
 pub mod metrics;
 pub mod protos;
@@ -34,14 +33,13 @@ mod validation;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
-use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
+use crate::protos::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use crate::validation::*;
 use failure::{bail, format_err, Error};
 use futures::sync::{mpsc, oneshot};
 use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
 use futures_stream_select_all_send::select_all;
-pub use loader::CHAIN_LOADER_TOPIC;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -112,6 +110,8 @@ pub const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
 pub const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
 const SEALED_BLOCK_TOPIC: &'static str = "block";
+/// Unicast topic for loading blocks.
+const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 //
 // Logging utils.
@@ -438,7 +438,7 @@ impl NodeService {
 
         // Chain loader messages.
         let requests_rx = network
-            .subscribe_unicast(loader::CHAIN_LOADER_TOPIC)?
+            .subscribe_unicast(CHAIN_LOADER_TOPIC)?
             .map(NodeIncomingEvent::ChainLoaderMessage);
         streams.push(Box::new(requests_rx));
 
@@ -2201,6 +2201,153 @@ impl NodeService {
         let tx = PaymentTransaction::new(&secret_key, &inputs, &outputs, &outputs_gamma, fee)?;
         Ok(tx.into())
     }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    // Loader
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+
+    pub fn request_history_from(
+        &mut self,
+        from: pbc::PublicKey,
+        reason: &str,
+    ) -> Result<(), Error> {
+        let epoch = self.chain.epoch();
+        sinfo!(
+            self,
+            "Downloading blocks: from={}, epoch={}, reason='{}'",
+            &from,
+            epoch,
+            reason
+        );
+        let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
+        self.network
+            .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+    }
+
+    fn handle_request_blocks(
+        &mut self,
+        pkey: pbc::PublicKey,
+        request: RequestBlocks,
+    ) -> Result<(), Error> {
+        if request.epoch > self.chain.epoch() {
+            swarn!(
+                self,
+                "Received a loader request with epoch >= our_epoch: remote_epoch={}, our_epoch={}",
+                request.epoch,
+                self.chain.epoch()
+            );
+            return Ok(());
+        }
+
+        self.send_blocks(pkey, request.epoch, 0)
+    }
+
+    pub fn send_blocks(
+        &mut self,
+        pkey: pbc::PublicKey,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<(), Error> {
+        let mut blocks: Vec<Block> = Vec::new();
+        for block in self.chain.blocks_starting(epoch, offset) {
+            blocks.push(block);
+            // Feed the whole epoch.
+            match blocks.last().unwrap() {
+                Block::MacroBlock(_) if blocks.len() > 0 => {
+                    break;
+                }
+                Block::MacroBlock(_) => {}
+                Block::MicroBlock(_) => {}
+            }
+        }
+        sinfo!(
+            self,
+            "Feeding blocks: to={}, num_blocks={}",
+            pkey,
+            blocks.len()
+        );
+        let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
+        self.network
+            .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
+        Ok(())
+    }
+
+    fn handle_response_blocks(
+        &mut self,
+        pkey: pbc::PublicKey,
+        response: ResponseBlocks,
+    ) -> Result<(), Error> {
+        let first_epoch = match response.blocks.first() {
+            Some(Block::MacroBlock(block)) => block.header.epoch,
+            Some(Block::MicroBlock(block)) => block.header.epoch,
+            None => {
+                // Empty response
+                sinfo!(
+                    self,
+                    "Received blocks: from={}, num_blocks={}",
+                    pkey,
+                    response.blocks.len()
+                );
+                return Ok(());
+            }
+        };
+        let last_epoch = match response.blocks.last() {
+            Some(Block::MacroBlock(block)) => block.header.epoch,
+            Some(Block::MicroBlock(block)) => block.header.epoch,
+            None => unreachable!("Checked above"),
+        };
+        if first_epoch > self.chain.epoch() {
+            swarn!(
+                self,
+                "Received blocks from the future: from={}, our_epoch={}, first_epoch={}",
+                pkey,
+                self.chain.epoch(),
+                first_epoch
+            );
+            return Ok(());
+        } else if last_epoch < self.chain.epoch() {
+            swarn!(
+                self,
+                "Received blocks from the past: from={}, last_epoch={}, our_epoch={}",
+                pkey,
+                last_epoch,
+                self.chain.epoch()
+            );
+            return Ok(());
+        }
+
+        sinfo!(
+            self,
+            "Received blocks: from={}, first_epoch={}, our_epoch={}, last_epoch={}, num_blocks={}",
+            pkey,
+            first_epoch,
+            self.chain.epoch(),
+            last_epoch,
+            response.blocks.len()
+        );
+
+        for block in response.blocks {
+            // Fail on the first error.
+            self.handle_block(block)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn handle_chain_loader_message(
+        &mut self,
+        pkey: pbc::PublicKey,
+        msg: ChainLoaderMessage,
+    ) -> Result<(), Error> {
+        match msg {
+            ChainLoaderMessage::Request(r) => self.handle_request_blocks(pkey, r),
+            ChainLoaderMessage::Response(r) => self.handle_response_blocks(pkey, r),
+        }
+    }
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    // Event Handling
+    /////////////////////////////////////////////////////////////////////////////////////////////////
 
     fn handle_event(&mut self, event: NodeIncomingEvent) {
         let result: Result<(), Error> = match event {

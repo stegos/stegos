@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use chrono::{DateTime, SecondsFormat, TimeZone, Utc};
 use failure::Error;
 use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -67,14 +68,17 @@ impl Timestamp {
     /// Returns an ISO 8601/RFC 3339 date and time string such as 1996-12-19T16:39:57-08:00.123Z
     ///
     pub fn format_rfc3339(&self) -> String {
-        let timestamp: SystemTime = self.clone().into();
-        humantime::format_rfc3339_millis(timestamp).to_string()
+        let secs = (self.0 / 1_000_000_000) as i64;
+        let nsecs = (self.0 % 1_000_000_000) as u32;
+        let dt = Utc.timestamp(secs, nsecs);
+        dt.to_rfc3339_opts(SecondsFormat::Nanos, true)
     }
 
     /// Parses ISO 8601/RFC 3339 date and time string such as `1996-12-19T16:39:57-08:00Z`,
     /// then returns a new `Timestamp`.
     pub fn parse_rfc3339(s: &str) -> Result<Timestamp, Error> {
-        let timestamp = humantime::parse_rfc3339(&s)?;
+        let dt = DateTime::parse_from_rfc3339(s)?;
+        let timestamp = dt.timestamp_nanos() as u64;
         Ok(timestamp.into())
     }
 }
@@ -212,7 +216,7 @@ mod tests {
     #[test]
     fn serde() {
         // check deserialization with millis precision.
-        let timestamp: Timestamp = 1560850195_123000000u64.into();
-        assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123Z")]);
+        let timestamp: Timestamp = 1560850195_123456789u64.into();
+        assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123456789Z")]);
     }
 }

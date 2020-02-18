@@ -1323,8 +1323,8 @@ mod tests {
     use super::*;
     use crate::timestamp::Timestamp;
     use stegos_crypto::hash::{Hash, Hashable};
-    use stegos_crypto::pbc;
     use stegos_crypto::scc;
+    use stegos_crypto::{init_test_network_prefix, pbc};
 
     fn roundtrip<T>(x: &T) -> T
     where
@@ -1442,6 +1442,7 @@ mod tests {
 
     #[test]
     fn micro_blocks() {
+        init_test_network_prefix();
         let (skey, pkey) = scc::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
@@ -1490,13 +1491,22 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
+        let block_json = serde_json::to_string(&block).unwrap();
+        let block3: Block = serde_json::from_str(&block_json).unwrap();
+        assert_eq!(block, block3);
+
         let light_block = LightBlock::LightMicroBlock(light_block);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
+
+        let light_block_json = serde_json::to_string(&light_block).unwrap();
+        let light_block3: LightBlock = serde_json::from_str(&light_block_json).unwrap();
+        assert_eq!(light_block, light_block3);
     }
 
     #[test]
     fn macro_blocks() {
+        init_test_network_prefix();
         let (_skey1, pkey1) = scc::make_random_keys();
         let (_skey2, pkey2) = scc::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
@@ -1551,9 +1561,17 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
+        let block_json = serde_json::to_string(&block).unwrap();
+        let block3: Block = serde_json::from_str(&block_json).unwrap();
+        assert_eq!(block, block3);
+
         let light_block = LightBlock::LightMacroBlock(light_block);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
+
+        let light_block_json = serde_json::to_string(&light_block).unwrap();
+        let light_block3: LightBlock = serde_json::from_str(&light_block_json).unwrap();
+        assert_eq!(light_block, light_block3);
     }
 
     #[test]

@@ -27,12 +27,12 @@ use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
 use crate::multisignature::check_multi_signature;
 use crate::output::{Output, PublicPaymentOutput};
-use crate::slashing::confiscate_tx;
 use crate::timestamp::Timestamp;
 use crate::transaction::{
     CoinbaseTransaction, PaymentTransaction, RestakeTransaction, SlashingTransaction, Transaction,
 };
-use crate::Merkle;
+use crate::view_changes::ViewChangeProof;
+use crate::{Merkle, SlashingProof};
 use log::*;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -322,26 +322,140 @@ impl RestakeTransaction {
     }
 }
 
-impl SlashingTransaction {
-    pub fn validate(
+impl Blockchain {
+    pub fn validate_slashing_proof(&self, proof: &SlashingProof) -> Result<(), BlockchainError> {
+        let epoch = proof.block1.header.epoch;
+        let offset = proof.block1.header.offset;
+
+        if proof.block1.header.epoch != proof.block2.header.epoch {
+            return Err(SlashingError::DifferentEpoch(
+                proof.block1.header.epoch,
+                proof.block2.header.epoch,
+            )
+            .into());
+        }
+
+        if proof.block1.header.offset != proof.block2.header.offset {
+            return Err(SlashingError::DifferentOffset(
+                proof.block1.header.offset,
+                proof.block2.header.offset,
+            )
+            .into());
+        }
+
+        if epoch != self.epoch() {
+            return Err(SlashingError::InvalidProofEpoch(epoch, self.epoch()).into());
+        }
+
+        if proof.block1.header.previous != proof.block2.header.previous {
+            return Err(SlashingError::DifferentHistory(
+                proof.block1.header.previous,
+                proof.block2.header.previous,
+            )
+            .into());
+        }
+
+        if proof.block1.header.view_change != proof.block2.header.view_change {
+            return Err(SlashingError::DifferentLeader(
+                proof.block1.header.view_change,
+                proof.block2.header.view_change,
+            )
+            .into());
+        }
+
+        let block1_hash = Hash::digest(&proof.block1);
+
+        let block2_hash = Hash::digest(&proof.block2);
+        if block1_hash == block2_hash {
+            return Err(SlashingError::BlockWithoutConflicts(epoch, offset, block1_hash).into());
+        }
+
+        let election_result = self.election_result_by_offset(offset)?;
+
+        let ref leader_pk = election_result.select_leader(proof.block1.header.view_change);
+
+        pbc::check_hash(&block1_hash, &proof.block1.sig, leader_pk)?;
+        pbc::check_hash(&block2_hash, &proof.block2.sig, leader_pk)?;
+        Ok(())
+    }
+
+    pub fn confiscate_tx(
         &self,
-        blockchain: &Blockchain,
+        our_key: &pbc::PublicKey, // our key, used to add change to payment utxo.
+        proof: SlashingProof,
+    ) -> Result<SlashingTransaction, BlockchainError> {
+        assert_eq!(proof.block1.header.pkey, proof.block2.header.pkey);
+        let ref cheater = proof.block1.header.pkey;
+        let epoch = self.epoch();
+        let (inputs, stake) = self.iter_validator_stakes(cheater).fold(
+            (Vec::<Hash>::new(), 0i64),
+            |(mut result, mut stake), (hash, amount, _, active_until_epoch)| {
+                if active_until_epoch >= epoch {
+                    stake += amount;
+                    result.push(hash.clone());
+                }
+                (result, stake)
+            },
+        );
+        let validators: Vec<_> = self
+            .validators()
+            .iter()
+            .map(|(k, _v)| *k)
+            .filter(|k| k != cheater)
+            .collect();
+
+        if validators.is_empty() {
+            return Err(SlashingError::LastValidator(*cheater).into());
+        }
+
+        if inputs.is_empty() {
+            return Err(SlashingError::NotValidator(*cheater).into());
+        }
+
+        self.validate_slashing_proof(&proof)?;
+        assert!(stake > 0);
+        let piece = stake / validators.len() as i64;
+        let change = stake % validators.len() as i64;
+
+        let mut outputs = Vec::new();
+        for validator in &validators {
+            let key = self
+                .account_by_network_key(validator)
+                .expect("validator has account key");
+            let mut output = PublicPaymentOutput::new(&key, piece);
+            if validator == our_key {
+                output.amount += change
+            }
+            outputs.push(output.into());
+        }
+        debug!("Creating confiscate transaction: cheater = {}, piece = {}, change = {}, num_validators = {}", cheater, piece, change, outputs.len());
+
+        Ok(SlashingTransaction {
+            proof,
+            txins: inputs,
+            txouts: outputs,
+        })
+    }
+
+    pub(crate) fn validate_slashing_tx(
+        &self,
+        tx: &SlashingTransaction,
         leader: pbc::PublicKey,
     ) -> Result<(), BlockchainError> {
         // validate proof
-        self.proof.validate(blockchain)?;
+        self.validate_slashing_proof(&tx.proof)?;
 
         // recreate transaction
-        let tx = confiscate_tx(blockchain, &leader, self.proof.clone())?;
+        let tx2 = self.confiscate_tx(&leader, tx.proof.clone())?;
 
-        let tx_hash = Hash::digest(self);
+        let tx_hash = Hash::digest(tx);
         // found incorrect formed slashing transaction.
-        if tx.txins != self.txins {
+        if tx.txins != tx2.txins {
             return Err(SlashingError::IncorrectTxins(tx_hash).into());
         }
         // Try to find unhonest devided stake.
         // Txouts is ordered by recipient validator id.
-        for txs in tx.txouts.iter().zip(self.txouts.iter()) {
+        for txs in tx2.txouts.iter().zip(tx.txouts.iter()) {
             match txs {
                 (
                     // compare all fields except serno.
@@ -903,7 +1017,7 @@ impl Blockchain {
             }
             Transaction::PaymentTransaction(tx) => tx.validate(&inputs)?,
             Transaction::RestakeTransaction(tx) => tx.validate(&inputs)?,
-            Transaction::SlashingTransaction(tx) => tx.validate(self, leader)?,
+            Transaction::SlashingTransaction(tx) => self.validate_slashing_tx(&tx, leader)?,
             Transaction::ServiceAwardTransaction(_) => {
                 return Err(TransactionError::UnexpectedTxType.into())
             }
@@ -996,7 +1110,7 @@ impl Blockchain {
             match block.header.view_change_proof {
                 Some(ref proof) => {
                     let chain = ChainInfo::from_micro_block(&block);
-                    if let Err(e) = proof.validate(&chain, &self) {
+                    if let Err(e) = self.validate_view_change_proof(proof, &chain) {
                         return Err(
                             BlockError::InvalidViewChangeProof(epoch, proof.clone(), e).into()
                         );
@@ -1190,6 +1304,25 @@ impl Blockchain {
                 .try_for_each(|(_hash, o)| o.validate())?;
         }
 
+        Ok(())
+    }
+
+    pub fn validate_view_change_proof(
+        &self,
+        view_change: &ViewChangeProof,
+        chain_info: &ChainInfo,
+    ) -> Result<(), failure::Error> {
+        let hash = Hash::digest(chain_info);
+
+        let validators = self.election_result_by_offset(chain_info.offset)?;
+
+        check_multi_signature(
+            &hash,
+            &view_change.multisig,
+            &view_change.multimap,
+            &validators.validators,
+            self.total_slots(),
+        )?;
         Ok(())
     }
 }

@@ -19,11 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::blockchain::{Blockchain, ChainInfo};
-use crate::multisignature::{check_multi_signature, create_multi_signature_index};
+use crate::multisignature::create_multi_signature_index;
 use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
-use stegos_crypto::hash::{Hash, Hashable, Hasher};
+use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,24 +40,6 @@ impl ViewChangeProof {
     {
         let (multisig, multimap) = create_multi_signature_index(signatures, validators_len);
         ViewChangeProof { multisig, multimap }
-    }
-    pub fn validate(
-        &self,
-        chain_info: &ChainInfo,
-        blockchain: &Blockchain,
-    ) -> Result<(), failure::Error> {
-        let hash = Hash::digest(chain_info);
-
-        let validators = blockchain.election_result_by_offset(chain_info.offset)?;
-
-        check_multi_signature(
-            &hash,
-            &self.multisig,
-            &self.multimap,
-            &validators.validators,
-            blockchain.total_slots(),
-        )?;
-        Ok(())
     }
 }
 

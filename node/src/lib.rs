@@ -868,7 +868,10 @@ impl NodeService {
         assert!(remote_view_change >= local_view_change);
         assert_eq!(proof.chain.last_block, local.last_block);
 
-        if let Err(e) = proof.proof.validate(&proof.chain, &self.chain) {
+        if let Err(e) = self
+            .chain
+            .validate_view_change_proof(&proof.proof, &proof.chain)
+        {
             return Err(BlockError::InvalidViewChangeProof(epoch, proof.proof, e).into());
         }
 
@@ -1992,7 +1995,9 @@ impl NodeService {
             if !self.chain.is_validator(cheater) {
                 continue;
             }
-            let slash_tx = confiscate_tx(&self.chain, &self.network_pkey, proof.clone())?;
+            let slash_tx = self
+                .chain
+                .confiscate_tx(&self.network_pkey, proof.clone())?;
             let tx: Transaction = slash_tx.into();
             let tx_hash = Hash::digest(&tx);
             self.mempool.push_tx(tx_hash, tx);

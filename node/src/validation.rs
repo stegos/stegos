@@ -23,9 +23,10 @@
 
 use crate::error::*;
 use crate::mempool::Mempool;
+use crate::storage::Blockchain;
 use failure::Error;
 use stegos_blockchain::Timestamp;
-use stegos_blockchain::{Blockchain, Output, Transaction, TransactionError};
+use stegos_blockchain::{Output, Transaction, TransactionError};
 use stegos_crypto::hash::Hash;
 
 ///
@@ -116,8 +117,6 @@ pub(crate) fn validate_external_transaction(
 mod test {
     use super::*;
     use std::time::Duration;
-    use stegos_blockchain::test::*;
-    use stegos_blockchain::Timestamp;
     use stegos_blockchain::*;
     use stegos_crypto::scc::Fr;
     use tempdir::TempDir;

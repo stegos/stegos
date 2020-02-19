@@ -22,12 +22,13 @@
 // SOFTWARE.
 
 use super::*;
+use crate::optimistic::SealedViewChangeProof;
 use crate::*;
 use bit_vec::BitVec;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_consensus::MacroBlockProposal;
-use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
+use stegos_consensus::{ConsensusMessage, ConsensusMessageBody};
 use stegos_crypto::pbc::Signature;
 
 // CASE partition:

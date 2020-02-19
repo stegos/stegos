@@ -24,9 +24,7 @@
 #![deny(warnings)]
 
 pub mod api;
-mod awards;
 mod block;
-mod blockchain;
 mod config;
 pub mod election;
 mod error;
@@ -41,9 +39,7 @@ mod transaction;
 mod validation;
 pub mod view_changes;
 
-pub use crate::awards::ValidatorAwardState;
 pub use crate::block::*;
-pub use crate::blockchain::*;
 pub use crate::config::*;
 pub use crate::election::{mix, ElectionInfo, ElectionResult};
 pub use crate::error::*;
@@ -53,6 +49,9 @@ pub use crate::output::*;
 pub use crate::slashing::*;
 pub use crate::timestamp::Timestamp;
 pub use crate::transaction::*;
+
+pub type ViewCounter = u32;
+pub type ValidatorId = u32;
 
 use failure::{format_err, Error};
 use stegos_serialization::traits::ProtoConvert;

@@ -34,6 +34,9 @@ mod integration;
 #[cfg(test)]
 mod microblocks;
 
+use crate::optimistic::AddressedViewChangeProof;
+use crate::storage::test::{fake_genesis, KeyChain};
+use crate::storage::Blockchain;
 use crate::*;
 use assert_matches::assert_matches;
 use log::*;
@@ -41,9 +44,7 @@ use rand::{thread_rng, Rng};
 use rand_core::SeedableRng;
 use rand_isaac::IsaacRng;
 use std::time::Duration;
-pub use stegos_blockchain::test::*;
 use stegos_blockchain::view_changes::ViewChangeProof;
-use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 use stegos_crypto::pbc::{PublicKey, VRF};

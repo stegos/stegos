@@ -24,14 +24,11 @@
 //! Test of features build on top of consensus/blockchain stack.
 
 use super::*;
-//use crate::loader::ChainLoaderMessage;
+use crate::optimistic::ViewChangeMessage;
+use crate::storage::{awards::ValidatorAwardState, ChainInfo};
 use crate::*;
 use std::collections::HashSet;
-use stegos_blockchain::Block;
-use stegos_blockchain::ChainInfo;
-use stegos_blockchain::Output;
-use stegos_blockchain::ValidatorAwardState;
-use stegos_consensus::optimistic::ViewChangeMessage;
+use stegos_blockchain::{Block, Output};
 
 // CASE rollback slashing:
 // Nodes [A, B, C, D]

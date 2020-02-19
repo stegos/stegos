@@ -26,11 +26,9 @@
 mod error;
 mod message;
 pub mod metrics;
-pub mod optimistic;
 pub mod protos;
 mod state;
 
 pub use crate::error::*;
 pub use crate::message::*;
-pub use crate::optimistic::ViewChangeCollector;
 pub use crate::state::*;

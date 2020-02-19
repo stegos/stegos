@@ -23,11 +23,14 @@
 //! View Changes implementation.
 //!
 
-use crate::error::ConsensusError;
+use crate::storage::Blockchain;
+use crate::storage::ChainInfo;
 use log::*;
 use std::collections::HashMap;
-use stegos_blockchain::view_changes::*;
-use stegos_blockchain::{check_supermajority, Blockchain, ChainInfo, ValidatorId};
+use stegos_blockchain::check_supermajority;
+use stegos_blockchain::view_changes::ViewChangeProof;
+use stegos_blockchain::ValidatorId;
+use stegos_consensus::ConsensusError;
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 

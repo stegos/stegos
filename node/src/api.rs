@@ -21,13 +21,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+pub use crate::storage::{EpochInfo, EscrowInfo, ValidatorKeyInfo};
 use futures::sync::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::{
-    ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
-    TransactionStatus, ValidatorKeyInfo,
+    ElectionInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction, TransactionStatus,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc;

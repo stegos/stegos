@@ -21,29 +21,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub(crate) mod escrow;
+mod awards;
+mod escrow;
 mod metrics;
 pub mod test;
 mod validation;
 
 use crate::api::StatusInfo;
-use crate::awards::{Awards, ValidatorAwardState};
-use crate::block::*;
-use crate::config::*;
-use crate::election::mix;
-use crate::election::ElectionInfo;
-use crate::election::{self, ElectionResult};
-use crate::error::*;
-use crate::merkle::Merkle;
-use crate::mvcc::MultiVersionedMap;
-use crate::output::*;
-use crate::timestamp::Timestamp;
-use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
-use crate::view_changes::ViewChangeProof;
-use crate::BlockReader;
+pub(crate) use awards::{Awards, ValidatorAwardState};
 use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
-use escrow::{Escrow, EscrowInfo, EscrowMap};
+pub(crate) use escrow::Escrow;
+pub use escrow::EscrowInfo;
+use escrow::EscrowMap;
 use failure::Error;
 use log::*;
 use rocksdb;
@@ -52,6 +42,9 @@ use serde_derive::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::Path;
+use stegos_blockchain::mvcc::MultiVersionedMap;
+use stegos_blockchain::view_changes::ViewChangeProof;
+use stegos_blockchain::*;
 use stegos_crypto::bulletproofs::fee_a;
 use stegos_crypto::hash::*;
 use stegos_crypto::pbc::VRF;
@@ -59,9 +52,6 @@ use stegos_crypto::scc::{Fr, Pt, PublicKey};
 use stegos_crypto::vdf::VDF;
 use stegos_crypto::{pbc, scc};
 use stegos_serialization::traits::ProtoConvert;
-
-pub type ViewCounter = u32;
-pub type ValidatorId = u32;
 
 /// Saved information about validator, and its slotcount in epoch.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -92,14 +82,6 @@ pub struct EpochInfo {
     pub validators: Vec<ValidatorKeyInfo>,
     pub facilitator: pbc::PublicKey,
     pub awards: AwardsInfo,
-}
-
-/// Retrospective information for some epoch.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct LightEpochInfo {
-    pub header: MacroBlockHeader,
-    pub validators: StakersGroup,
-    pub facilitator: pbc::PublicKey,
 }
 
 /// Information of current chain, that is used as proof of viewchange.
@@ -2281,11 +2263,11 @@ pub mod tests {
     use super::*;
 
     use crate::test;
-    use crate::timestamp::Timestamp;
     use rand::Rng;
     use simple_logger;
     use std::collections::BTreeMap;
     use std::time::Duration;
+    use stegos_blockchain::Timestamp;
     use tempdir::TempDir;
 
     #[test]

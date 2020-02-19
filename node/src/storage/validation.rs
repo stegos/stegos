@@ -22,18 +22,11 @@
 // SOFTWARE.
 
 use super::{Blockchain, ChainInfo};
-use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
-use crate::election::mix;
-use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
-use crate::multisignature::check_multi_signature;
-use crate::output::{Output, PublicPaymentOutput};
-use crate::timestamp::Timestamp;
-use crate::transaction::{SlashingTransaction, Transaction};
-use crate::view_changes::ViewChangeProof;
-use crate::{Merkle, SlashingProof};
 use log::*;
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
+use stegos_blockchain::view_changes::ViewChangeProof;
+use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 

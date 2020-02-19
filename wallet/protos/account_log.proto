@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.account_log;
+package stegos.wallet;
 
 import "crypto.proto";
 import "blockchain.proto";
@@ -73,4 +73,10 @@ message TransactionStatus {
         EpochWithOffset committed = 6;
         EpochWithOffset conflicted = 7;
     }
+}
+
+message LightEpochInfo {
+    MacroBlockHeader header = 1;
+    stegos.crypto.SecurePublicKey facilitator = 2;
+    repeated Staker validators = 3;
 }

@@ -1,0 +1,21 @@
+syntax = "proto3";
+package stegos.view_change;
+
+import "crypto.proto";
+import "blockchain.proto";
+
+message ViewChangeMessage {
+    stegos.blockchain.ChainInfo chain = 1;
+    uint32 validator_id = 2;
+    stegos.crypto.SecureSignature signature = 3;
+}
+
+message SealedViewChangeProof {
+    stegos.blockchain.ChainInfo chain = 1;
+    stegos.blockchain.ViewChangeProof proof = 2;
+}
+
+message AddressedViewChangeProof {
+    SealedViewChangeProof view_change_proof = 1;
+    stegos.crypto.SecurePublicKey pkey = 2;
+}

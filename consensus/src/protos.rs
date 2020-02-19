@@ -25,13 +25,10 @@ use failure::Error;
 use stegos_serialization::traits::*;
 
 use crate::message::*;
-use crate::optimistic::*;
-use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 // link protobuf dependencies
-use stegos_blockchain::protos::view_changes;
 use stegos_blockchain::protos::*;
 use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
@@ -117,62 +114,6 @@ impl ProtoConvert for ConsensusMessage {
             block_hash,
             body,
             sig,
-            pkey,
-        })
-    }
-}
-impl ProtoConvert for ViewChangeMessage {
-    type Proto = consensus::ViewChangeMessage;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = consensus::ViewChangeMessage::new();
-        proto.set_chain(self.chain.into_proto());
-        proto.set_validator_id(self.validator_id);
-        proto.set_signature(self.signature.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let chain = ChainInfo::from_proto(proto.get_chain())?;
-        let validator_id = proto.get_validator_id();
-        let signature = pbc::Signature::from_proto(proto.get_signature())?;
-
-        Ok(ViewChangeMessage {
-            chain,
-            validator_id,
-            signature,
-        })
-    }
-}
-
-impl ProtoConvert for SealedViewChangeProof {
-    type Proto = consensus::SealedViewChangeProof;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = consensus::SealedViewChangeProof::new();
-        proto.set_chain(self.chain.into_proto());
-        proto.set_proof(self.proof.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let chain = ChainInfo::from_proto(proto.get_chain())?;
-        let proof = ViewChangeProof::from_proto(proto.get_proof())?;
-
-        Ok(SealedViewChangeProof { chain, proof })
-    }
-}
-
-impl ProtoConvert for AddressedViewChangeProof {
-    type Proto = consensus::AddressedViewChangeProof;
-    fn into_proto(&self) -> Self::Proto {
-        let mut proto = consensus::AddressedViewChangeProof::new();
-        proto.set_view_change_proof(self.view_change_proof.into_proto());
-        proto.set_pkey(self.pkey.into_proto());
-        proto
-    }
-    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let view_change_proof = SealedViewChangeProof::from_proto(proto.get_view_change_proof())?;
-        let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
-
-        Ok(AddressedViewChangeProof {
-            view_change_proof,
             pkey,
         })
     }
@@ -275,19 +216,5 @@ mod tests {
             transactions,
         });
         roundtrip(&proposal);
-    }
-
-    #[test]
-    fn view_change() {
-        let (skey0, _pkey0) = pbc::make_random_keys();
-
-        let chain = ChainInfo {
-            epoch: 41,
-            offset: 48,
-            view_change: 12,
-            last_block: Hash::digest("test"),
-        };
-        let view_change_vote = ViewChangeMessage::new(chain, 1, &skey0);
-        roundtrip(&view_change_vote);
     }
 }

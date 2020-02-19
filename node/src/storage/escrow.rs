@@ -23,13 +23,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::BlockchainError;
-use crate::mvcc::MultiVersionedMap;
-use crate::output::Output;
 use log::*;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
+use stegos_blockchain::{mvcc::MultiVersionedMap, BlockchainError, Output};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;

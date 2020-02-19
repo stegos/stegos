@@ -58,6 +58,14 @@ struct LSN(u64, u32); // use `struct` to disable explicit casts.
 
 type OutputByHashMap = MultiVersionedMap<Hash, OutputValue, LSN>;
 
+/// Retrospective information for some epoch.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightEpochInfo {
+    pub header: MacroBlockHeader,
+    pub validators: StakersGroup,
+    pub facilitator: pbc::PublicKey,
+}
+
 #[derive(Debug, Clone)]
 pub enum LogEntry {
     Incoming { output: OutputValue },

@@ -28,7 +28,9 @@ mod config;
 mod error;
 mod mempool;
 pub mod metrics;
+mod optimistic;
 pub mod protos;
+mod storage;
 #[doc(hidden)]
 pub mod test;
 mod validation;
@@ -36,7 +38,11 @@ pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::mempool::Mempool;
+use crate::optimistic::{
+    AddressedViewChangeProof, SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage,
+};
 use crate::protos::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
+use crate::storage::{Blockchain, ChainInfo, OutputRecovery};
 use crate::validation::*;
 use failure::{bail, format_err, Error};
 use futures::sync::{mpsc, oneshot};
@@ -49,9 +55,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
-use stegos_consensus::optimistic::{
-    AddressedViewChangeProof, SealedViewChangeProof, ViewChangeCollector, ViewChangeMessage,
-};
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::Fr;

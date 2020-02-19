@@ -660,3 +660,75 @@ impl From<ServiceAwardTransaction> for Transaction {
         Transaction::ServiceAwardTransaction(tx)
     }
 }
+
+//--------------------------------------------------------------------------------------------------
+// Transaction Status (enum).
+//--------------------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[serde(tag = "status")]
+#[serde(rename_all = "snake_case")]
+pub enum TransactionStatus {
+    Created {},
+    Accepted {},
+    Rejected {
+        error: String,
+    },
+    /// Transaction was included in microblock.
+    Prepared {
+        epoch: u64,
+        offset: u32,
+    },
+    /// Transaction was reverted back to mempool.
+    Rollback {
+        epoch: u64,
+        offset: u32,
+    },
+    /// Transaction was committed to macro block.
+    Committed {
+        epoch: u64,
+    },
+    /// Transaction was rejected, because other conflicted
+    Conflicted {
+        epoch: u64,
+        offset: Option<u32>,
+    },
+}
+
+impl Hashable for TransactionStatus {
+    fn hash(&self, hasher: &mut Hasher) {
+        match self {
+            TransactionStatus::Created {} => "Created".hash(hasher),
+            TransactionStatus::Accepted {} => "Accepted".hash(hasher),
+            TransactionStatus::Rejected { error } => {
+                "Rejected".hash(hasher);
+                error.hash(hasher)
+            }
+            TransactionStatus::Prepared { epoch, offset } => {
+                "Prepare".hash(hasher);
+                epoch.hash(hasher);
+                offset.hash(hasher);
+            }
+            TransactionStatus::Rollback { epoch, offset } => {
+                "Rollback".hash(hasher);
+                epoch.hash(hasher);
+                offset.hash(hasher);
+            }
+            TransactionStatus::Committed { epoch } => {
+                "Committed".hash(hasher);
+                epoch.hash(hasher);
+            }
+            TransactionStatus::Conflicted { epoch, offset } => {
+                "Conflicted".hash(hasher);
+
+                epoch.hash(hasher);
+                if let Some(offset) = offset {
+                    "some".hash(hasher);
+                    offset.hash(hasher);
+                } else {
+                    "none".hash(hasher);
+                }
+            }
+        }
+    }
+}

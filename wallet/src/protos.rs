@@ -32,11 +32,11 @@ use stegos_crypto::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 use super::storage::{LogEntry, OutputValue, PaymentValue, TransactionValue};
 use crate::storage::{PublicPaymentValue, StakeValue};
+use stegos_blockchain::TransactionStatus;
 use stegos_blockchain::{
     PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, StakeOutput,
 };
 use stegos_crypto::scc::{Fr, PublicKey};
-use stegos_node::TransactionStatus;
 
 // -----------------------------------------------------------
 

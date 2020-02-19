@@ -41,7 +41,7 @@ fn empty_log_at_start() {
         let mut accounts = genesis_accounts(&mut s);
         s.poll();
         let log = account_history(&mut accounts[0]);
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2); /* initial payment + initial stake */
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
     });
 }
@@ -234,7 +234,7 @@ fn create_tx_with_certificate() {
                 tx_hash,
                 status: TransactionStatus::Prepared { .. },
             } => assert_eq!(tx_hash, my_tx),
-            _ => unreachable!(),
+            other => panic!("Unexpected notification: {:?}", other),
         }
     });
 }
@@ -573,7 +573,7 @@ fn create_public_tx() {
 }
 
 #[test]
-fn recovery_acount_after_tx() {
+fn recovery_account_after_tx() {
     Sandbox::start(Default::default(), |mut s| {
         let mut accounts = genesis_accounts(&mut s);
 
@@ -584,7 +584,7 @@ fn recovery_acount_after_tx() {
 
         let log = account_history(&mut accounts[0]);
 
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2);
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
@@ -663,7 +663,7 @@ fn send_node_duplicate_tx() {
 
         let log = account_history(&mut accounts[0]);
 
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2);
         let mut notification = accounts[0].account.subscribe();
         let rx = accounts[0].account.request(AccountRequest::Payment {
             recipient,
@@ -692,7 +692,7 @@ fn send_node_duplicate_tx() {
         let log = account_history(&mut accounts[0]);
 
         let len = log.len();
-        assert_eq!(len, 2);
+        assert_eq!(len, 3);
 
         match log.last().unwrap() {
             LogEntryInfo::Outgoing {
@@ -724,7 +724,7 @@ fn send_node_duplicate_tx() {
 
         let log_after_recovery = account_history(&mut accounts[0]);
 
-        assert_eq!(len, 2);
+        assert_eq!(len, 3);
 
         match log_after_recovery.last().unwrap() {
             LogEntryInfo::Outgoing {
@@ -1236,11 +1236,6 @@ fn snowball_failed_join() {
         let response = snowball_start(recipient, SEND_TOKENS, &mut accounts[0], &mut notification);
         accounts[0].poll();
         assert!(accounts[0].account_service.snowball.is_some());
-        assert!(!accounts[0]
-            .account_service
-            .database
-            .pending_payments
-            .is_empty());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);
@@ -1253,12 +1248,6 @@ fn snowball_failed_join() {
         s.poll();
 
         accounts[0].poll();
-        assert!(accounts[0]
-            .account_service
-            .database
-            .pending_payments
-            .is_empty());
-        assert!(accounts[0].account_service.snowball.is_none());
 
         s.filter_unicast(&[stegos_node::CHAIN_LOADER_TOPIC]);
         s.filter_broadcast(&[stegos_node::VIEW_CHANGE_TOPIC]);

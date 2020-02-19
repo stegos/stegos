@@ -38,7 +38,7 @@ const MAX_IDLE_DURATION: Duration = Duration::from_secs(60);
 /// How long a peer can stay in Receiving/Sending state.
 const MAX_STREAMING_DURATION: Duration = Duration::from_secs(60 * 10);
 /// Maximal size of batch in blocks.
-const MAX_BLOCKS_PER_BATCH: usize = 100; // Average block size is 100k.
+pub const MAX_BLOCKS_PER_BATCH: usize = 100; // Average block size is 100k.
 /// Maximal size of batch in bytes.
 const MAX_BYTES_PER_BATCH: u64 = 10 * 1024 * 1024; // 10Mb.
 

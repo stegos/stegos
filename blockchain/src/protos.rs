@@ -403,6 +403,41 @@ impl ProtoConvert for EpochInfo {
     }
 }
 
+impl ProtoConvert for LightEpochInfo {
+    type Proto = blockchain::LightEpochInfo;
+
+    fn into_proto(&self) -> Self::Proto {
+        let mut msg = Self::Proto::new();
+        msg.set_header(self.header.into_proto());
+        msg.set_facilitator(self.facilitator.into_proto());
+        for validator in &self.validators {
+            let mut validator_proto = blockchain::Staker::new();
+            validator_proto.set_network_pkey(validator.0.into_proto());
+            validator_proto.set_amount(validator.1);
+            msg.validators.push(validator_proto)
+        }
+        msg
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let facilitator = ProtoConvert::from_proto(proto.get_facilitator())?;
+        let mut validators = Vec::new();
+        for validator in &proto.validators {
+            validators.push((
+                ProtoConvert::from_proto(validator.get_network_pkey())?,
+                validator.get_amount(),
+            ))
+        }
+
+        Ok(Self {
+            header,
+            facilitator,
+            validators,
+        })
+    }
+}
+
 impl ProtoConvert for PaymentPayloadData {
     type Proto = blockchain::PaymentPayloadData;
     fn into_proto(&self) -> Self::Proto {

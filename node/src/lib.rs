@@ -473,7 +473,7 @@ impl NodeService {
     /// Handle incoming transactions received from network.
     fn handle_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let tx_hash = Hash::digest(&tx);
-        if !tx.is_restaking() && !self.is_synchronized() {
+        if !tx.is_restaking() && !self.chain.is_synchronized() {
             sdebug!(
                 self,
                 "Node is not synchronized - ignore transaction from the network: tx={}",
@@ -543,7 +543,7 @@ impl NodeService {
         );
 
         match result {
-            Err(ref e) if !self.is_synchronized() => {
+            Err(ref e) if !self.chain.is_synchronized() => {
                 sdebug!(
                     self,
                     "Error during transaction validating when not synchronized: {}",
@@ -604,7 +604,7 @@ impl NodeService {
         if !self.is_restaking_enabled {
             return Ok(());
         }
-        if !self.is_synchronized() {
+        if !self.chain.is_synchronized() {
             // Don't re-stake during bootstrap, wait for the actual network state.
             strace!(self, "Skipping restaking - Node is not synchronized");
             return Ok(());
@@ -1068,7 +1068,7 @@ impl NodeService {
         let timestamp = Timestamp::now();
         let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
-        let was_synchronized = self.is_synchronized();
+        let was_synchronized = self.chain.is_synchronized();
 
         // Validate signature.
         check_multi_signature(
@@ -1114,7 +1114,7 @@ impl NodeService {
         let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let offset = block.header.offset;
-        let was_synchronized = self.is_synchronized();
+        let was_synchronized = self.chain.is_synchronized();
 
         // Check for the correct block order.
         match &self.validation {
@@ -1238,7 +1238,7 @@ impl NodeService {
         self.update_validation_status();
 
         // Print "Synchronized" message.
-        if !was_synchronized && self.is_synchronized() {
+        if !was_synchronized && self.chain.is_synchronized() {
             sinfo!(self, "Synchronized with the network");
         }
 
@@ -1261,7 +1261,7 @@ impl NodeService {
 
         // Re-stake expiring stakes.
         if self.chain.offset() == self.restaking_offset
-            || !was_synchronized && self.is_synchronized()
+            || !was_synchronized && self.chain.is_synchronized()
         {
             if let Err(e) = self.restake_expiring_stakes() {
                 serror!(self, "Restake failed: {}", e);
@@ -1269,22 +1269,8 @@ impl NodeService {
         }
     }
 
-    fn status(&self) -> StatusInfo {
-        let is_synchronized = self.is_synchronized();
-        StatusInfo {
-            is_synchronized,
-            epoch: self.chain.epoch(),
-            offset: self.chain.offset(),
-            view_change: self.chain.view_change(),
-            last_block_hash: self.chain.last_block_hash(),
-            last_macro_block_hash: self.chain.last_macro_block_hash(),
-            last_macro_block_timestamp: self.chain.last_macro_block_timestamp(),
-            local_timestamp: Timestamp::now(),
-        }
-    }
-
     fn on_status_changed(&mut self) {
-        let msg = self.status();
+        let msg = self.chain.status();
         metrics::SYNCHRONIZED.set(if msg.is_synchronized { 1 } else { 0 });
         notify_subscribers(&mut self.status_subscribers, msg.into());
     }
@@ -1689,13 +1675,6 @@ impl NodeService {
                 .publish(&CONSENSUS_TOPIC, data)
                 .expect("Connected");
         }
-    }
-
-    /// True if the node is synchronized with the network.
-    fn is_synchronized(&self) -> bool {
-        let timestamp = Timestamp::now();
-        let block_timestamp = self.chain.last_block_timestamp();
-        block_timestamp + self.cfg.sync_timeout >= timestamp
     }
 
     /// Get a timestamp for the next block.
@@ -2219,7 +2198,7 @@ impl Future for NodeService {
         loop {
             match self.check_sync.poll() {
                 Ok(Async::Ready(Some(_))) => {
-                    if !self.is_synchronized() {
+                    if !self.chain.is_synchronized() {
                         self.on_status_changed();
                     }
                 }
@@ -2420,7 +2399,7 @@ impl Future for NodeService {
                                     NodeResponse::UpstreamChanged
                                 }
                                 NodeRequest::StatusInfo {} => {
-                                    let status = self.status();
+                                    let status = self.chain.status();
                                     NodeResponse::StatusInfo(status)
                                 }
                                 NodeRequest::ValidatorsInfo {} => {
@@ -2445,7 +2424,7 @@ impl Future for NodeService {
                                 NodeRequest::SubscribeStatus {} => {
                                     match self.handle_subscription_to_status() {
                                         Ok(rx) => {
-                                            let status = self.status();
+                                            let status = self.chain.status();
                                             NodeResponse::SubscribedStatus {
                                                 status,
                                                 rx: Some(rx),

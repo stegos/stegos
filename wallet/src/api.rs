@@ -24,13 +24,16 @@
 pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use stegos_blockchain::api::StatusInfo;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+pub use stegos_blockchain::TransactionStatus;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
-use stegos_node::TransactionStatus;
+pub use stegos_replication::api::*;
+
 pub type AccountId = String;
 
 #[derive(Eq, PartialEq, Serialize, Deserialize, Clone, Debug)]
@@ -122,10 +125,15 @@ pub struct AccountRecovery {
 ///
 /// Out-of-band notifications.
 ///
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum AccountNotification {
+    StatusChanged(StatusInfo),
+    #[serde(skip)]
+    UpstreamError(String),
+    Unsealed,
+    Sealed,
     BalanceChanged(AccountBalance),
     SnowballStatus(SnowballStatus),
     TransactionStatus {
@@ -141,7 +149,7 @@ pub enum AccountNotification {
     Unstaked(StakeInfo),
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct WalletNotification {
     pub account_id: AccountId,
@@ -233,6 +241,7 @@ pub enum WalletControlRequest {
     DeleteAccount {
         account_id: AccountId,
     },
+    LightReplicationInfo {},
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -293,6 +302,9 @@ pub enum AccountResponse {
 pub struct AccountInfo {
     pub account_pkey: scc::PublicKey,
     pub network_pkey: pbc::PublicKey,
+    #[serde(default)]
+    #[serde(flatten)]
+    pub status: StatusInfo,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -301,6 +313,7 @@ pub struct AccountInfo {
 pub enum WalletControlResponse {
     AccountsInfo {
         accounts: BTreeMap<AccountId, AccountInfo>,
+        remote_epoch: u64,
     },
     AccountCreated {
         account_id: AccountId,
@@ -308,6 +321,7 @@ pub enum WalletControlResponse {
     AccountDeleted {
         account_id: AccountId,
     },
+    LightReplicationInfo(ReplicationInfo),
     Error {
         error: String,
     },

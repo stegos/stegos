@@ -2595,6 +2595,7 @@ dependencies = [
  "android_logger 0.8.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "assert_matches 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "atty 0.2.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "backtrace 0.3.40 (registry+https://github.com/rust-lang/crates.io-index)",
  "bit-vec 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.9 (registry+https://github.com/rust-lang/crates.io-index)",
  "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2899,6 +2900,7 @@ name = "stegos_wallet"
 version = "1.0.0"
 dependencies = [
  "assert_matches 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "bit-vec 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "failure 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.29 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -2919,7 +2921,7 @@ dependencies = [
  "stegos_crypto 1.0.0",
  "stegos_keychain 1.0.0",
  "stegos_network 1.0.0",
- "stegos_node 1.0.0",
+ "stegos_replication 1.0.0",
  "stegos_serialization 1.0.0",
  "stegos_txpool 1.0.0",
  "tempdir 0.3.7 (registry+https://github.com/rust-lang/crates.io-index)",

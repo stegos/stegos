@@ -36,6 +36,7 @@ use crate::api::TransactionInfo;
 use futures::sync::{mpsc, oneshot};
 use futures::{Async, Future, Stream};
 use log::info;
+use stegos_crypto::hash::Hash;
 use stegos_node::Node;
 
 const PASSWORD: &str = "1234";
@@ -60,7 +61,7 @@ struct AccountSandbox {
 
 impl AccountSandbox {
     pub fn new(
-        stake_epochs: u64,
+        chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
         keys: KeyChain,
         node: &mut NodeSandbox,
@@ -85,6 +86,7 @@ impl AccountSandbox {
 
         info!("Wrote account key pair: account_foulder={:?}", temp_path);
 
+        let genesis_hash = Hash::digest(&node.chain().macro_block(0).unwrap().header);
         let (outbox, events) = mpsc::unbounded::<AccountEvent>();
         let subscribers: Vec<mpsc::UnboundedSender<AccountNotification>> = Vec::new();
         let account_service = UnsealedAccountService::new(
@@ -96,7 +98,8 @@ impl AccountSandbox {
             network_pkey,
             network,
             node.node.clone(),
-            stake_epochs,
+            genesis_hash,
+            chain_cfg,
             max_inputs_in_tx,
             subscribers,
             events,
@@ -130,7 +133,7 @@ impl AccountSandbox {
 
         let node = &mut s.nodes[node_id];
         Self::new(
-            stake_epochs,
+            s.config.chain.clone(),
             max_inputs_in_tx,
             keys,
             node,

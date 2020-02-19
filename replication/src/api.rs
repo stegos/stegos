@@ -24,7 +24,7 @@
 use serde_derive::{Deserialize, Serialize};
 use std::time::Duration;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "state")]
 #[serde(rename_all = "snake_case")]
 pub enum PeerInfo {
@@ -84,7 +84,7 @@ pub enum PeerInfo {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ReplicationInfo {
     pub peers: Vec<PeerInfo>,

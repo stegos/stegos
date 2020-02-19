@@ -30,15 +30,16 @@
 class Stegos {
     private static native int init(String chain, String data_dir, String api_token, String api_endpoint);
 
+    private static native int shutdown();
+
+    private static native int restart();
+
     static {
         System.loadLibrary("stegos");
     }
 
     public static void main(String[] args) {
-        Stegos.init("testnet",
-                System.getProperty("user.home") + "/.local/share/stegos/testnet",
-                "iUNtuwIDfPheI6BBqOin6A==",
-                "127.0.0.1:3145"
-        );
+        Stegos.init("testnet", System.getProperty("user.home") + "/.local/share/stegos/testnet",
+                "iUNtuwIDfPheI6BBqOin6A==", "127.0.0.1:3145");
     }
 }

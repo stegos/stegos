@@ -1,7 +1,7 @@
-//! Blockchain Node.
+//! Node.
 
 //
-// Copyright (c) 2019 Stegos AG
+// Copyright (c) 2019-2020 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,28 +26,22 @@
 pub mod api;
 mod config;
 mod error;
-mod loader;
 mod mempool;
 pub mod metrics;
 pub mod protos;
-#[doc(hidden)]
-pub mod test;
+mod tokio;
 mod validation;
+pub use self::tokio::{Node, NodeService};
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
-use crate::loader::ChainLoaderMessage;
 use crate::mempool::Mempool;
 use crate::validation::*;
 use failure::{bail, format_err, Error};
-use futures::sync::{mpsc, oneshot};
-use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
-use futures_stream_select_all_send::select_all;
-pub use loader::CHAIN_LOADER_TOPIC;
+use futures::sync::oneshot;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
-use std::thread;
 use std::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
@@ -57,45 +51,11 @@ use stegos_consensus::optimistic::{
 use stegos_consensus::{self as consensus, Consensus, ConsensusMessage, MacroBlockProposal};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc::Fr;
+use stegos_crypto::vdf::VDF;
 use stegos_crypto::{pbc, scc};
-use stegos_network::{Network, ReplicationEvent};
-use stegos_network::{PeerId, UnicastMessage};
-use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::TransactionPoolService;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio_timer::{clock, Delay, Interval};
 use Validation::*;
-
-// ----------------------------------------------------------------
-// Public API.
-// ----------------------------------------------------------------
-
-/// Blockchain Node.
-#[derive(Clone, Debug)]
-pub struct Node {
-    outbox: mpsc::UnboundedSender<NodeMessage>,
-    network: Network,
-}
-
-impl Node {
-    /// Send transaction to node and to the network.
-    pub fn send_transaction(&self, transaction: Transaction) -> oneshot::Receiver<NodeResponse> {
-        let (tx, rx) = oneshot::channel();
-        let request = NodeRequest::BroadcastTransaction { data: transaction };
-        let msg = NodeMessage::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
-    /// Execute a Node Request.
-    pub fn request(&self, request: NodeRequest) -> oneshot::Receiver<NodeResponse> {
-        let (tx, rx) = oneshot::channel();
-        let msg = NodeMessage::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-}
 
 // ----------------------------------------------------------------
 // Internal Implementation.
@@ -104,15 +64,17 @@ impl Node {
 /// Topic used for sending transactions.
 pub const TX_TOPIC: &'static str = "tx";
 /// Topic used for consensus.
-const CONSENSUS_TOPIC: &'static str = "consensus";
+pub(crate) const CONSENSUS_TOPIC: &'static str = "consensus";
 /// Topic for ViewChange message.
-pub const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
+pub(crate) const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
 /// Topic for ViewChange proofs broadcasts.
-pub const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
+pub(crate) const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
 /// Topic for ViewChange proofs.
-pub const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
+pub(crate) const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
-const SEALED_BLOCK_TOPIC: &'static str = "block";
+pub(crate) const SEALED_BLOCK_TOPIC: &'static str = "block";
+/// Unicast topic for loading blocks.
+pub(crate) const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
 
 //
 // Logging utils.
@@ -144,7 +106,7 @@ macro_rules! serror {
 }
 
 #[derive(Debug)]
-pub enum NodeMessage {
+pub enum NodeIncomingEvent {
     Request {
         request: NodeRequest,
         tx: oneshot::Sender<NodeResponse>,
@@ -152,22 +114,72 @@ pub enum NodeMessage {
     Transaction(Vec<u8>),
     Consensus(Vec<u8>),
     Block(Vec<u8>),
+    DecodedBlock(Block),
     ViewChangeMessage(Vec<u8>),
     ViewChangeProof(Vec<u8>),
-    ViewChangeProofMessage(UnicastMessage),
-    ChainLoaderMessage(UnicastMessage),
+    ViewChangeProofMessage {
+        from: pbc::PublicKey,
+        data: Vec<u8>,
+    },
+    ChainLoaderMessage {
+        from: pbc::PublicKey,
+        data: Vec<u8>,
+    },
+    CheckSyncTimer,
+    MacroBlockProposeTimer,
+    MacroBlockViewChangeTimer,
+    MicroBlockProposeTimer(Vec<u8>),
+    MicroBlockViewChangeTimer,
+}
+
+#[derive(Debug)]
+pub enum NodeOutgoingEvent {
+    Publish {
+        topic: String,
+        data: Vec<u8>,
+    },
+    Send {
+        dest: pbc::PublicKey,
+        topic: String,
+        data: Vec<u8>,
+    },
+    FacilitatorChanged {
+        facilitator: pbc::PublicKey,
+    },
+    ReplicationBlock {
+        block: Block,
+        light_block: LightBlock,
+    },
+    ChainNotification(ChainNotification),
+    StatusNotification(StatusNotification),
+    MacroBlockProposeTimer(Duration),
+    MacroBlockViewChangeTimer(Duration),
+    MicroBlockProposeTimer {
+        random: Hash,
+        vdf: VDF,
+        difficulty: u64,
+    },
+    MicroBlockViewChangeTimer(Duration),
+    RequestBlocksFrom {
+        from: pbc::PublicKey,
+    },
+    SendBlocksTo {
+        to: pbc::PublicKey,
+        epoch: u64,
+        offset: u32,
+    },
 }
 
 enum MicroBlockTimer {
     None,
-    Propose(oneshot::Receiver<Vec<u8>>),
-    ViewChange(Delay),
+    Propose,
+    ViewChange,
 }
 
 enum MacroBlockTimer {
     None,
-    Propose(Delay),
-    ViewChange(Delay),
+    Propose,
+    ViewChange,
 }
 
 enum Validation {
@@ -192,95 +204,14 @@ enum Validation {
     },
 }
 
-/// Chain subscriber which is fed from the disk.
-struct ChainReader {
-    /// Current epoch.
-    epoch: u64,
-    /// Current offset.
-    offset: u32,
-    /// Channel.
-    tx: mpsc::Sender<ChainNotification>,
-}
-
-impl ChainReader {
-    fn poll(&mut self, chain: &Blockchain) -> Poll<(), Error> {
-        // Check if subscriber has already been synchronized.
-        if self.epoch == chain.epoch() && self.offset == chain.offset() {
-            return Ok(Async::Ready(()));
-        }
-
-        // Feed blocks from the disk.
-        for block in chain.blocks_starting(self.epoch, self.offset) {
-            let (msg, next_epoch, next_offset) = match block {
-                Block::MacroBlock(block) => {
-                    assert_eq!(block.header.epoch, self.epoch);
-                    let epoch_info = chain.epoch_info(block.header.epoch)?.unwrap().clone();
-                    let next_epoch = block.header.epoch + 1;
-                    let msg = ExtendedMacroBlock { block, epoch_info };
-                    let msg = ChainNotification::MacroBlockCommitted(msg);
-                    (msg, next_epoch, 0)
-                }
-                Block::MicroBlock(block) => {
-                    assert_eq!(block.header.epoch, self.epoch);
-                    assert_eq!(block.header.offset, self.offset);
-                    let (next_epoch, next_offset) =
-                        if block.header.offset + 1 < chain.cfg().micro_blocks_in_epoch {
-                            (block.header.epoch, block.header.offset + 1)
-                        } else {
-                            (block.header.epoch + 1, 0)
-                        };
-                    let msg = ChainNotification::MicroBlockPrepared(block);
-                    (msg, next_epoch, next_offset)
-                }
-            };
-
-            match self.tx.start_send(msg)? {
-                AsyncSink::Ready => {
-                    self.epoch = next_epoch;
-                    self.offset = next_offset;
-                }
-                AsyncSink::NotReady(_msg) => {
-                    break;
-                }
-            }
-        }
-
-        self.tx.poll_complete()?;
-        Ok(Async::NotReady)
-    }
-}
-
-/// Notify all subscribers about new event.
-fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) {
-    let mut i = 0;
-    while i < subscribers.len() {
-        let tx = &mut subscribers[i];
-        match tx.start_send(msg.clone()) {
-            Ok(AsyncSink::Ready) => {}
-            Ok(AsyncSink::NotReady(_msg)) => {
-                log::warn!("Subscriber is slow, discarding messages");
-            }
-            Err(_e /* SendError<ChainNotification> */) => {
-                subscribers.swap_remove(i);
-                continue;
-            }
-        }
-        if let Err(_e) = tx.poll_complete() {
-            subscribers.swap_remove(i);
-            continue;
-        }
-        i += 1;
-    }
-}
-
-pub struct NodeService {
+pub struct NodeState {
     /// Config.
-    cfg: NodeConfig,
+    pub(crate) cfg: NodeConfig,
     chain_name: String,
     /// Blockchain.
-    chain: Blockchain,
+    pub(crate) chain: Blockchain,
     /// Network secret key.
-    network_pkey: pbc::PublicKey,
+    pub(crate) network_pkey: pbc::PublicKey,
     /// Network secret key.
     network_skey: pbc::SecretKey,
 
@@ -302,47 +233,21 @@ pub struct NodeService {
     /// Automatic re-staking status.
     is_restaking_enabled: bool,
 
-    /// Timer to check sync status
-    check_sync: Interval,
-
-    //
-    // Communication with environment.
-    //
-    /// Subscribers for status events.
-    status_subscribers: Vec<mpsc::Sender<StatusNotification>>,
-    /// Subscribers for chain events.
-    chain_subscribers: Vec<mpsc::Sender<ChainNotification>>,
-    /// Subscribers for chain events which are fed from the disk.
-    /// Automatically promoted to chain_subscribers after synchronization.
-    chain_readers: Vec<ChainReader>,
-    /// Network interface.
-    network: Network,
-    /// Aggregated stream of events.
-    events: Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>,
-
-    /// Txpool
-    txpool_service: Option<TransactionPoolService>,
-
-    /// Replication
-    replication: Replication,
+    pub(crate) outgoing: Vec<NodeOutgoingEvent>,
 }
 
-impl NodeService {
+impl NodeState {
     /// Constructor.
     pub fn new(
         cfg: NodeConfig,
         chain: Blockchain,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
-        network: Network,
         chain_name: String,
-        peer_id: PeerId,
-        replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
-    ) -> Result<(Self, Node), Error> {
-        let (outbox, inbox) = mpsc::unbounded();
+    ) -> Result<Self, Error> {
         let mempool = Mempool::new();
 
-        let last_block_clock = clock::now();
+        let last_block_clock = Instant::now();
         let validation = if chain.is_epoch_full() {
             MacroBlockAuditor
         } else {
@@ -353,66 +258,7 @@ impl NodeService {
         let restaking_offset = 0; // will be updated on init().
         let is_restaking_enabled = true;
 
-        let status_subscribers = Vec::new();
-
-        let mut streams = Vec::<Box<dyn Stream<Item = NodeMessage, Error = ()> + Send>>::new();
-
-        // Control messages
-        streams.push(Box::new(inbox));
-
-        // Transaction Requests
-        let transaction_rx = network
-            .subscribe(&TX_TOPIC)?
-            .map(|m| NodeMessage::Transaction(m));
-        streams.push(Box::new(transaction_rx));
-
-        // Consensus Requests
-        let consensus_rx = network
-            .subscribe(&CONSENSUS_TOPIC)?
-            .map(|m| NodeMessage::Consensus(m));
-        streams.push(Box::new(consensus_rx));
-
-        let view_change_rx = network
-            .subscribe(&VIEW_CHANGE_TOPIC)?
-            .map(|m| NodeMessage::ViewChangeMessage(m));
-        streams.push(Box::new(view_change_rx));
-
-        let view_change_proofs_rx = network
-            .subscribe(&VIEW_CHANGE_PROOFS_TOPIC)?
-            .map(|m| NodeMessage::ViewChangeProof(m));
-        streams.push(Box::new(view_change_proofs_rx));
-
-        let view_change_unicast_rx = network
-            .subscribe_unicast(&VIEW_CHANGE_DIRECT)?
-            .map(|m| NodeMessage::ViewChangeProofMessage(m));
-        streams.push(Box::new(view_change_unicast_rx));
-
-        // Sealed blocks broadcast topic.
-        let block_rx = network
-            .subscribe(&SEALED_BLOCK_TOPIC)?
-            .map(|m| NodeMessage::Block(m));
-        streams.push(Box::new(block_rx));
-
-        // Chain loader messages.
-        let requests_rx = network
-            .subscribe_unicast(loader::CHAIN_LOADER_TOPIC)?
-            .map(NodeMessage::ChainLoaderMessage);
-        streams.push(Box::new(requests_rx));
-
-        let events = select_all(streams);
-
-        let check_sync = Interval::new_interval(cfg.sync_change_timeout);
-        let chain_readers = Vec::new();
-        let chain_subscribers = Vec::new();
-        let node = Node {
-            outbox,
-            network: network.clone(),
-        };
-        let txpool_service = None;
-        let light = false;
-        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
-
-        let service = NodeService {
+        let state = NodeState {
             cfg,
             chain_name,
             chain,
@@ -424,18 +270,11 @@ impl NodeService {
             cheating_proofs,
             restaking_offset,
             is_restaking_enabled,
-            chain_readers,
-            chain_subscribers,
-            network: network.clone(),
-            check_sync,
-            events,
-            txpool_service,
-            replication,
-            status_subscribers,
+            outgoing: Vec::new(),
         };
-        service.update_stake_balance();
+        state.update_stake_balance();
 
-        Ok((service, node))
+        Ok(state)
     }
 
     /// Invoked when network is ready.
@@ -451,7 +290,10 @@ impl NodeService {
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let data = tx.into_buffer()?;
         let tx_hash = Hash::digest(&tx);
-        self.network.publish(&TX_TOPIC, data.clone())?;
+        self.outgoing.push(NodeOutgoingEvent::Publish {
+            topic: TX_TOPIC.to_string(),
+            data: data.clone(),
+        });
         sinfo!(
             self,
             "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
@@ -702,11 +544,12 @@ impl NodeService {
             0
         };
 
-        for tx in pending_txs
-            .into_iter()
-            .map(|hash| self.mempool.get_tx(&hash).expect("tx in mempool"))
-        {
-            self.network.publish(&TX_TOPIC, tx.into_buffer()?)?;
+        for tx_hash in pending_txs.into_iter() {
+            let tx = self.mempool.get_tx(&tx_hash).expect("tx in mempool");
+            self.outgoing.push(NodeOutgoingEvent::Publish {
+                topic: TX_TOPIC.to_string(),
+                data: tx.into_buffer()?,
+            });
         }
         sdebug!(
             self,
@@ -774,7 +617,11 @@ impl NodeService {
                 "Found a fork with lower view_change, sending blocks: pkey={}",
                 remote.header.pkey
             );
-            self.send_blocks(remote.header.pkey, epoch, offset)?;
+            self.outgoing.push(NodeOutgoingEvent::SendBlocksTo {
+                to: remote.header.pkey,
+                epoch,
+                offset,
+            });
             return Err(ForkError::Canceled);
         }
 
@@ -861,7 +708,8 @@ impl NodeService {
                   local_view_change,
                   remote_view_change);
             // Request history from that node.
-            self.request_history_from(pkey, "fork resolution")?;
+            self.outgoing
+                .push(NodeOutgoingEvent::RequestBlocksFrom { from: pkey });
             return Err(ForkError::Canceled);
         }
 
@@ -1015,7 +863,8 @@ impl NodeService {
                 Ok(BlockchainError::BlockError(BlockError::InvalidMicroBlockPreviousHash(..))) => {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
-                    self.request_history_from(from, "invalid previous hash")?;
+                    self.outgoing
+                        .push(NodeOutgoingEvent::RequestBlocksFrom { from });
                 }
                 Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
                     assert!(self.chain.view_change() > 0);
@@ -1045,8 +894,11 @@ impl NodeService {
                         chain: chain_info,
                         proof: proof.clone(),
                     };
-                    self.network
-                        .send(leader, VIEW_CHANGE_DIRECT, proof.into_buffer()?)?;
+                    self.outgoing.push(NodeOutgoingEvent::Send {
+                        dest: leader,
+                        topic: VIEW_CHANGE_DIRECT.to_string(),
+                        data: proof.into_buffer()?,
+                    });
                 }
                 _ => {}
             }
@@ -1132,7 +984,7 @@ impl NodeService {
             "Validating a micro block: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
             epoch, offset, &hash, inputs_len, outputs_len, txs_len
         );
-        let start_clock = clock::now();
+        let start_clock = Instant::now();
         let r = {
             let mut outputs: Vec<&Output> = Vec::new();
             for tx in &block.transactions {
@@ -1160,7 +1012,7 @@ impl NodeService {
                 Err(e) => Err(e),
             }
         };
-        let duration = clock::now().duration_since(start_clock);
+        let duration = Instant::now().duration_since(start_clock);
         let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
         metrics::MICRO_BLOCK_VALIDATE_TIME.set(duration);
         metrics::MICRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
@@ -1206,7 +1058,7 @@ impl NodeService {
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
         metrics::MEMPOOL_OUTPUTS.set(self.mempool.inputs_len() as i64);
         let last_block_clock = self.last_block_clock;
-        self.last_block_clock = clock::now();
+        self.last_block_clock = Instant::now();
         let local_timestamp: f64 = Timestamp::now().into();
         let remote_timestamp: f64 = block_timestamp.into();
         let lag = local_timestamp - remote_timestamp; // can be negative.
@@ -1246,7 +1098,8 @@ impl NodeService {
         self.on_status_changed();
 
         // Send ChainNotification.
-        notify_subscribers(&mut self.chain_subscribers, notification);
+        self.outgoing
+            .push(NodeOutgoingEvent::ChainNotification(notification));
 
         // Send block to replication.
         let light_block: LightBlock = match &block {
@@ -1256,8 +1109,8 @@ impl NodeService {
                 .into(),
             Block::MicroBlock(block) => block.clone().into_light_micro_block().into(),
         };
-        self.replication
-            .on_block(block, light_block, self.chain.cfg().micro_blocks_in_epoch);
+        self.outgoing
+            .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
 
         // Re-stake expiring stakes.
         if self.chain.offset() == self.restaking_offset
@@ -1272,34 +1125,8 @@ impl NodeService {
     fn on_status_changed(&mut self) {
         let msg = self.chain.status();
         metrics::SYNCHRONIZED.set(if msg.is_synchronized { 1 } else { 0 });
-        notify_subscribers(&mut self.status_subscribers, msg.into());
-    }
-
-    /// Handler subscription to status.
-    fn handle_subscription_to_status(
-        &mut self,
-    ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
-        let (tx, rx) = mpsc::channel(1);
-        self.status_subscribers.push(tx);
-        Ok(rx)
-    }
-
-    /// Handle subscription to chain.
-    fn handle_subscription_to_chain(
-        &mut self,
-        epoch: u64,
-        offset: u32,
-    ) -> Result<mpsc::Receiver<ChainNotification>, Error> {
-        if epoch > self.chain.epoch() {
-            return Err(format_err!("Invalid epoch requested: epoch={}", epoch));
-        }
-        // Set buffer size to fit entire epoch plus some extra blocks.
-        let buffer = self.chain.cfg().micro_blocks_in_epoch as usize + 10;
-        let (tx, rx) = mpsc::channel(buffer);
-        let subscriber = ChainReader { tx, epoch, offset };
-        self.chain_readers.push(subscriber);
-        task::current().notify();
-        Ok(rx)
+        self.outgoing
+            .push(NodeOutgoingEvent::StatusNotification(msg.into()));
     }
 
     /// Handler for NodeRequest::BroadcastTransaction
@@ -1335,7 +1162,7 @@ impl NodeService {
     ///
     fn pop_micro_block(&mut self) -> Result<(), Error> {
         let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_micro_block()?;
-        self.last_block_clock = clock::now();
+        self.last_block_clock = Instant::now();
         self.mempool.pop_micro_block(txs);
 
         // Update validation status.
@@ -1345,12 +1172,13 @@ impl NodeService {
         self.on_status_changed();
 
         // Send ChainNotification.
-        let msg = RevertedMicroBlock {
+        let notification = RevertedMicroBlock {
             block,
             pruned_outputs,
             recovered_inputs,
         };
-        notify_subscribers(&mut self.chain_subscribers, msg.into());
+        self.outgoing
+            .push(NodeOutgoingEvent::ChainNotification(notification.into()));
 
         Ok(())
     }
@@ -1372,7 +1200,10 @@ impl NodeService {
     fn send_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let data = block.into_buffer()?;
-        self.network.publish(&SEALED_BLOCK_TOPIC, data)?;
+        self.outgoing.push(NodeOutgoingEvent::Publish {
+            topic: SEALED_BLOCK_TOPIC.to_string(),
+            data: data.clone(),
+        });
         match block {
             Block::MacroBlock(ref block) => {
                 sinfo!(
@@ -1419,15 +1250,13 @@ impl NodeService {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
-            let (tx, rx) = oneshot::channel::<Vec<u8>>();
-            std::mem::replace(block_timer, MicroBlockTimer::Propose(rx));
-            let solver = self.chain.vdf_solver();
-            let solver = move || {
-                let solution = solver();
-                tx.send(solution).ok(); // ignore errors.
-            };
-            // Spawn a background thread to solve VDF puzzle.
-            thread::spawn(solver);
+            std::mem::replace(block_timer, MicroBlockTimer::Propose);
+            self.outgoing
+                .push(NodeOutgoingEvent::MicroBlockProposeTimer {
+                    random: self.chain.last_random(),
+                    vdf: self.chain.vdf(),
+                    difficulty: self.chain.difficulty(),
+                });
         } else {
             sinfo!(self, "I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
@@ -1437,14 +1266,12 @@ impl NodeService {
                   leader);
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
-            let deadline = clock::now() + self.cfg.micro_block_timeout;
-            std::mem::replace(
-                block_timer,
-                MicroBlockTimer::ViewChange(Delay::new(deadline)),
-            );
+            self.outgoing
+                .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+                    self.cfg.micro_block_timeout,
+                ));
+            std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
         };
-
-        task::current().notify();
     }
 
     /// Called when a leader for the next macro block has changed.
@@ -1473,8 +1300,11 @@ impl NodeService {
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             // Consensus may have locked proposal.
             if consensus.should_propose() {
-                let deadline = clock::now();
-                *block_timer = MacroBlockTimer::Propose(Delay::new(deadline));
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimer(Duration::new(
+                        0, 0,
+                    )));
+                *block_timer = MacroBlockTimer::Propose;
             } else {
                 *block_timer = MacroBlockTimer::None;
             }
@@ -1489,24 +1319,19 @@ impl NodeService {
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
             let relevant_round = 1 + consensus.round();
-            let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-            *block_timer = MacroBlockTimer::ViewChange(Delay::new(deadline));
+            self.outgoing
+                .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
+                    self.cfg.macro_block_timeout * relevant_round,
+                ));
+            *block_timer = MacroBlockTimer::ViewChange;
         }
-
-        task::current().notify();
     }
 
     /// Called when facilitator is changed.
     fn on_facilitator_changed(&mut self) {
-        let facilitator = self.chain.facilitator();
-        if facilitator == &self.network_pkey {
-            sinfo!(self, "I am facilitator");
-            let txpool_service = TransactionPoolService::new(self.network.clone());
-            self.txpool_service = Some(txpool_service);
-        } else {
-            sinfo!(self, "Facilitator is {}", facilitator);
-            self.txpool_service = None;
-        }
+        let facilitator = self.chain.facilitator().clone();
+        self.outgoing
+            .push(NodeOutgoingEvent::FacilitatorChanged { facilitator });
     }
 
     ///
@@ -1627,14 +1452,14 @@ impl NodeService {
                 epoch,
                 &block_hash
             );
-            let start_clock = clock::now();
+            let start_clock = Instant::now();
             let r = self.chain.validate_proposed_macro_block(
                 view_change,
                 block_hash,
                 &block_proposal.header,
                 &block_proposal.transactions,
             );
-            let duration = clock::now().duration_since(start_clock);
+            let duration = Instant::now().duration_since(start_clock);
             let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
             metrics::MACRO_BLOCK_VALIDATE_TIME.set(duration);
             metrics::MACRO_BLOCK_VALIDATE_TIME_HG.observe(duration);
@@ -1671,9 +1496,10 @@ impl NodeService {
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
             let data = msg.into_buffer().expect("Failed to serialize");
-            self.network
-                .publish(&CONSENSUS_TOPIC, data)
-                .expect("Connected");
+            self.outgoing.push(NodeOutgoingEvent::Publish {
+                topic: CONSENSUS_TOPIC.to_string(),
+                data,
+            });
         }
     }
 
@@ -1704,20 +1530,17 @@ impl NodeService {
 
         // Set view_change timer.
         let relevant_round = 1 + consensus.round();
-        let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-        std::mem::replace(
-            block_timer,
-            MacroBlockTimer::ViewChange(Delay::new(deadline)),
-        );
-        task::current().notify();
-
+        let duration = relevant_round * self.cfg.macro_block_timeout;
+        self.outgoing
+            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
+        std::mem::replace(block_timer, MacroBlockTimer::ViewChange);
         sdebug!(
             self,
             "Creating a new macro block proposal: epoch={}, view_change={}",
             self.chain.epoch(),
             consensus.round()
         );
-        let start_clock = clock::now();
+        let start_clock = Instant::now();
 
         // Propose a new block.
         let recipient_pkey = self
@@ -1740,7 +1563,7 @@ impl NodeService {
             transactions,
         };
 
-        let duration = clock::now().duration_since(start_clock);
+        let duration = Instant::now().duration_since(start_clock);
         let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
         metrics::MACRO_BLOCK_CREATE_TIME.set(duration);
         metrics::MACRO_BLOCK_CREATE_TIME_HG.observe(duration);
@@ -1761,7 +1584,9 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_macro_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        assert!(clock::now().duration_since(self.last_block_clock) >= self.cfg.macro_block_timeout);
+        assert!(
+            Instant::now().duration_since(self.last_block_clock) >= self.cfg.macro_block_timeout
+        );
 
         // Check that a block has been committed but haven't send by the leader.
         let (consensus, block_timer, autocommit) = match &mut self.validation {
@@ -1797,8 +1622,10 @@ impl NodeService {
                     leader.0
                 );
                 let relevant_round = 1 + consensus.round();
-                let deadline = clock::now() + relevant_round * self.cfg.macro_block_timeout;
-                *block_timer = MacroBlockTimer::ViewChange(Delay::new(deadline));
+                let duration = relevant_round * self.cfg.macro_block_timeout;
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
+                *block_timer = MacroBlockTimer::ViewChange;
                 return Ok(());
             }
 
@@ -1877,7 +1704,9 @@ impl NodeService {
                     "Received an invalid view_change message: view_change={}, validator={}, error={}",
                     msg.chain.view_change, validator_pkey, e
                 );
-                self.request_history_from(validator_pkey, "invalid view change")?;
+                self.outgoing.push(NodeOutgoingEvent::RequestBlocksFrom {
+                    from: validator_pkey,
+                });
             }
             Err(e) => return Err(e.into()),
         }
@@ -1887,7 +1716,7 @@ impl NodeService {
 
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
-        let elapsed = clock::now().duration_since(self.last_block_clock);
+        let elapsed = Instant::now().duration_since(self.last_block_clock);
         assert!(elapsed >= self.cfg.micro_block_timeout);
         let leader = self.chain.leader();
         swarn!(
@@ -1909,18 +1738,18 @@ impl NodeService {
         };
 
         // Update timer.
-        let deadline = clock::now() + self.cfg.micro_block_timeout;
-        std::mem::replace(
-            block_timer,
-            MicroBlockTimer::ViewChange(Delay::new(deadline)),
-        );
-        task::current().notify();
+        let duration = self.cfg.micro_block_timeout;
+        self.outgoing
+            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(duration));
+        std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
 
         // Send a view_change message.
         let chain_info = ChainInfo::from_blockchain(&self.chain);
         let msg = view_change_collector.handle_timeout(chain_info);
-        self.network
-            .publish(VIEW_CHANGE_TOPIC, msg.into_buffer()?)?;
+        self.outgoing.push(NodeOutgoingEvent::Publish {
+            topic: VIEW_CHANGE_TOPIC.to_string(),
+            data: msg.into_buffer()?,
+        });
         metrics::MICRO_BLOCK_VIEW_CHANGES.inc();
         sdebug!(
             self,
@@ -1952,8 +1781,10 @@ impl NodeService {
                 pkey: self.network_pkey,
             };
 
-            self.network
-                .publish(VIEW_CHANGE_PROOFS_TOPIC, proof.into_buffer()?)?;
+            self.outgoing.push(NodeOutgoingEvent::Publish {
+                topic: VIEW_CHANGE_PROOFS_TOPIC.to_string(),
+                data: proof.into_buffer()?,
+            });
         }
         self.on_status_changed();
 
@@ -1984,7 +1815,7 @@ impl NodeService {
             view_change,
             previous
         );
-        let start_clock = clock::now();
+        let start_clock = Instant::now();
 
         for (cheater, proof) in &self.cheating_proofs {
             // the cheater was already punished, so we keep proofs for rollback case,
@@ -2026,7 +1857,7 @@ impl NodeService {
         // Sign block.
         block.sign(&self.network_skey, &self.network_pkey);
 
-        let duration = clock::now().duration_since(start_clock);
+        let duration = Instant::now().duration_since(start_clock);
         let duration = (duration.as_secs() as f64) + (duration.subsec_nanos() as f64) * 1e-9;
         metrics::MICRO_BLOCK_CREATE_TIME.set(duration);
         metrics::MICRO_BLOCK_CREATE_TIME_HG.observe(duration);
@@ -2143,393 +1974,255 @@ impl NodeService {
         let tx = PaymentTransaction::new(&secret_key, &inputs, &outputs, &outputs_gamma, fee)?;
         Ok(tx.into())
     }
-}
 
-// Event loop.
-impl Future for NodeService {
-    type Item = ();
-    type Error = ();
+    /////////////////////////////////////////////////////////////////////////////////////////////////
+    // Event Handling
+    /////////////////////////////////////////////////////////////////////////////////////////////////
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let result = match &mut self.validation {
-            MicroBlockAuditor
-            | MicroBlockValidator {
-                block_timer: MicroBlockTimer::None,
-                ..
-            }
-            | MacroBlockAuditor
-            | MacroBlockValidator {
-                block_timer: MacroBlockTimer::None,
-                ..
-            } => Ok(()),
-            MicroBlockValidator {
-                block_timer: MicroBlockTimer::Propose(solver),
-                ..
-            } => match solver.poll().unwrap() {
-                Async::Ready(solution) => self.create_micro_block(solution),
-                Async::NotReady => Ok(()),
-            },
-            MicroBlockValidator {
-                block_timer: MicroBlockTimer::ViewChange(timer),
-                ..
-            } => match timer.poll().unwrap() {
-                Async::Ready(()) => self.handle_micro_block_viewchange_timer(),
-                Async::NotReady => Ok(()),
-            },
-            MacroBlockValidator {
-                block_timer: MacroBlockTimer::Propose(timer),
-                ..
-            } => match timer.poll().unwrap() {
-                Async::Ready(()) => self.propose_macro_block(),
-                Async::NotReady => Ok(()),
-            },
-            MacroBlockValidator {
-                block_timer: MacroBlockTimer::ViewChange(timer),
-                ..
-            } => match timer.poll().unwrap() {
-                Async::Ready(()) => self.handle_macro_block_viewchange_timer(),
-                Async::NotReady => Ok(()),
-            },
-        };
-        if let Err(e) = result {
-            serror!(self, "Error: {}", e);
-        }
-
-        loop {
-            match self.check_sync.poll() {
-                Ok(Async::Ready(Some(_))) => {
-                    if !self.chain.is_synchronized() {
-                        self.on_status_changed();
+    fn handle_event(&mut self, event: NodeIncomingEvent) {
+        let result: Result<(), Error> = match event {
+            NodeIncomingEvent::Request { request, tx } => {
+                strace!(self, "=> {:?}", request);
+                let response = match request {
+                    NodeRequest::ElectionInfo {} => {
+                        NodeResponse::ElectionInfo(self.chain.election_info())
                     }
-                }
-                Ok(Async::Ready(None)) => {
-                    serror!(self, "Error during process sync status");
-                    return Ok(Async::Ready(()));
-                }
-                Err(e) => {
-                    serror!(self, "Error: {}", e);
-                    return Err(());
-                }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-            }
-        }
-
-        // Poll chain readers.
-        let mut i = 0;
-        while i < self.chain_readers.len() {
-            match self.chain_readers[i].poll(&self.chain) {
-                Ok(Async::Ready(())) => {
-                    // Synchronized with node, convert into a subscription.
-                    let subscriber = self.chain_readers.swap_remove(i);
-                    self.chain_subscribers.push(subscriber.tx);
-                }
-                Ok(Async::NotReady) => {
-                    i += 1;
-                }
-                Err(_e) => {
-                    self.chain_readers.swap_remove(i);
-                }
-            }
-        }
-
-        if let Some(ref mut txpool_service) = &mut self.txpool_service {
-            match txpool_service.poll().unwrap() {
-                Async::Ready(()) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => {}
-            };
-        }
-        // Poll internal events.
-        loop {
-            match self.events.poll().expect("all errors are already handled") {
-                Async::Ready(Some(event)) => {
-                    let result: Result<(), Error> = match event {
-                        NodeMessage::Request { request, tx } => {
-                            strace!(self, "=> {:?}", request);
-                            let response = match request {
-                                NodeRequest::ElectionInfo {} => {
-                                    NodeResponse::ElectionInfo(self.chain.election_info())
+                    NodeRequest::ChainName {} => NodeResponse::ChainName {
+                        name: self.chain_name.clone(),
+                    },
+                    NodeRequest::EscrowInfo {} => {
+                        NodeResponse::EscrowInfo(self.chain.escrow_info())
+                    }
+                    NodeRequest::PopMicroBlock {} => match self.handle_pop_micro_block() {
+                        Ok(()) => NodeResponse::MicroBlockPopped,
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                    },
+                    NodeRequest::OutputsList { utxos } => {
+                        let mut outputs = Vec::new();
+                        let mut error = None;
+                        for item in utxos {
+                            match self.chain.output_by_hash(&item) {
+                                Ok(Some(item)) => outputs.push(item),
+                                Ok(None) => {
+                                    error = format!("Output was not found hash={}", item).into();
+                                    break;
                                 }
-                                NodeRequest::ChainName {} => NodeResponse::ChainName {
-                                    name: self.chain_name.clone(),
-                                },
-                                NodeRequest::EscrowInfo {} => {
-                                    NodeResponse::EscrowInfo(self.chain.escrow_info())
+                                Err(e) => {
+                                    error = e.to_string().into();
+                                    break;
                                 }
-                                NodeRequest::ReplicationInfo {} => {
-                                    NodeResponse::ReplicationInfo(self.replication.info())
-                                }
-                                NodeRequest::PopMicroBlock {} => {
-                                    match self.handle_pop_micro_block() {
-                                        Ok(()) => NodeResponse::MicroBlockPopped,
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::OutputsList { utxos } => {
-                                    let mut outputs = Vec::new();
-                                    let mut error = None;
-                                    for item in utxos {
-                                        match self.chain.output_by_hash(&item) {
-                                            Ok(Some(item)) => outputs.push(item),
-                                            Ok(None) => {
-                                                error =
-                                                    format!("Output was not found hash={}", item)
-                                                        .into();
-                                                break;
-                                            }
-                                            Err(e) => {
-                                                error = e.to_string().into();
-                                                break;
-                                            }
-                                        }
-                                    }
-                                    if let Some(error) = error {
-                                        NodeResponse::Error { error }
-                                    } else {
-                                        NodeResponse::OutputsList { utxos: outputs }
-                                    }
-                                }
-                                NodeRequest::CreateRawTransaction {
+                            }
+                        }
+                        if let Some(error) = error {
+                            NodeResponse::Error { error }
+                        } else {
+                            NodeResponse::OutputsList { utxos: outputs }
+                        }
+                    }
+                    NodeRequest::CreateRawTransaction {
+                        txins,
+                        txouts,
+                        secret_key,
+                        fee,
+                        unspent_list,
+                    } => {
+                        match scc::SecretKey::try_from_bytes(&secret_key)
+                            .map_err(Into::into)
+                            .and_then(|secret_key| {
+                                self.handle_create_raw_tx(
                                     txins,
                                     txouts,
                                     secret_key,
                                     fee,
                                     unspent_list,
-                                } => {
-                                    match scc::SecretKey::try_from_bytes(&secret_key)
-                                        .map_err(Into::into)
-                                        .and_then(|secret_key| {
-                                            self.handle_create_raw_tx(
-                                                txins,
-                                                txouts,
-                                                secret_key,
-                                                fee,
-                                                unspent_list,
-                                            )
-                                        }) {
-                                        Ok(tx) => {
-                                            let txouts =
-                                                tx.txouts().iter().map(Hash::digest).collect();
-                                            NodeResponse::CreateRawTransaction { txouts, data: tx }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: e.to_string(),
-                                        },
-                                    }
-                                }
-                                NodeRequest::BroadcastTransaction { data: tx } => {
-                                    let hash = Hash::digest(&tx);
-                                    match self.handle_add_tx(tx) {
-                                        Ok(status) => {
-                                            NodeResponse::BroadcastTransaction { hash, status }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: e.to_string(),
-                                        },
-                                    }
-                                }
-                                NodeRequest::ValidateCertificate {
-                                    output_hash,
-                                    spender,
-                                    recipient,
-                                    rvalue,
-                                } => match self
-                                    .chain
-                                    .historic_output_by_hash_with_proof(&output_hash)
-                                {
-                                    Err(e) => NodeResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                    Ok(None) => NodeResponse::Error {
-                                        error: format!("Missing UTXO: {}", output_hash),
-                                    },
-                                    Ok(Some(OutputRecovery {
-                                        output: Output::PaymentOutput(output),
-                                        epoch,
-                                        block_hash,
-                                        is_final,
-                                        timestamp,
-                                    })) => {
-                                        match output
-                                            .validate_certificate(&spender, &recipient, &rvalue)
-                                        {
-                                            Ok(amount) => NodeResponse::CertificateValid {
-                                                epoch,
-                                                block_hash,
-                                                is_final,
-                                                timestamp,
-                                                amount,
-                                            },
-                                            Err(e) => NodeResponse::Error {
-                                                error: format!("{}", e),
-                                            },
-                                        }
-                                    }
-                                    Ok(Some(_)) => NodeResponse::Error {
-                                        error: format!("Invalid UTXO type: {}", output_hash),
-                                    },
-                                },
-                                NodeRequest::EnableRestaking {} => {
-                                    if self.is_restaking_enabled {
-                                        NodeResponse::Error {
-                                            error: format!("Re-staking is already enabled"),
-                                        }
-                                    } else {
-                                        sinfo!(self, "Re-staking enabled");
-                                        self.is_restaking_enabled = true;
-                                        NodeResponse::RestakingEnabled
-                                    }
-                                }
-                                NodeRequest::DisableRestaking {} => {
-                                    if !self.is_restaking_enabled {
-                                        NodeResponse::Error {
-                                            error: format!("Re-staking is already disabled"),
-                                        }
-                                    } else {
-                                        sinfo!(self, "Re-staking disabled");
-                                        self.is_restaking_enabled = false;
-                                        NodeResponse::RestakingDisabled
-                                    }
-                                }
-                                NodeRequest::ChangeUpstream {} => {
-                                    self.replication.change_upstream();
-                                    NodeResponse::UpstreamChanged
-                                }
-                                NodeRequest::StatusInfo {} => {
-                                    let status = self.chain.status();
-                                    NodeResponse::StatusInfo(status)
-                                }
-                                NodeRequest::ValidatorsInfo {} => {
-                                    let epoch = self.chain.epoch();
-                                    let offset = self.chain.offset();
-                                    let view_change = self.chain.view_change();
-                                    match self.chain.epoch_info(epoch - 1) {
-                                        Ok(info) => {
-                                            let validators = info.unwrap().validators;
-                                            NodeResponse::ValidatorsInfo {
-                                                epoch,
-                                                offset,
-                                                view_change,
-                                                validators,
-                                            }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::SubscribeStatus {} => {
-                                    match self.handle_subscription_to_status() {
-                                        Ok(rx) => {
-                                            let status = self.chain.status();
-                                            NodeResponse::SubscribedStatus {
-                                                status,
-                                                rx: Some(rx),
-                                            }
-                                        }
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::MacroBlockInfo { epoch } => {
-                                    match self.handle_macro_block_info(epoch) {
-                                        Ok(block_info) => NodeResponse::MacroBlockInfo(block_info),
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::MicroBlockInfo { epoch, offset } => {
-                                    match self.handle_micro_block_info(epoch, offset) {
-                                        Ok(block_info) => NodeResponse::MicroBlockInfo(block_info),
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                                NodeRequest::SubscribeChain { epoch, offset } => {
-                                    match self.handle_subscription_to_chain(epoch, offset) {
-                                        Ok(rx) => NodeResponse::SubscribedChain {
-                                            current_epoch: self.chain.epoch(),
-                                            current_offset: self.chain.offset(),
-                                            rx: Some(rx),
-                                        },
-                                        Err(e) => NodeResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    }
-                                }
-                            };
-                            strace!(self, "<= {:?}", response);
-                            tx.send(response).ok(); // ignore errors.
-                            Ok(())
-                        }
-                        NodeMessage::Transaction(msg) => {
-                            match Transaction::from_buffer(&msg)
-                                .and_then(|msg| self.handle_transaction(msg))
-                            {
-                                Ok(()) => Ok(()),
-                                Err(e) => match e.downcast_ref::<NodeTransactionError>() {
-                                    Some(NodeTransactionError::NotSynchronized(_)) => Ok(()),
-                                    _ => Err(e),
-                                },
+                                )
+                            }) {
+                            Ok(tx) => {
+                                let txouts = tx.txouts().iter().map(Hash::digest).collect();
+                                NodeResponse::CreateRawTransaction { txouts, data: tx }
                             }
+                            Err(e) => NodeResponse::Error {
+                                error: e.to_string(),
+                            },
                         }
-                        NodeMessage::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
-                            .and_then(|msg| self.handle_consensus_message(msg)),
-                        NodeMessage::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
-                            .and_then(|msg| self.handle_view_change_message(msg)),
-                        NodeMessage::ViewChangeProof(msg) => {
-                            AddressedViewChangeProof::from_buffer(&msg).and_then(|proof| {
-                                self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
-                            })
-                        }
-                        NodeMessage::ViewChangeProofMessage(msg) => {
-                            SealedViewChangeProof::from_buffer(&msg.data)
-                                .and_then(|proof| self.handle_view_change_direct(proof, msg.from))
-                        }
-                        NodeMessage::Block(msg) => {
-                            Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
-                        }
-                        NodeMessage::ChainLoaderMessage(msg) => {
-                            ChainLoaderMessage::from_buffer(&msg.data)
-                                .and_then(|data| self.handle_chain_loader_message(msg.from, data))
-                        }
-                    };
-                    if let Err(e) = result {
-                        serror!(self, "Error: {}", e);
                     }
-                }
-                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => break,
-            }
-        }
-        // Replication
-        loop {
-            let micro_blocks_in_epoch = self.chain.cfg().micro_blocks_in_epoch;
-            let block_reader: &dyn BlockReader = &self.chain;
-            match self.replication.poll(
-                self.chain.epoch(),
-                self.chain.offset(),
-                micro_blocks_in_epoch,
-                block_reader,
-            ) {
-                Async::Ready(Some(ReplicationRow::LightBlock(_block))) => {
-                    panic!("Received the light block from the replication");
-                }
-                Async::Ready(Some(ReplicationRow::Block(block))) => {
-                    if let Err(e) = self.handle_block(block) {
-                        serror!(self, "Invalid block received from replication: {}", e);
+                    NodeRequest::BroadcastTransaction { data: tx } => {
+                        let hash = Hash::digest(&tx);
+                        match self.handle_add_tx(tx) {
+                            Ok(status) => NodeResponse::BroadcastTransaction { hash, status },
+                            Err(e) => NodeResponse::Error {
+                                error: e.to_string(),
+                            },
+                        }
                     }
-                }
-                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => break,
+                    NodeRequest::ValidateCertificate {
+                        output_hash,
+                        spender,
+                        recipient,
+                        rvalue,
+                    } => match self.chain.historic_output_by_hash_with_proof(&output_hash) {
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                        Ok(None) => NodeResponse::Error {
+                            error: format!("Missing UTXO: {}", output_hash),
+                        },
+                        Ok(Some(OutputRecovery {
+                            output: Output::PaymentOutput(output),
+                            epoch,
+                            block_hash,
+                            is_final,
+                            timestamp,
+                        })) => match output.validate_certificate(&spender, &recipient, &rvalue) {
+                            Ok(amount) => NodeResponse::CertificateValid {
+                                epoch,
+                                block_hash,
+                                is_final,
+                                timestamp,
+                                amount,
+                            },
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        },
+                        Ok(Some(_)) => NodeResponse::Error {
+                            error: format!("Invalid UTXO type: {}", output_hash),
+                        },
+                    },
+                    NodeRequest::EnableRestaking {} => {
+                        if self.is_restaking_enabled {
+                            NodeResponse::Error {
+                                error: format!("Re-staking is already enabled"),
+                            }
+                        } else {
+                            sinfo!(self, "Re-staking enabled");
+                            self.is_restaking_enabled = true;
+                            NodeResponse::RestakingEnabled
+                        }
+                    }
+                    NodeRequest::DisableRestaking {} => {
+                        if !self.is_restaking_enabled {
+                            NodeResponse::Error {
+                                error: format!("Re-staking is already disabled"),
+                            }
+                        } else {
+                            sinfo!(self, "Re-staking disabled");
+                            self.is_restaking_enabled = false;
+                            NodeResponse::RestakingDisabled
+                        }
+                    }
+                    NodeRequest::StatusInfo {} => {
+                        let status = self.chain.status();
+                        NodeResponse::StatusInfo(status)
+                    }
+                    NodeRequest::ValidatorsInfo {} => {
+                        let epoch = self.chain.epoch();
+                        let offset = self.chain.offset();
+                        let view_change = self.chain.view_change();
+                        match self.chain.epoch_info(epoch - 1) {
+                            Ok(info) => {
+                                let validators = info.unwrap().validators;
+                                NodeResponse::ValidatorsInfo {
+                                    epoch,
+                                    offset,
+                                    view_change,
+                                    validators,
+                                }
+                            }
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+
+                    NodeRequest::MacroBlockInfo { epoch } => {
+                        match self.handle_macro_block_info(epoch) {
+                            Ok(block_info) => NodeResponse::MacroBlockInfo(block_info),
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                    NodeRequest::MicroBlockInfo { epoch, offset } => {
+                        match self.handle_micro_block_info(epoch, offset) {
+                            Ok(block_info) => NodeResponse::MicroBlockInfo(block_info),
+                            Err(e) => NodeResponse::Error {
+                                error: format!("{}", e),
+                            },
+                        }
+                    }
+                    NodeRequest::ReplicationInfo {} => {
+                        unreachable!("Must be handled by NodeService");
+                    }
+                    NodeRequest::ChangeUpstream {} => {
+                        unreachable!("Must be handled by NodeService");
+                    }
+                    NodeRequest::SubscribeStatus { .. } => {
+                        unreachable!("Must be handled by NodeService");
+                    }
+                    NodeRequest::SubscribeChain { .. } => {
+                        unreachable!("Must be handled by NodeService");
+                    }
+                };
+                strace!(self, "<= {:?}", response);
+                tx.send(response).ok(); // ignore errors.
+                Ok(())
             }
+            NodeIncomingEvent::Transaction(msg) => {
+                match Transaction::from_buffer(&msg).and_then(|msg| self.handle_transaction(msg)) {
+                    Ok(()) => Ok(()),
+                    Err(e) => match e.downcast_ref::<NodeTransactionError>() {
+                        Some(NodeTransactionError::NotSynchronized(_)) => Ok(()),
+                        _ => Err(e),
+                    },
+                }
+            }
+            NodeIncomingEvent::Consensus(msg) => ConsensusMessage::from_buffer(&msg)
+                .and_then(|msg| self.handle_consensus_message(msg)),
+            NodeIncomingEvent::ViewChangeMessage(msg) => ViewChangeMessage::from_buffer(&msg)
+                .and_then(|msg| self.handle_view_change_message(msg)),
+            NodeIncomingEvent::ViewChangeProof(msg) => AddressedViewChangeProof::from_buffer(&msg)
+                .and_then(|proof| {
+                    self.handle_view_change_direct(proof.view_change_proof, proof.pkey)
+                }),
+            NodeIncomingEvent::ViewChangeProofMessage { from, data } => {
+                SealedViewChangeProof::from_buffer(&data)
+                    .and_then(|proof| self.handle_view_change_direct(proof, from))
+            }
+            NodeIncomingEvent::Block(msg) => {
+                Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
+            }
+            NodeIncomingEvent::DecodedBlock(msg) => self.handle_block(msg),
+            NodeIncomingEvent::CheckSyncTimer => {
+                if !self.chain.is_synchronized() {
+                    self.on_status_changed();
+                }
+                Ok(())
+            }
+            NodeIncomingEvent::MacroBlockProposeTimer => {
+                //
+                self.propose_macro_block()
+            }
+            NodeIncomingEvent::MacroBlockViewChangeTimer => {
+                //
+                self.handle_macro_block_viewchange_timer()
+            }
+            NodeIncomingEvent::MicroBlockProposeTimer(solution) => {
+                //
+                self.create_micro_block(solution)
+            }
+            NodeIncomingEvent::MicroBlockViewChangeTimer => {
+                //
+                self.handle_micro_block_viewchange_timer()
+            }
+            NodeIncomingEvent::ChainLoaderMessage { from: _, data: _ } => {
+                unreachable!("Must be handled by NodeService");
+            }
+        };
+        if let Err(e) = result {
+            serror!(self, "Error: {}", e);
         }
-        Ok(Async::NotReady)
     }
 }

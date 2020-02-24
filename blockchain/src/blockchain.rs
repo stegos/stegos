@@ -1016,6 +1016,11 @@ impl Blockchain {
         move || vdf.solve(&challenge, difficulty)
     }
 
+    /// Return Verifiable Delay Solver.
+    pub fn vdf(&self) -> VDF {
+        self.vdf.clone()
+    }
+
     /// A shortcut for self.escrow.validate_stakes().
     #[inline]
     pub fn validate_stakes<'a, OutputIter>(

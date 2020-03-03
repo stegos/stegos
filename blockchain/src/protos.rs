@@ -545,6 +545,22 @@ impl ProtoConvert for Output {
     }
 }
 
+impl ProtoConvert for PublicOutputKey {
+    type Proto = blockchain::PublicOutputKey;
+    fn into_proto(&self) -> Self::Proto {
+        let mut proto = blockchain::PublicOutputKey::new();
+        proto.set_output(self.output.into_proto());
+        proto.set_pk(self.pk.into_proto());
+        proto
+    }
+
+    fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
+        let pk = PublicKey::from_proto(proto.get_pk())?;
+        let output = Hash::from_proto(proto.get_output())?;
+        Ok(PublicOutputKey { pk, output })
+    }
+}
+
 impl ProtoConvert for CoinbaseTransaction {
     type Proto = blockchain::CoinbaseTransaction;
     fn into_proto(&self) -> Self::Proto {

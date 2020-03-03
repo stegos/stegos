@@ -334,6 +334,7 @@ impl ConsoleService {
         eprintln!("show keys - print keys");
         eprintln!("show balance - print balance");
         eprintln!("show utxo - print unspent outputs");
+        eprintln!("show public-info - print publick info known for specific public key public key");
         eprintln!("show history [STARTING DATE] - print history since date");
         eprintln!("show election - show consensus state");
         eprintln!("show escrow - print escrow");
@@ -936,6 +937,14 @@ impl ConsoleService {
             };
             let request = NodeRequest::SubscribeChain { epoch, offset };
             self.send_node_request(request)?
+        } else if msg.starts_with("show public-info") {
+            if let Ok(pk) = scc::PublicKey::from_str(&msg[17..].trim()) {
+                let request = NodeRequest::PublicPaymentInfo { pkey: pk };
+                self.send_node_request(request)?
+            } else {
+                eprintln!("Failed to parse {} as public key ", &msg[17..]);
+                return Ok(true);
+            }
         } else if msg.starts_with("show status") {
             let request = NodeRequest::StatusInfo {};
             self.send_node_request(request)?

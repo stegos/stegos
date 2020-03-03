@@ -2281,6 +2281,10 @@ impl Future for NodeService {
                                 NodeRequest::ChainName {} => NodeResponse::ChainName {
                                     name: self.chain_name.clone(),
                                 },
+                                NodeRequest::PublicPaymentInfo { pkey } => {
+                                    let info = self.chain.get_public_outputs_info(pkey);
+                                    NodeResponse::PublicPaymentInfo { info }
+                                }
                                 NodeRequest::EscrowInfo {} => {
                                     NodeResponse::EscrowInfo(self.chain.escrow_info())
                                 }

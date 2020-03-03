@@ -11,6 +11,11 @@ message PaymentPayloadData {
     }
 }
 
+message PublicOutputKey {
+    stegos.crypto.PublicKey pk = 1;
+    stegos.crypto.Hash output = 2;
+}
+
 message PaymentOutput {
     stegos.crypto.PublicKey recipient = 1;
     stegos.crypto.BulletProof proof = 2;

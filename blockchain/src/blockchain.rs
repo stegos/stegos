@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use super::api;
 use crate::api::StatusInfo;
 use crate::awards::{Awards, ValidatorAwardState};
 use crate::block::*;
@@ -198,6 +199,7 @@ type OutputByHashMap = MultiVersionedMap<Hash, OutputKey, LSN>;
 type BalanceMap = MultiVersionedMap<(), Balance, LSN>;
 
 type ElectionResultList = MultiVersionedMap<(), ElectionResult, LSN>;
+type PublicOutputs = MultiVersionedMap<PublicOutputKey, i64, LSN>;
 type ValidatorsActivity = MultiVersionedMap<pbc::PublicKey, ValidatorAwardState, LSN>;
 
 #[derive(Eq, PartialEq, Debug, Clone)]
@@ -209,9 +211,17 @@ pub struct OutputRecovery {
     pub timestamp: Timestamp,
 }
 
+#[derive(Ord, PartialOrd, Eq, PartialEq, Debug, Clone, Copy)]
+pub struct PublicOutputKey {
+    pub pk: scc::PublicKey,
+    pub output: Hash,
+}
+
 // colon families.
 const BLOCK_BY_HASH: &'static str = "block_by_hash";
 const OUTPUT_BY_HASH: &'static str = "output_by_hash";
+// Map (Pk, Hash) -> u64(amount)
+const PUBLIC_OUTPUTS: &'static str = "public_outputs";
 const ESCROW: &'static str = "escrow";
 
 const SERVICE_AWARD: &'static str = "service_award";
@@ -225,13 +235,22 @@ const COLON_FAMILIES: &[&'static str] = &[
     SERVICE_AWARD,
     EPOCH_INFOS,
     META,
+    PUBLIC_OUTPUTS,
 ];
 
 /// Meta table indexes
 const BALANCE: &'static str = "balance";
+const SNAPSHOT_VERSION: &'static str = "version";
 const EPOCH: &'static str = "epoch";
 const ELECTION_RESULT: &'static str = "election_result";
 const AWARDS: &'static str = "awards";
+
+// Start snapshot version.
+const VERSION_INIT: u64 = 0;
+// Alias to last known verion, used when node fully recovered.
+const VERSION_LAST: u64 = VERSION_ADD_PUBLIC_ACCOUNTS;
+// Intermediate versions.
+const VERSION_ADD_PUBLIC_ACCOUNTS: u64 = 1;
 
 /// The blockchain database.
 pub struct Blockchain {
@@ -294,6 +313,9 @@ pub struct Blockchain {
 
     // Block ache
     cache: VecDeque<Block>,
+    version: u64,
+
+    public_outputs: PublicOutputs,
 }
 
 impl Blockchain {
@@ -350,6 +372,11 @@ impl Blockchain {
         let epoch_activity = MultiVersionedMap::new();
         // Block cache.
         let cache = VecDeque::with_capacity(cfg.stake_epochs as usize + 1);
+        // Init version as LAST, so in case of full recover, or start from genesis blockchain will support all features.
+        // At fast recover version should be recovered from snapshot.
+        let version = VERSION_LAST;
+        // Public Outputs accounts
+        let public_outputs = MultiVersionedMap::new();
 
         let mut blockchain = Blockchain {
             cfg,
@@ -373,6 +400,8 @@ impl Blockchain {
             awards,
             epoch_activity,
             cache,
+            version,
+            public_outputs,
         };
 
         blockchain.init(genesis, timestamp, consistency_check)?;
@@ -424,10 +453,25 @@ impl Blockchain {
         }
 
         // Awards should be present at every snapshot.
-        // Early return if "AWARDS" metadata was not found. (go to recovery)
+        // Early return if "AWARDS" metadata was not found. (go to full scan recovery)
         if self.database.get_cf(cf_meta, AWARDS.as_bytes())?.is_none() {
             debug!("Not found snapshot, fallback to disk loading");
             return Ok(false);
+        }
+
+        // Check snapshot version;
+        let version = self
+            .database
+            .get_cf(cf_meta, SNAPSHOT_VERSION)?
+            .map(|b| BigEndian::read_u64(&b))
+            .unwrap_or(VERSION_INIT);
+        self.version = version;
+
+        if self.version < VERSION_LAST {
+            error!(
+                "Found database with outdated version, some functional can work incorrectly, \
+                 start stegos with --recover flag, to update version."
+            );
         }
 
         let lsn: LSN = recover_meta!(EPOCH);
@@ -519,6 +563,27 @@ impl Blockchain {
             metrics::VALIDATOR_SLOTS_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
                 .set(*stake);
+        }
+        // Recover public_accounts index
+        if self.version >= VERSION_ADD_PUBLIC_ACCOUNTS {
+            let static_db: &'static rocksdb::DB = unsafe { std::mem::transmute(&self.database) };
+            let cf_public_outputs = self.database.cf_handle(PUBLIC_OUTPUTS).unwrap();
+            for (output, value) in static_db
+                .iterator_cf(cf_public_outputs, rocksdb::IteratorMode::Start)
+                .expect("Cannot get public outputs iter")
+                .map(|(k, v)| {
+                    (
+                        PublicOutputKey::from_buffer(&*k).expect("couldn't deserialize block."),
+                        BigEndian::read_i64(&v),
+                    )
+                })
+            {
+                assert!(
+                    self.public_outputs.insert(ub_lsn, output, value).is_none(),
+                    "No duplicates during recovery"
+                );
+            }
+            drop(static_db)
         }
 
         self.with_snapshot(|this, snapshot| {
@@ -1636,6 +1701,7 @@ impl Blockchain {
 
         let cf_block_by_hash = self.database.cf_handle(BLOCK_BY_HASH).unwrap();
         let cf_output_by_hash = self.database.cf_handle(OUTPUT_BY_HASH).unwrap();
+        let cf_public_outputs = self.database.cf_handle(PUBLIC_OUTPUTS).unwrap();
         let cf_escrow = self.database.cf_handle(ESCROW).unwrap();
         let cf_epoch_infos = self.database.cf_handle(EPOCH_INFOS).unwrap();
         let cf_meta = self.database.cf_handle(META).unwrap();
@@ -1670,6 +1736,26 @@ impl Blockchain {
             self.election_result(),
         )?;
         Self::write_meta(&mut batch, &cf_meta, AWARDS, &self.awards)?;
+        if self.version >= VERSION_ADD_PUBLIC_ACCOUNTS {
+            let diff = self.public_outputs.checkpoint();
+            trace!("Persist public accounts log");
+            for (key, value) in diff {
+                match value {
+                    Some(value) => {
+                        trace!("New insert {:?}={:?}", key, value);
+                        let key = key.into_buffer()?;
+                        let mut value_bytes = [0u8; 8];
+                        BigEndian::write_i64(&mut value_bytes, value);
+                        batch.put_cf(cf_public_outputs, &key, &value_bytes)?
+                    }
+                    None => {
+                        trace!("Remove {:?}", key);
+                        let key = key.into_buffer()?;
+                        batch.delete_cf(cf_public_outputs, &key)?
+                    }
+                }
+            }
+        }
 
         let validators = self
             .election_result()
@@ -1828,7 +1914,20 @@ impl Blockchain {
 
             match input {
                 Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(o) => {
+                    if self.version >= VERSION_ADD_PUBLIC_ACCOUNTS {
+                        let pk = o.recipient;
+                        let key = PublicOutputKey {
+                            pk,
+                            output: input_hash.clone(),
+                        };
+                        assert!(
+                            self.public_outputs.remove(lsn, &key).is_some(),
+                            "Should exist output on prune"
+                        );
+                        assert_eq!(self.public_outputs.current_lsn(), lsn);
+                    }
+                }
                 Output::StakeOutput(o) => {
                     self.escrow
                         .unstake(lsn, o.validator, input_hash.clone(), self.epoch);
@@ -1864,7 +1963,21 @@ impl Blockchain {
 
             match output {
                 Output::PaymentOutput(_o) => {}
-                Output::PublicPaymentOutput(_o) => {}
+                Output::PublicPaymentOutput(o) => {
+                    if self.version >= VERSION_ADD_PUBLIC_ACCOUNTS {
+                        let amount = o.amount;
+                        let pk = o.recipient;
+                        let key = PublicOutputKey {
+                            pk,
+                            output: output_hash.clone(),
+                        };
+                        assert!(
+                            self.public_outputs.insert(lsn, key, amount).is_none(),
+                            "Should be no output duplicates"
+                        );
+                        assert_eq!(self.public_outputs.current_lsn(), lsn);
+                    }
+                }
                 Output::StakeOutput(o) => {
                     self.escrow.stake(
                         lsn,
@@ -2261,6 +2374,35 @@ impl Blockchain {
         } else {
             let idx = epoch - lower_epoch;
             self.cache.get(idx as usize)
+        }
+    }
+
+    pub fn get_public_outputs_info(&self, pk: scc::PublicKey) -> api::PublicOutputsInfo {
+        let (hash_min, hash_max) = Hash::bounds();
+        let key_min = PublicOutputKey {
+            pk: pk.clone(),
+            output: hash_min,
+        };
+
+        let key_max = PublicOutputKey {
+            pk: pk.clone(),
+            output: hash_max,
+        };
+        let mut outputs = Vec::new();
+        let mut balance = 0;
+
+        for (&output, &amount) in self.public_outputs.range(&key_min..=&key_max) {
+            debug_assert_eq!(output.pk, pk);
+            outputs.push((output.output, amount));
+            balance += amount;
+        }
+
+        api::PublicOutputsInfo {
+            epoch: self.epoch,
+            offset: self.offset - 1,
+            outputs,
+            balance,
+            pkey: pk,
         }
     }
 }

@@ -64,6 +64,9 @@ pub enum NodeRequest {
     ReplicationInfo {},
     PopMicroblock {},
     ChainName {},
+    PublicPaymentInfo {
+        pkey: scc::PublicKey,
+    },
     BroadcastTransaction {
         #[serde(serialize_with = "serialize_protobuf_to_hex")]
         #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
@@ -122,6 +125,10 @@ pub enum NodeResponse {
     EscrowInfo(EscrowInfo),
     ReplicationInfo(ReplicationInfo),
     MicroblockPopped,
+    PublicPaymentInfo {
+        #[serde(flatten)]
+        info: stegos_blockchain::api::PublicOutputsInfo,
+    },
     ChainName {
         name: String,
     },

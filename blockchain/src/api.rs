@@ -27,7 +27,7 @@ use crate::transaction::{
 };
 use bit_vec::BitVec;
 use serde_derive::{Deserialize, Serialize};
-use stegos_crypto::{hash::Hash, pbc};
+use stegos_crypto::{hash::Hash, pbc, scc};
 
 /// Macro Block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,4 +249,13 @@ impl From<TransactionInfo> for Transaction {
     fn from(b: TransactionInfo) -> Transaction {
         b.tx.into()
     }
+}
+
+#[derive(Eq, Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PublicOutputsInfo {
+    pub epoch: u64,
+    pub offset: u32,
+    pub balance: i64,
+    pub outputs: Vec<(Hash, i64)>,
+    pub pkey: scc::PublicKey,
 }

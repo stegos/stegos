@@ -24,14 +24,17 @@
 use super::api::PeerInfo;
 use super::protos::{ReplicationRequest, ReplicationResponse};
 use crate::ReplicationRow;
-use futures::sync::mpsc;
-use futures::{task, Async, AsyncSink, Sink, Stream};
+use futures::channel::mpsc;
+use futures::{
+    task::{self, Context, Poll},
+    Sink, Stream, StreamExt,
+};
 use log::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock, MacroBlockHeader, MicroBlockHeader};
 use stegos_network::{Multiaddr, PeerId};
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::clock;
+use tokio::time::Instant;
 
 /// How long a peer can stay without network activity.
 const MAX_IDLE_DURATION: Duration = Duration::from_secs(60);
@@ -195,7 +198,7 @@ impl Peer {
         Peer::Registered {
             peer_id,
             multiaddr,
-            last_clock: clock::now(),
+            last_clock: Instant::now(),
         }
     }
 
@@ -220,7 +223,7 @@ impl Peer {
         let new_state = Peer::Connecting {
             peer_id,
             multiaddr,
-            last_clock: clock::now(),
+            last_clock: Instant::now(),
         };
         std::mem::replace(self, new_state);
     }
@@ -263,7 +266,7 @@ impl Peer {
                     peer_id,
                     multiaddr,
                     light,
-                    last_clock: clock::now(),
+                    last_clock: Instant::now(),
                     tx,
                     rx,
                 }
@@ -320,7 +323,7 @@ impl Peer {
                     multiaddr: multiaddr.clone(),
                     rx,
                     tx,
-                    last_clock: clock::now(),
+                    last_clock: Instant::now(),
                 };
                 std::mem::replace(self, new_state);
             }
@@ -348,7 +351,7 @@ impl Peer {
             } => PeerInfo::Discovered {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Connecting {
                 peer_id,
@@ -358,7 +361,7 @@ impl Peer {
             } => PeerInfo::Connecting {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Connected {
                 peer_id,
@@ -368,7 +371,7 @@ impl Peer {
             } => PeerInfo::Connected {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Receiving {
                 peer_id,
@@ -382,7 +385,7 @@ impl Peer {
             } => PeerInfo::Receiving {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
                 epoch: *epoch,
                 offset: *offset,
                 bytes_received: *bytes_received,
@@ -396,7 +399,7 @@ impl Peer {
             } => PeerInfo::Accepted {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Sending {
                 peer_id,
@@ -410,7 +413,7 @@ impl Peer {
             } => PeerInfo::Sending {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
                 epoch: *epoch,
                 offset: *offset,
                 bytes_sent: *bytes_sent,
@@ -425,7 +428,7 @@ impl Peer {
             } => PeerInfo::Failed {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.to_string(),
-                idle: clock::now().duration_since(*last_clock).into(),
+                idle: Instant::now().duration_since(*last_clock).into(),
                 error: format!("{}", error),
             },
         }
@@ -446,6 +449,7 @@ impl Peer {
     ///
     fn send_blocks<BlocksIter, I>(
         &mut self,
+        cx: &mut Context,
         blocks: BlocksIter,
         current_epoch: u64,
         current_offset: u32,
@@ -486,7 +490,7 @@ impl Peer {
                     bytes_sent,
                     blocks_sent
                 );
-                task::current().notify();
+                cx.waker().wake_by_ref();
                 break;
             }
             let (next_epoch, next_offset) = block.next_epoch_offset(micro_blocks_in_epoch);
@@ -494,8 +498,8 @@ impl Peer {
                 block.into_replication_response(current_epoch, current_offset);
             let response = response.into_buffer().unwrap();
             let response_len = response.len();
-            match tx.start_send(response) {
-                Ok(AsyncSink::Ready) => {
+            match tx.try_send(response) {
+                Ok(_) => {
                     *epoch = next_epoch;
                     *offset = next_offset;
                     bytes_sent += response_len as u64;
@@ -503,14 +507,14 @@ impl Peer {
                     blocks_sent += 1;
                     *total_blocks_sent += 1;
                 }
-                Ok(AsyncSink::NotReady(_response)) => {
+                Err(e) if e.is_full() => {
                     trace!(
                         "[{}] Not ready for writing: bytes={}, blocks={}",
                         peer_id,
                         bytes_sent,
                         blocks_sent
                     );
-                    if clock::now().duration_since(*clock) >= MAX_IDLE_DURATION {
+                    if Instant::now().duration_since(*clock) >= MAX_IDLE_DURATION {
                         debug!("[{}] Peer is not active, disconnecting", peer_id);
                         self.disconnected();
                         return;
@@ -518,20 +522,18 @@ impl Peer {
                     break;
                 }
                 Err(_e) => {
-                    break;
+                    self.disconnected();
+                    return;
                 }
             }
         }
-        if let Err(_e /* SendError */) = tx.poll_complete() {
-            self.disconnected();
-            return;
-        }
-        std::mem::replace(clock, clock::now());
+        std::mem::replace(clock, Instant::now());
     }
 
     // Called when a new block is registered.
     pub(super) fn on_block(
         &mut self,
+        cx: &mut Context,
         block: &Block,
         light_block: &LightBlock,
         micro_blocks_in_epoch: u32,
@@ -550,6 +552,7 @@ impl Peer {
                 if !*light {
                     let blocks = vec![block.clone()];
                     self.send_blocks(
+                        cx,
                         blocks.into_iter(),
                         current_epoch,
                         current_offset,
@@ -558,6 +561,7 @@ impl Peer {
                 } else {
                     let light_blocks = vec![light_block.clone()];
                     self.send_blocks(
+                        cx,
                         light_blocks.into_iter(),
                         current_epoch,
                         current_offset,
@@ -576,18 +580,19 @@ impl Peer {
     ///
     pub(super) fn poll(
         &mut self,
+        cx: &mut Context,
         current_epoch: u64,
         current_offset: u32,
         micro_blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
-    ) -> Async<ReplicationRow> {
+    ) -> Poll<ReplicationRow> {
         match self {
             //--------------------------------------------------------------------------------------
             // Discovered
             //--------------------------------------------------------------------------------------
             Peer::Registered { peer_id, .. } => {
                 trace!("[{}] Poll Registered", peer_id);
-                Async::NotReady
+                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------
@@ -595,7 +600,7 @@ impl Peer {
             //--------------------------------------------------------------------------------------
             Peer::Connecting { peer_id, .. } => {
                 trace!("[{}] Poll Connecting", peer_id);
-                Async::NotReady
+                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------
@@ -613,18 +618,18 @@ impl Peer {
                 //
                 // Read a response.
                 //
-                let response = match rx.poll().unwrap() {
-                    Async::Ready(Some(response)) => response,
-                    Async::Ready(None) => {
+                let response = match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(response)) => response,
+                    Poll::Ready(None) => {
                         self.disconnected();
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
-                    Async::NotReady => {
-                        if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                    Poll::Pending => {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                             debug!("[{}] Peer is not active, disconnecting", peer_id);
                             self.disconnected();
                         }
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
                 };
 
@@ -644,11 +649,11 @@ impl Peer {
                         let new_state = Peer::Failed {
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
-                            last_clock: clock::now(),
+                            last_clock: Instant::now(),
                             error,
                         };
                         std::mem::replace(self, new_state);
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
                 };
 
@@ -674,7 +679,7 @@ impl Peer {
                         current_offset,
                     } => {
                         debug!("[{}] Receiving", peer_id);
-                        let now = clock::now();
+                        let now = Instant::now();
                         Peer::Receiving {
                             peer_id,
                             multiaddr,
@@ -699,13 +704,13 @@ impl Peer {
                         Peer::Failed {
                             peer_id,
                             multiaddr,
-                            last_clock: clock::now(),
+                            last_clock: Instant::now(),
                             error,
                         }
                     }
                 };
                 std::mem::replace(self, new_state);
-                Async::NotReady
+                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------
@@ -723,18 +728,18 @@ impl Peer {
                 //
                 // Read a request.
                 //
-                let request = match rx.poll().unwrap() {
-                    Async::Ready(Some(request)) => request,
-                    Async::Ready(None) => {
+                let request = match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(request)) => request,
+                    Poll::Ready(None) => {
                         self.disconnected();
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
-                    Async::NotReady => {
-                        if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                    Poll::Pending => {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                             debug!("[{}] Peer is not active, disconnecting", peer_id);
                             self.disconnected();
                         }
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
                 };
 
@@ -754,11 +759,11 @@ impl Peer {
                         let new_state = Peer::Failed {
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
-                            last_clock: clock::now(),
+                            last_clock: Instant::now(),
                             error,
                         };
                         std::mem::replace(self, new_state);
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
                 };
 
@@ -788,7 +793,7 @@ impl Peer {
                                    peer_id, epoch, offset, current_epoch, current_offset);
                             let new_state = Self::registered(peer_id, multiaddr);
                             std::mem::replace(self, new_state);
-                            return Async::NotReady;
+                            return Poll::Pending;
                         }
                         let response = ReplicationResponse::Subscribed {
                             current_epoch,
@@ -803,8 +808,8 @@ impl Peer {
                                     peer_id,
                                     multiaddr,
                                     light,
-                                    last_clock: clock::now(),
-                                    start_clock: clock::now(),
+                                    last_clock: Instant::now(),
+                                    start_clock: Instant::now(),
                                     tx,
                                     rx,
                                     epoch,
@@ -817,12 +822,12 @@ impl Peer {
                             Err(mpsc::TrySendError { .. }) => {
                                 let new_state = Self::registered(peer_id, multiaddr);
                                 std::mem::replace(self, new_state);
-                                return Async::NotReady;
+                                return Poll::Pending;
                             }
                         }
                     }
                 }
-                Async::NotReady
+                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------
@@ -846,15 +851,15 @@ impl Peer {
                 //
                 // Check quota.
                 //
-                if clock::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
+                if Instant::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
                     debug!("[{}] Quota exceeded, disconnected", peer_id);
                     self.disconnected();
-                    return Async::NotReady;
+                    return Poll::Pending;
                 }
 
                 {
-                    match rx.poll().unwrap() {
-                        Async::Ready(Some(response)) => {
+                    match rx.poll_next_unpin(cx) {
+                        Poll::Ready(Some(response)) => {
                             //
                             // Parse a response.
                             //
@@ -873,11 +878,11 @@ impl Peer {
                                     let new_state = Peer::Failed {
                                         peer_id: peer_id.clone(),
                                         multiaddr: multiaddr.clone(),
-                                        last_clock: clock::now(),
+                                        last_clock: Instant::now(),
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    return Async::NotReady;
+                                    return Poll::Pending;
                                 }
                             };
                             //
@@ -890,7 +895,7 @@ impl Peer {
                                     current_offset,
                                     block,
                                 } if !*light => {
-                                    std::mem::replace(last_clock, clock::now());
+                                    std::mem::replace(last_clock, Instant::now());
                                     match &block {
                                         Block::MacroBlock(block) => {
                                             debug!(
@@ -909,14 +914,14 @@ impl Peer {
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    return Async::Ready(ReplicationRow::Block(block));
+                                    return Poll::Ready(ReplicationRow::Block(block));
                                 }
                                 ReplicationResponse::LightBlock {
                                     current_epoch,
                                     current_offset,
                                     block,
                                 } if *light => {
-                                    std::mem::replace(last_clock, clock::now());
+                                    std::mem::replace(last_clock, Instant::now());
                                     match &block {
                                         LightBlock::LightMacroBlock(block) => {
                                             debug!(
@@ -935,7 +940,7 @@ impl Peer {
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    return Async::Ready(ReplicationRow::LightBlock(block));
+                                    return Poll::Ready(ReplicationRow::LightBlock(block));
                                 }
                                 response => {
                                     let error = format!(
@@ -949,25 +954,25 @@ impl Peer {
                                     let new_state = Peer::Failed {
                                         peer_id: peer_id.clone(),
                                         multiaddr: multiaddr.clone(),
-                                        last_clock: clock::now(),
+                                        last_clock: Instant::now(),
                                         error,
                                     };
                                     std::mem::replace(self, new_state);
-                                    return Async::NotReady;
+                                    return Poll::Pending;
                                 }
                             }
                         }
-                        Async::Ready(None) => {
+                        Poll::Ready(None) => {
                             self.disconnected();
-                            return Async::NotReady;
+                            return Poll::Pending;
                         }
-                        Async::NotReady => {
+                        Poll::Pending => {
                             trace!("[{}] Not ready for reading", peer_id,);
-                            if clock::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                            if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
                                 debug!("[{}] Peer is not active, disconnecting", peer_id);
                                 self.disconnected();
                             }
-                            return Async::NotReady;
+                            return Poll::Pending;
                         }
                     }
                 }
@@ -991,17 +996,17 @@ impl Peer {
                 //
                 // Check quota.
                 //
-                if clock::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
+                if Instant::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
                     debug!("[{}] Quota exceeded, disconnected", peer_id);
                     self.disconnected();
-                    return Async::NotReady;
+                    return Poll::Pending;
                 }
 
                 //
                 // Process incoming responses.
                 //
-                match rx.poll().unwrap() {
-                    Async::Ready(Some(response)) => {
+                match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(response)) => {
                         let error =
                             format!("Unexpected response: expected=nothing, got={:?}", response);
                         error!("[{}] {}", peer_id, error);
@@ -1009,17 +1014,17 @@ impl Peer {
                         let new_state = Peer::Failed {
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
-                            last_clock: clock::now(),
+                            last_clock: Instant::now(),
                             error,
                         };
                         std::mem::replace(self, new_state);
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
-                    Async::Ready(None) => {
+                    Poll::Ready(None) => {
                         self.disconnected();
-                        return Async::NotReady;
+                        return Poll::Pending;
                     }
-                    Async::NotReady => {}
+                    Poll::Pending => {}
                 }
 
                 //
@@ -1032,10 +1037,11 @@ impl Peer {
                             Err(e) => {
                                 error!("[{}] Failed to send blocks: {}", peer_id, e);
                                 self.disconnected();
-                                return Async::NotReady;
+                                return Poll::Pending;
                             }
                         };
                         self.send_blocks(
+                            cx,
                             blocks,
                             current_epoch,
                             current_offset,
@@ -1047,10 +1053,11 @@ impl Peer {
                             Err(e) => {
                                 error!("[{}] Failed to send blocks: {}", peer_id, e);
                                 self.disconnected();
-                                return Async::NotReady;
+                                return Poll::Pending;
                             }
                         };
                         self.send_blocks(
+                            cx,
                             blocks,
                             current_epoch,
                             current_offset,
@@ -1058,7 +1065,7 @@ impl Peer {
                         );
                     }
                 }
-                Async::NotReady
+                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------
@@ -1066,7 +1073,7 @@ impl Peer {
             //--------------------------------------------------------------------------------------
             Peer::Failed { peer_id, .. } => {
                 trace!("[{}] Poll Failed", peer_id);
-                Async::NotReady
+                Poll::Pending
             }
         }
     }

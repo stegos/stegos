@@ -25,7 +25,7 @@ use crate::config::GeneralConfig;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
-use futures::{Future, Stream};
+use futures::{Future, Stream, StreamExt};
 use hyper::server::Server;
 use hyper::service::service_fn_ok;
 use hyper::{Body, Request, Response};
@@ -44,7 +44,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
-use stegos_api::{load_or_create_api_token, WebSocketServer};
+// use stegos_api::{load_or_create_api_token, WebSocketServer};
 use stegos_blockchain::{
     chain_to_prefix, initialize_chain, Blockchain, ConsistencyCheck, Timestamp,
 };
@@ -52,9 +52,9 @@ use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-use stegos_wallet::WalletService;
+// use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
-use tokio_timer::clock;
+use tokio::time::Instant;
 
 /// The default file name for configuration
 const STEGOSD_TOML: &'static str = "stegosd.toml";
@@ -351,7 +351,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     Ok(cfg)
 }
 
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     let name = "Stegos Node";
     let version = format!(
         "{}.{}.{} ({} {})",
@@ -534,26 +534,25 @@ fn run() -> Result<(), Error> {
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
     // Initialize network
-    let mut rt = Runtime::new()?;
-    let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
+    let (network, network_service, peer_id) = Libp2pNetwork::new(
         cfg.network.clone(),
         network_skey.clone(),
         network_pkey.clone(),
     )?;
 
-    // Start metrics exporter
-    if cfg.general.prometheus_endpoint != "" {
-        let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
-        info!("Starting Prometheus Exporter on {}", &addr);
+    // // Start metrics exporter
+    // if cfg.general.prometheus_endpoint != "" {
+    //     let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
+    //     info!("Starting Prometheus Exporter on {}", &addr);
 
-        let prom_serv = || service_fn_ok(report_metrics);
-        let hyper_service = Server::bind(&addr)
-            .serve(prom_serv)
-            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+    //     let prom_serv = || service_fn_ok(report_metrics);
+    //     let hyper_service = Server::bind(&addr)
+    //         .serve(prom_serv)
+    //         .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
 
-        // Run hyper server to export Prometheus metrics
-        rt.spawn(hyper_service);
-    }
+    //     // Run hyper server to export Prometheus metrics
+    //     rt.spawn(hyper_service);
+    // }
 
     // Initialize blockchain
     let (genesis, chain_cfg) = initialize_chain(&cfg.general.chain)?;
@@ -563,7 +562,10 @@ fn run() -> Result<(), Error> {
         Hash::digest(&genesis)
     );
 
-    let (node, wallet) = if !args.is_present("light") {
+    let (replication_tx, replication_rx) = futures::channel::mpsc::unbounded();
+
+    let (node, wallet): (_, Option<()>) = {
+        //if !args.is_present("light")
         info!("Starting the full node");
         let timestamp = Timestamp::now();
         let chain = Blockchain::new(
@@ -573,7 +575,6 @@ fn run() -> Result<(), Error> {
             genesis,
             timestamp,
         )?;
-
         // Initialize node
         let (mut node_service, node) = NodeService::new(
             cfg.node.clone(),
@@ -587,72 +588,68 @@ fn run() -> Result<(), Error> {
         )?;
 
         // Start all services when network is ready.
-        let executor = rt.executor();
-        let network_ready_future = network
-            .subscribe(&NETWORK_STATUS_TOPIC)?
-            .into_future()
-            .map_err(drop)
-            .and_then(|_s| {
-                // Sic: NetworkReady doesn't wait until unicast networking is initialized.
-                // https://github.com/stegos/stegos/issues/1192
-                // Fire a timer here to wait until unicast networking is fully initialized.
-                // This duration (30 secs) was experimentally found on the real network.
-                let network_grace_period = std::time::Duration::from_secs(0);
-                tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
-            })
-            .and_then(move |()| {
-                info!("Network is ready");
-                // TODO: how to handle errors here?
-                node_service.init().expect("shit happens");
-                executor.spawn(node_service);
-                Ok(())
-            });
-        rt.spawn(network_ready_future);
+        let network_ready_future = async move {
+            // let item = network
+            // .subscribe(&NETWORK_STATUS_TOPIC).expect("Cannot subscribe to network status.")
+            // .next().await; //TODO: Ready by default
+            // Sic: NetworkReady doesn't wait until unicast networking is initialized.
+            // https://github.com/stegos/stegos/issues/1192
+            // Fire a timer here to wait until unicast networking is fully initialized.
+            // This duration (30 secs) was experimentally found on the real network.
+            let network_grace_period = std::time::Duration::from_secs(0);
+            tokio::time::delay_for(network_grace_period).await;
+            info!("Network is ready");
+            // TODO: how to handle errors here?
+            node_service.init().expect("shit happens");
+            tokio::spawn(node_service.start());
+        };
+        tokio::spawn(network_ready_future);
 
         (Some(node), None)
-    } else {
-        info!("Starting the light node");
-        let (wallet_service, wallet) = WalletService::new(
-            &accounts_dir,
-            network_skey,
-            network_pkey,
-            network.clone(),
-            peer_id,
-            replication_rx,
-            rt.executor(),
-            Hash::digest(&genesis),
-            chain_cfg,
-            cfg.node.max_inputs_in_tx,
-        )?;
-        rt.spawn(wallet_service);
-        (None, Some(wallet))
     };
+    // else {
+    //     info!("Starting the light node");
+    //     let (wallet_service, wallet) = WalletService::new(
+    //         &accounts_dir,
+    //         network_skey,
+    //         network_pkey,
+    //         network.clone(),
+    //         peer_id,
+    //         replication_rx,
+    //         rt.executor(),
+    //         Hash::digest(&genesis),
+    //         chain_cfg,
+    //         cfg.node.max_inputs_in_tx,
+    //     )?;
+    //     rt.spawn(wallet_service);
+    //     (None, Some(wallet))
+    // };
 
-    // Start WebSocket API server.
-    if cfg.general.api_endpoint != "" {
-        let token_file = root_dir.join("api.token");
-        let api_token = load_or_create_api_token(&token_file)?;
-        WebSocketServer::spawn(
-            cfg.general.api_endpoint,
-            api_token,
-            rt.executor(),
-            network.clone(),
-            wallet,
-            node,
-            version,
-            cfg.general.chain,
-        )?;
-    }
+    // // Start WebSocket API server.
+    // if cfg.general.api_endpoint != "" {
+    //     let token_file = root_dir.join("api.token");
+    //     let api_token = load_or_create_api_token(&token_file)?;
+    //     WebSocketServer::spawn(
+    //         cfg.general.api_endpoint,
+    //         api_token,
+    //         rt.executor(),
+    //         network.clone(),
+    //         wallet,
+    //         node,
+    //         version,
+    //         cfg.general.chain,
+    //     )?;
+    // }
 
     // Start main event loop
-    rt.block_on(network_service)
-        .expect("errors are handled earlier");
+    network_service.await;
 
     Ok(())
 }
 
-fn main() {
-    if let Err(e) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(e) = run().await {
         eprintln!("{}", e); // Logger can be not yet initialized.
         error!("{:?}", e);
         process::exit(1)

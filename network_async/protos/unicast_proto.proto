@@ -1,0 +1,11 @@
+syntax = "proto3";
+package unicast.pb;
+
+message Message {
+    bytes from = 1;
+    bytes to = 2;
+    bytes protocol_id = 3;
+    bytes data = 4;
+    bytes signature = 5;
+    bytes rval = 6;
+}

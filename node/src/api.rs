@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use futures::sync::mpsc;
+use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::api::StatusInfo;

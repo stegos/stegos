@@ -1,0 +1,23 @@
+syntax = "proto3";
+package ncp.pb;
+
+message Message {
+	enum MessageType {
+		GET_PEERS_REQ = 1;
+        GET_PEERS_RES = 2;
+        PING = 3;
+        PONG = 4;
+    }
+    
+    message PeerInfo {
+        bytes peer_id = 1;
+        bytes node_id = 2;
+        repeated bytes addrs = 3;
+    }
+
+	// defines what type of message it is.
+	MessageType type = 1;
+
+	// defines what coral cluster level this query/response belongs to.
+    repeated PeerInfo peers = 4;
+}

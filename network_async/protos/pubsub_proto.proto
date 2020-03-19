@@ -1,0 +1,17 @@
+syntax = "proto3";
+package floodsub.pb;
+
+message RPC {
+	repeated SubOpts subscriptions = 1;
+	repeated Message publish = 2;
+
+	message SubOpts {
+		bool subscribe = 1; // subscribe or unsubcribe
+		string topic = 2;
+	}
+}
+
+message Message {
+	bytes data = 2;
+	string topic = 4;
+}

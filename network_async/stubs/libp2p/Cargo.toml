@@ -1,0 +1,10 @@
+[package]
+name = "libp2p_derive_stub_16"
+version = "1.0.0"
+authors = ["Eugene Chupriyanov <tchu@tchu.ru>"]
+edition = "2018"
+
+[dependencies]
+futures = "0.3.4"
+libp2p-core = "0.16"
+libp2p-swarm = "0.16"

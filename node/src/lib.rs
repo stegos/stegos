@@ -21,7 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+#![recursion_limit = "1024"] // used for `futures::select! macro`
+                             // #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -38,7 +39,7 @@ use crate::error::*;
 use crate::mempool::Mempool;
 use crate::validation::*;
 use failure::{bail, format_err, Error};
-use futures::sync::oneshot;
+use futures::channel::oneshot;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -1980,6 +1981,7 @@ impl NodeState {
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
     fn handle_event(&mut self, event: NodeIncomingEvent) {
+        strace!(self, "Handle event = {:?}", event);
         let result: Result<(), Error> = match event {
             NodeIncomingEvent::Request { request, tx } => {
                 strace!(self, "=> {:?}", request);
@@ -2221,6 +2223,7 @@ impl NodeState {
                 unreachable!("Must be handled by NodeService");
             }
         };
+        strace!(self, "Handle result event = {:?}", result);
         if let Err(e) = result {
             serror!(self, "Error: {}", e);
         }

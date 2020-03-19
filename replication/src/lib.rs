@@ -27,8 +27,11 @@ mod protos;
 
 use self::api::*;
 pub use self::peer::MAX_BLOCKS_PER_BATCH;
-use futures::sync::mpsc;
-use futures::{Async, Future, Stream};
+use futures::channel::mpsc;
+use futures::{
+    task::{Context, Poll},
+    Future, FutureExt, Stream, StreamExt,
+};
 use log::*;
 use peer::Peer;
 use rand::seq::SliceRandom;
@@ -37,7 +40,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
 use stegos_network::{Network, PeerId, ReplicationEvent};
-use tokio_timer::{clock, Delay};
+use tokio::time::{self, Delay, Instant};
 
 pub enum ReplicationRow {
     Block(Block),
@@ -77,7 +80,7 @@ impl Replication {
         events: mpsc::UnboundedReceiver<ReplicationEvent>,
     ) -> Self {
         let peers = HashMap::new();
-        let periodic_delay = Delay::new(clock::now() + UPSTREAM_UPDATE_INTERVAL);
+        let periodic_delay = time::delay_for(UPSTREAM_UPDATE_INTERVAL);
         Self {
             peer_id,
             peers,
@@ -104,9 +107,15 @@ impl Replication {
     ///
     /// Processes a new block.
     ///
-    pub fn on_block(&mut self, block: Block, light_block: LightBlock, micro_blocks_in_epoch: u32) {
+    pub fn on_block(
+        &mut self,
+        cx: &mut Context,
+        block: Block,
+        light_block: LightBlock,
+        micro_blocks_in_epoch: u32,
+    ) {
         for (_peer_id, peer) in self.peers.iter_mut() {
-            peer.on_block(&block, &light_block, micro_blocks_in_epoch);
+            peer.on_block(cx, &block, &light_block, micro_blocks_in_epoch);
         }
     }
 
@@ -131,17 +140,18 @@ impl Replication {
     ///
     pub fn poll(
         &mut self,
+        cx: &mut Context,
         current_epoch: u64,
         current_offset: u32,
         micro_blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
-    ) -> Async<Option<ReplicationRow>> {
+    ) -> Poll<Option<ReplicationRow>> {
         trace!("Poll");
 
         // Process replication events.
         loop {
-            match self.events.poll().unwrap() {
-                Async::Ready(Some(event)) => match event {
+            match self.events.poll_next_unpin(cx) {
+                Poll::Ready(Some(event)) => match event {
                     ReplicationEvent::Registered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Registered: multiaddr={}", peer_id, multiaddr);
@@ -171,26 +181,27 @@ impl Replication {
                         peer.disconnected();
                     }
                 },
-                Async::Ready(None) => {
+                Poll::Ready(None) => {
                     // Shutdown.
-                    return Async::Ready(None);
+                    return Poll::Ready(None);
                 }
-                Async::NotReady => break,
+                Poll::Pending => break,
             }
         }
 
         let mut has_upstream = false;
         for (_peer_id, peer) in self.peers.iter_mut() {
             match peer.poll(
+                cx,
                 current_epoch,
                 current_offset,
                 micro_blocks_in_epoch,
                 block_reader,
             ) {
-                Async::Ready(block) => {
-                    return Async::Ready(Some(block));
+                Poll::Ready(block) => {
+                    return Poll::Ready(Some(block));
                 }
-                Async::NotReady => {}
+                Poll::Pending => {}
             }
             if peer.is_upstream() {
                 has_upstream = true;
@@ -198,9 +209,9 @@ impl Replication {
         }
 
         // Process timer.
-        if let Async::Ready(()) = self.periodic_delay.poll().unwrap() {
+        if let Poll::Ready(()) = self.periodic_delay.poll_unpin(cx) {
             self.periodic_delay
-                .reset(clock::now() + UPSTREAM_UPDATE_INTERVAL);
+                .reset(Instant::now() + UPSTREAM_UPDATE_INTERVAL);
             trace!("Timer fired");
         }
 
@@ -236,6 +247,6 @@ impl Replication {
                 trace!("Can't find a new upstream");
             }
         }
-        Async::NotReady
+        Poll::Pending
     }
 }

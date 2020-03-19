@@ -23,33 +23,33 @@ members = [
     "crypto",
     "keychain",
     "network",
+    "network_async",
     "node",
     "txpool",
     "replication",
     "serialization",
     "wallet",
-    "network/stubs/libp2p",
     "crypto/stubs/vdf_field",
 ]
 
 [dependencies]
-stegos_api = { version = "1.0.0", path = "./api" }
+# stegos_api = { version = "1.0.0", path = "./api" }
 stegos_blockchain = { version = "1.0.0", path = "./blockchain" }
 stegos_consensus = { version = "1.0.0", path = "./consensus" }
 stegos_crypto = { version = "1.0.0", path = "./crypto" }
 stegos_keychain = { version = "1.0.0", path = "./keychain" }
-stegos_network = { version = "1.0.0", path = "./network" }
+stegos_network = { version = "1.0.0", path = "./network_async", package="stegos_network_async"}
 stegos_replication = { version = "1.0.0", path = "./replication" }
 stegos_node = { version = "1.0.0", path = "./node" }
 stegos_serialization = { version = "1.0.0", path = "./serialization" }
-stegos_wallet = { version = "1.0.0", path = "./wallet" }
+# stegos_wallet = { version = "1.0.0", path = "./wallet" }
 stegos_txpool = { version = "1.0.0", path = "./txpool" }
 assert_matches = "1.3.0"
 bit-vec = "0.6"
 clap = "2.32"
 dirs = "2.0"
 failure = "0.1"
-futures = "0.1"
+futures = "0.3"
 hyper = "0.12"
 lazy_static = "1.1"
 log = "0.4"
@@ -63,8 +63,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
 simple_logger = "1.2"
-tokio = { version = "0.1", default-features = false, features = []}
-tokio-timer = "0.2"
+tokio =  {version="0.2.13", features =["time", "rt-threaded", "macros"]}
 toml = "0.5"
 humantime = "1.2.0"
 tempdir = "0.3"

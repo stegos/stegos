@@ -1,0 +1,32 @@
+syntax = "proto3";
+package gatekeeper.pb;
+
+message VDFProof {
+    bytes challenge = 1;
+    uint64 difficulty = 2;
+    bytes vdf_proof = 3;
+}
+
+message UnlockRequest {
+    // Optional proof
+    VDFProof proof = 1;
+}
+
+message ChallengeReply {
+    // Puzzle seed
+    bytes challenge = 1;
+    // Number of bits to calculate
+    uint64 difficulty = 2;
+}
+
+message PermitReply {
+    bool connection_allowed = 1;
+}
+
+message Message {
+    oneof typ {
+        UnlockRequest unlock_request = 1;
+        ChallengeReply challenge_reply = 3;
+        PermitReply permit_reply = 4;
+    }
+}

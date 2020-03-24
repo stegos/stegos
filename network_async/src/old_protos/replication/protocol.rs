@@ -21,13 +21,16 @@
 
 use crate::metrics;
 
+use crate::utils::FutureResult;
 use bytes::BytesMut;
 use futures::future;
+use futures::Future;
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use std::io;
 use std::iter;
-use tokio::codec::{Decoder, Encoder, Framed};
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::pin::Pin;
 use unsigned_varint::codec;
 
 // Protocol label for metrics
@@ -57,14 +60,14 @@ impl UpgradeInfo for ReplicationConfig {
 
 impl<TSocket> InboundUpgrade<TSocket> for ReplicationConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, ReplicationCodec>;
+    type Output = Framed<TSocket, ReplicationCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             ReplicationCodec {
@@ -76,14 +79,14 @@ where
 
 impl<TSocket> OutboundUpgrade<TSocket> for ReplicationConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, ReplicationCodec>;
+    type Output = Framed<TSocket, ReplicationCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             ReplicationCodec {

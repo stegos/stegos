@@ -19,9 +19,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-// use super::handler::{HandlerInEvent, HandlerOutEvent, ReplicationHandler};
+use super::handler::{HandlerInEvent, HandlerOutEvent, ReplicationHandler};
 use futures::channel::mpsc;
 use futures::prelude::*;
+use futures::task::{Context, Poll};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -29,7 +31,6 @@ use libp2p_swarm::{
 use log::*;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 /// Replication event.
 #[derive(Debug)]
@@ -58,114 +59,108 @@ pub enum ReplicationEvent {
     },
 }
 
-// /// Replication protocol.
-// pub struct Replication<TSubstream> {
-//     /// Events that need to be yielded to the outside when polling.
-//     events: VecDeque<NetworkBehaviourAction<HandlerInEvent, ReplicationEvent>>,
+/// Replication protocol.
+pub struct Replication {
+    /// Events that need to be yielded to the outside when polling.
+    events: VecDeque<NetworkBehaviourAction<HandlerInEvent, ReplicationEvent>>,
+}
 
-//     /// Marker to pin the generics.
-//     marker: PhantomData<TSubstream>,
-// }
+impl Replication {
+    /// Creates a `Replication`.
+    pub fn new() -> Self {
+        Replication {
+            events: VecDeque::new(),
+        }
+    }
 
-// impl<TSubstream> Replication<TSubstream> {
-//     /// Creates a `Replication`.
-//     pub fn new() -> Self {
-//         Replication {
-//             events: VecDeque::new(),
-//             marker: PhantomData,
-//         }
-//     }
+    pub fn connect(&mut self, peer_id: PeerId) {
+        debug!("[{}] Connecting", peer_id);
+        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
+            peer_id,
+            event: HandlerInEvent::Connect,
+        };
+        self.events.push_back(event);
+    }
 
-//     pub fn connect(&mut self, peer_id: PeerId) {
-//         debug!("[{}] Connecting", peer_id);
-//         let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
-//             peer_id,
-//             event: HandlerInEvent::Connect,
-//         };
-//         self.events.push_back(event);
-//     }
+    pub fn disconnect(&mut self, peer_id: PeerId) {
+        debug!("[{}] Disconnecting", peer_id);
+        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
+            peer_id,
+            event: HandlerInEvent::Disconnect,
+        };
+        self.events.push_back(event);
+    }
+}
 
-//     pub fn disconnect(&mut self, peer_id: PeerId) {
-//         debug!("[{}] Disconnecting", peer_id);
-//         let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
-//             peer_id,
-//             event: HandlerInEvent::Disconnect,
-//         };
-//         self.events.push_back(event);
-//     }
-// }
+impl NetworkBehaviour for Replication {
+    type ProtocolsHandler = ReplicationHandler;
+    type OutEvent = ReplicationEvent;
 
-// impl<TSubstream> NetworkBehaviour for Replication<TSubstream>
-// where
-//     TSubstream: AsyncRead + AsyncWrite + Send,
-// {
-//     type ProtocolsHandler = ReplicationHandler<TSubstream>;
-//     type OutEvent = ReplicationEvent;
+    fn new_handler(&mut self) -> Self::ProtocolsHandler {
+        ReplicationHandler::new()
+    }
 
-//     fn new_handler(&mut self) -> Self::ProtocolsHandler {
-//         ReplicationHandler::new()
-//     }
+    fn addresses_of_peer(&mut self, _peer_id: &PeerId) -> Vec<Multiaddr> {
+        Vec::new()
+    }
 
-//     fn addresses_of_peer(&mut self, _peer_id: &PeerId) -> Vec<Multiaddr> {
-//         Vec::new()
-//     }
+    fn inject_connected(&mut self, peer_id: PeerId, point: ConnectedPoint) {
+        let multiaddr = match point {
+            ConnectedPoint::Dialer { address } => address,
+            ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
+        };
+        debug!("[{}] Connected: multiaddr={}", peer_id, multiaddr);
+        let event = ReplicationEvent::Registered { peer_id, multiaddr };
+        let event = NetworkBehaviourAction::GenerateEvent(event);
+        self.events.push_back(event);
+    }
 
-//     fn inject_connected(&mut self, peer_id: PeerId, point: ConnectedPoint) {
-//         let multiaddr = match point {
-//             ConnectedPoint::Dialer { address } => address,
-//             ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-//         };
-//         debug!("[{}] Connected: multiaddr={}", peer_id, multiaddr);
-//         let event = ReplicationEvent::Registered { peer_id, multiaddr };
-//         let event = NetworkBehaviourAction::GenerateEvent(event);
-//         self.events.push_back(event);
-//     }
+    fn inject_disconnected(&mut self, peer_id: &PeerId, addr: ConnectedPoint) {
+        let multiaddr = match addr {
+            ConnectedPoint::Dialer { address } => address,
+            ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
+        };
+        debug!("[{}] Disconnected: multiaddr={}", peer_id, multiaddr);
+        let event = ReplicationEvent::Unregistered {
+            peer_id: peer_id.clone(),
+            multiaddr,
+        };
+        let event = NetworkBehaviourAction::GenerateEvent(event);
+        self.events.push_back(event);
+    }
 
-//     fn inject_disconnected(&mut self, peer_id: &PeerId, addr: ConnectedPoint) {
-//         let multiaddr = match addr {
-//             ConnectedPoint::Dialer { address } => address,
-//             ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-//         };
-//         debug!("[{}] Disconnected: multiaddr={}", peer_id, multiaddr);
-//         let event = ReplicationEvent::Unregistered {
-//             peer_id: peer_id.clone(),
-//             multiaddr,
-//         };
-//         let event = NetworkBehaviourAction::GenerateEvent(event);
-//         self.events.push_back(event);
-//     }
+    /// Called on incoming events from handler.
+    fn inject_node_event(&mut self, peer_id: PeerId, event: HandlerOutEvent) {
+        let event = match event {
+            HandlerOutEvent::Connected { tx, rx } => {
+                ReplicationEvent::Connected { peer_id, tx, rx }
+            }
+            HandlerOutEvent::ConnectionFailed { error } => {
+                ReplicationEvent::ConnectionFailed { peer_id, error }
+            }
+            HandlerOutEvent::Accepted { tx, rx } => ReplicationEvent::Accepted { peer_id, tx, rx },
+        };
+        let event = NetworkBehaviourAction::GenerateEvent(event);
+        self.events.push_back(event);
+    }
 
-//     /// Called on incoming events from handler.
-//     fn inject_node_event(&mut self, peer_id: PeerId, event: HandlerOutEvent) {
-//         let event = match event {
-//             HandlerOutEvent::Connected { tx, rx } => {
-//                 ReplicationEvent::Connected { peer_id, tx, rx }
-//             }
-//             HandlerOutEvent::ConnectionFailed { error } => {
-//                 ReplicationEvent::ConnectionFailed { peer_id, error }
-//             }
-//             HandlerOutEvent::Accepted { tx, rx } => ReplicationEvent::Accepted { peer_id, tx, rx },
-//         };
-//         let event = NetworkBehaviourAction::GenerateEvent(event);
-//         self.events.push_back(event);
-//     }
+    fn poll(
+        &mut self,
+        cx: &mut Context,
+        _: &mut impl PollParameters,
+    ) -> Poll<
+        NetworkBehaviourAction<
+            <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
+            Self::OutEvent,
+        >,
+    > {
+        trace!("Poll");
 
-//     fn poll(
-//         &mut self,
-//         _: &mut impl PollParameters,
-//     ) -> Async<
-//         NetworkBehaviourAction<
-//             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
-//             Self::OutEvent,
-//         >,
-//     > {
-//         trace!("Poll");
+        if let Some(event) = self.events.pop_front() {
+            trace!("Generated event: {:?}", event);
+            return Poll::Ready(event);
+        }
 
-//         if let Some(event) = self.events.pop_front() {
-//             trace!("Generated event: {:?}", event);
-//             return Async::Ready(event);
-//         }
-
-//         Async::NotReady
-//     }
-// }
+        Poll::Pending
+    }
+}

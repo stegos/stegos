@@ -34,8 +34,8 @@ use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::time::Instant;
 use std::{fmt, io};
-use tokio::codec::Framed;
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures_codec::Framed;
+use futures_io::{AsyncRead, AsyncWrite};
 
 use crate::NETWORK_IDLE_TIMEOUT;
 
@@ -44,7 +44,7 @@ use crate::NETWORK_IDLE_TIMEOUT;
 /// The handler will automatically open a substream with the remote for each request we make.
 ///
 /// It also handles requests made by the remote.
-pub struct NcpHandler<TSubstream>
+pub struct NcpHandler
 where
     TSubstream: AsyncRead + AsyncWrite,
 {
@@ -53,7 +53,7 @@ where
 
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
-    substreams: Vec<SubstreamState<TSubstream>>,
+    substreams: Vec<SubstreamState>,
 
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[NcpMessage; 16]>,
@@ -68,23 +68,19 @@ where
 }
 
 /// State of an active substream, opened either by us or by the remote.
-enum SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
+enum SubstreamState
 {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<Negotiated<TSubstream>, NcpCodec>),
+    WaitingInput(Framed<Negotiated, NcpCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<Negotiated<TSubstream>, NcpCodec>, NcpMessage),
+    PendingSend(Framed<Negotiated, NcpCodec>, NcpMessage),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<Negotiated<TSubstream>, NcpCodec>),
+    PendingFlush(Framed<Negotiated, NcpCodec>),
     /// The substream is being closed.
-    Closing(Framed<Negotiated<TSubstream>, NcpCodec>),
+    Closing(Framed<Negotiated, NcpCodec>),
 }
 
-impl<TSubstream> NcpHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
+impl NcpHandler
 {
     /// Builds a new `NcpHandler`.
     /// TODO: set to intially disabled, when upgrade is implemented
@@ -100,12 +96,10 @@ where
     }
 }
 
-impl<TSubstream> SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
+impl SubstreamState
 {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<Negotiated<TSubstream>, NcpCodec> {
+    fn into_substream(self) -> Framed<Negotiated, NcpCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -115,9 +109,7 @@ where
     }
 }
 
-impl<TSubstream> ProtocolsHandler for NcpHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
+impl ProtocolsHandler for NcpHandler
 {
     type InEvent = NcpSendEvent;
     type OutEvent = NcpRecvEvent;
@@ -134,7 +126,7 @@ where
 
     fn inject_fully_negotiated_inbound(
         &mut self,
-        protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::InboundProtocol as InboundUpgrade>::Output,
     ) {
         trace!(target: "stegos_network::ncp", "successfully negotiated inbound substream");
         self.substreams.push(SubstreamState::WaitingInput(protocol))
@@ -142,7 +134,7 @@ where
 
     fn inject_fully_negotiated_outbound(
         &mut self,
-        protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::OutboundProtocol as OutboundUpgrade>::Output,
         message: Self::OutboundOpenInfo,
     ) {
         trace!(target: "stegos_network::ncp", "successfully negotiated outbound substream");

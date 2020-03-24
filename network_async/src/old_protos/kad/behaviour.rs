@@ -26,7 +26,9 @@ use super::metrics::{KBUCKET_TABLE_SIZE, PEER_TABLE_SIZE};
 use super::protocol::{KadConnectionType, KadPeer};
 use super::query::{QueryConfig, QueryState, QueryStatePollOut, QueryTarget};
 use fnv::{FnvHashMap, FnvHashSet};
+use futures::task::{Context, Poll};
 use futures::{prelude::*, stream};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -40,8 +42,7 @@ use std::vec::IntoIter as VecIntoIter;
 use std::{cmp::Ordering, error, marker::PhantomData, time::Duration, time::Instant};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_timer::Interval;
+use tokio::time::Interval;
 
 use crate::utils::IntoMultihash;
 
@@ -51,7 +52,7 @@ const BUCKET_EXPIRATION_PERIOD: u64 = 5 * 60;
 const METRICS_UPDATE_INTERVAL: u64 = 1;
 
 /// Network behaviour that handles Kademlia.
-pub struct Kademlia<TSubstream> {
+pub struct Kademlia {
     /// NodeId of this node
     my_id: pbc::PublicKey,
     /// Storage for the nodes. Contains the known multiaddresses for this node.
@@ -111,9 +112,6 @@ pub struct Kademlia<TSubstream> {
 
     /// When metrics were updated last time
     metrics_last_update: Instant,
-
-    /// Marker to pin the generics.
-    marker: PhantomData<TSubstream>,
 }
 
 #[derive(Clone, Debug)]
@@ -158,7 +156,7 @@ enum QueryPurpose {
     AddProvider(Multihash),
 }
 
-impl<TSubstream> Kademlia<TSubstream> {
+impl Kademlia {
     /// Creates a `Kademlia`.
     #[inline]
     pub fn new(local_node_id: pbc::PublicKey) -> Self {
@@ -248,13 +246,12 @@ impl<TSubstream> Kademlia<TSubstream> {
             remote_requests: SmallVec::new(),
             values_providers: FnvHashMap::default(),
             providing_keys: FnvHashSet::default(),
-            refresh_add_providers: Interval::new_interval(Duration::from_secs(60)).fuse(), // TODO: constant
+            refresh_add_providers: tokio::time::interval(Duration::from_secs(60)).fuse(), // TODO: constant
             parallelism,
             num_results: 20,
             rpc_timeout: Duration::from_secs(8),
             add_provider: SmallVec::new(),
             metrics_last_update: Instant::now(),
-            marker: PhantomData,
         };
 
         if initialize {
@@ -324,7 +321,7 @@ impl<TSubstream> Kademlia<TSubstream> {
     }
 }
 
-impl<TSubstream> Kademlia<TSubstream> {
+impl Kademlia {
     /// Starts an iterative `FIND_NODE` request.
     ///
     /// This will eventually produce an event containing the nodes of the DHT closest to the
@@ -369,7 +366,7 @@ impl<TSubstream> Kademlia<TSubstream> {
         }
 
         // Trigger the next refresh now.
-        self.refresh_add_providers = Interval::new(Instant::now(), Duration::from_secs(60)).fuse();
+        self.refresh_add_providers = tokio::time::interval(Duration::from_secs(60)).fuse();
     }
 
     /// Cancels a registration done with `add_providing`.
@@ -400,11 +397,8 @@ impl<TSubstream> Kademlia<TSubstream> {
     }
 }
 
-impl<TSubstream> NetworkBehaviour for Kademlia<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
-    type ProtocolsHandler = KademliaHandler<TSubstream, QueryId>;
+impl NetworkBehaviour for Kademlia {
+    type ProtocolsHandler = KademliaHandler<QueryId>;
     type OutEvent = KademliaOut;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
@@ -665,8 +659,9 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
         parameters: &mut impl PollParameters,
-    ) -> Async<
+    ) -> Poll<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
             Self::OutEvent,
@@ -695,16 +690,16 @@ where
         self.add_provider.shrink_to_fit();
 
         // Handle `refresh_add_providers`.
-        match self.refresh_add_providers.poll() {
-            Ok(Async::NotReady) => {}
-            Ok(Async::Ready(Some(_))) => {
+        match self.refresh_add_providers.poll_next_unpin(cx) {
+            Poll::Pending => {}
+            Poll::Ready(Some(_)) => {
                 for provided in self.providing_keys.clone().into_iter() {
                     let purpose = QueryPurpose::AddProvider(provided.clone());
                     self.start_query(QueryTarget::FindPeer(provided), purpose);
                 }
             }
             // Ignore errors.
-            Ok(Async::Ready(None)) | Err(_) => {}
+            Poll::Ready(None) => {}
         }
 
         // Start queries that are waiting to start.
@@ -737,7 +732,7 @@ where
         if !self.remote_requests.is_empty() {
             let (peer_id, request_id, query) = self.remote_requests.remove(0);
             let result = self.build_result(query, request_id, parameters);
-            return Async::Ready(NetworkBehaviourAction::SendEvent {
+            return Poll::Ready(NetworkBehaviourAction::SendEvent {
                 peer_id,
                 event: result,
             });
@@ -746,7 +741,7 @@ where
         loop {
             // Handle events queued by other parts of this struct
             if !self.queued_events.is_empty() {
-                return Async::Ready(self.queued_events.remove(0));
+                return Poll::Ready(self.queued_events.remove(0));
             }
             self.queued_events.shrink_to_fit();
 
@@ -756,12 +751,12 @@ where
 
             'queries_iter: for (&query_id, (query, _, _)) in self.active_queries.iter_mut() {
                 loop {
-                    match query.poll() {
-                        Async::Ready(QueryStatePollOut::Finished) => {
+                    match query.poll(cx) {
+                        Poll::Ready(QueryStatePollOut::Finished) => {
                             finished_query = Some(query_id);
                             break 'queries_iter;
                         }
-                        Async::Ready(QueryStatePollOut::SendRpc {
+                        Poll::Ready(QueryStatePollOut::SendRpc {
                             node_id,
                             query_target,
                         }) => {
@@ -780,14 +775,14 @@ where
                             if let Some(peer_id) = target_peer {
                                 if self.connected_peers.contains(&peer_id) {
                                     debug!(target: "stegos_network::kad", "sending event to node: node_id={}, peer_id={}", node_id, peer_id);
-                                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                                    return Poll::Ready(NetworkBehaviourAction::SendEvent {
                                         peer_id: peer_id.clone(),
                                         event: rpc,
                                     });
                                 } else {
                                     debug!(target: "stegos_network::kad", "dialing node: node_id={}, peer_id={}", node_id, peer_id);
                                     self.pending_rpcs.push((node_id.clone(), rpc));
-                                    return Async::Ready(NetworkBehaviourAction::DialPeer {
+                                    return Poll::Ready(NetworkBehaviourAction::DialPeer {
                                         peer_id: peer_id.clone(),
                                     });
                                 }
@@ -796,11 +791,11 @@ where
                                 nodes_without_peerids.push(node_id.clone());
                             }
                         }
-                        Async::Ready(QueryStatePollOut::CancelRpc { node_id }) => {
+                        Poll::Ready(QueryStatePollOut::CancelRpc { node_id }) => {
                             // We don't cancel if the RPC has already been sent out.
                             self.pending_rpcs.retain(|(id, _)| id != node_id);
                         }
-                        Async::NotReady => break,
+                        Poll::Pending => break,
                     }
                 }
             }
@@ -836,7 +831,7 @@ where
                             },
                         };
 
-                        break Async::Ready(NetworkBehaviourAction::GenerateEvent(event));
+                        break Poll::Ready(NetworkBehaviourAction::GenerateEvent(event));
                     }
                     QueryPurpose::AddProvider(key) => {
                         for closest in query.into_closest_peers() {
@@ -862,7 +857,7 @@ where
                     }
                 }
             } else {
-                break Async::NotReady;
+                break Poll::Pending;
             }
         }
     }

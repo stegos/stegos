@@ -22,15 +22,18 @@ use crate::metrics;
 use crate::pubsub::metrics as pubsub_metrics;
 use crate::pubsub::proto::pubsub_proto as rpc_proto;
 
+use crate::utils::FutureResult;
+use bytes::buf::ext::BufMutExt;
 use bytes::{BufMut, BytesMut};
 use futures::future;
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::pin::Pin;
 use std::{io, iter};
-use tokio::codec::{Decoder, Encoder, Framed};
-use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
 
 // Protocol label for metrics
@@ -60,14 +63,14 @@ impl UpgradeInfo for FloodsubConfig {
 
 impl<TSocket> InboundUpgrade<TSocket> for FloodsubConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, FloodsubCodec>;
+    type Output = Framed<TSocket, FloodsubCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             FloodsubCodec {
@@ -79,14 +82,14 @@ where
 
 impl<TSocket> OutboundUpgrade<TSocket> for FloodsubConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, FloodsubCodec>;
+    type Output = Framed<TSocket, FloodsubCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             FloodsubCodec {
@@ -135,7 +138,7 @@ impl Encoder for FloodsubCodec {
             .inc_by(msg_size as i64);
 
         proto
-            .write_length_delimited_to_writer(&mut dst.by_ref().writer())
+            .write_length_delimited_to_writer(&mut dst.writer())
             .expect(
                 "there is no situation in which the protobuf message can be invalid, and \
                  writing to a BytesMut never fails as we reserved enough space beforehand",

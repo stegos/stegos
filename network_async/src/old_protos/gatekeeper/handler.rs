@@ -24,15 +24,18 @@
 use super::protocol::{GatekeeperCodec, GatekeeperConfig, GatekeeperMessage};
 
 use futures::prelude::*;
+use futures::task::{Context, Poll};
+use futures_codec::Framed;
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
 use libp2p_swarm::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
+use libp2p_swarm::NegotiatedSubstream;
 use log::{debug, trace};
 use smallvec::SmallVec;
+use std::pin::Pin;
 use std::{fmt, io, time::Instant};
-use tokio::codec::Framed;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::NETWORK_IDLE_TIMEOUT;
 
@@ -46,10 +49,7 @@ pub enum GatekeeperSendEvent {
 /// The handler will automatically open a substream with the remote for each request we make.
 ///
 /// It also handles requests made by the remote.
-pub struct GatekeeperHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+pub struct GatekeeperHandler {
     /// Configuration for the Ncp protocol.
     config: GatekeeperConfig,
 
@@ -58,34 +58,28 @@ where
 
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
-    substreams: Vec<SubstreamState<TSubstream>>,
+    substreams: Vec<SubstreamState>,
 
     /// Queue of values that we want to send to the remote.
     send_queue: SmallVec<[GatekeeperMessage; 16]>,
 }
 
 /// State of an active substream, opened either by us or by the remote.
-enum SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+enum SubstreamState {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
+    WaitingInput(Framed<NegotiatedSubstream, GatekeeperCodec>),
     /// Waiting to send a message to the remote.
     PendingSend(
-        Framed<Negotiated<TSubstream>, GatekeeperCodec>,
+        Framed<NegotiatedSubstream, GatekeeperCodec>,
         GatekeeperMessage,
     ),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
+    PendingFlush(Framed<NegotiatedSubstream, GatekeeperCodec>),
     /// The substream is being closed.
-    Closing(Framed<Negotiated<TSubstream>, GatekeeperCodec>),
+    Closing(Framed<NegotiatedSubstream, GatekeeperCodec>),
 }
 
-impl<TSubstream> GatekeeperHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+impl GatekeeperHandler {
     /// Builds a new `NcpHandler`.
     pub fn new() -> Self {
         GatekeeperHandler {
@@ -97,12 +91,9 @@ where
     }
 }
 
-impl<TSubstream> SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+impl SubstreamState {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<Negotiated<TSubstream>, GatekeeperCodec> {
+    fn into_substream(self) -> Framed<NegotiatedSubstream, GatekeeperCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -112,14 +103,10 @@ where
     }
 }
 
-impl<TSubstream> ProtocolsHandler for GatekeeperHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+impl ProtocolsHandler for GatekeeperHandler {
     type InEvent = GatekeeperSendEvent;
     type OutEvent = GatekeeperMessage;
     type Error = io::Error;
-    type Substream = TSubstream;
     type InboundProtocol = GatekeeperConfig;
     type OutboundProtocol = GatekeeperConfig;
     type OutboundOpenInfo = GatekeeperMessage;
@@ -131,7 +118,7 @@ where
 
     fn inject_fully_negotiated_inbound(
         &mut self,
-        protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
     ) {
         trace!(target: "stegos_network::gatekeeper", "successfully negotiated inbound substream");
         self.substreams.push(SubstreamState::WaitingInput(protocol))
@@ -139,7 +126,7 @@ where
 
     fn inject_fully_negotiated_outbound(
         &mut self,
-        protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
         message: Self::OutboundOpenInfo,
     ) {
         trace!(target: "stegos_network::gatekeeper", "successfully negotiated outbound substream");
@@ -162,7 +149,7 @@ where
         &mut self,
         _: Self::OutboundOpenInfo,
         _: ProtocolsHandlerUpgrErr<
-            <Self::OutboundProtocol as OutboundUpgrade<Self::Substream>>::Error,
+            <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Error,
         >,
     ) {
     }
@@ -174,83 +161,98 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
     ) -> Poll<
-        ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
-        io::Error,
+        ProtocolsHandlerEvent<
+            Self::OutboundProtocol,
+            Self::OutboundOpenInfo,
+            Self::OutEvent,
+            io::Error,
+        >,
     > {
         if !self.send_queue.is_empty() {
             let message = self.send_queue.remove(0);
-            return Ok(Async::Ready(
-                ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                    info: message,
-                    protocol: SubstreamProtocol::new(self.config.clone()),
-                },
-            ));
+            return Poll::Ready(ProtocolsHandlerEvent::OutboundSubstreamRequest {
+                info: message,
+                protocol: SubstreamProtocol::new(self.config.clone()),
+            });
         }
 
         for n in (0..self.substreams.len()).rev() {
             let mut substream = self.substreams.swap_remove(n);
             loop {
                 substream = match substream {
-                    SubstreamState::WaitingInput(mut substream) => match substream.poll() {
-                        Ok(Async::Ready(Some(message))) => {
-                            self.substreams
-                                .push(SubstreamState::WaitingInput(substream));
-                            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(message)));
+                    SubstreamState::WaitingInput(mut substream) => {
+                        match substream.poll_next_unpin(cx) {
+                            Poll::Ready(Some(Ok(message))) => {
+                                self.substreams
+                                    .push(SubstreamState::WaitingInput(substream));
+                                return Poll::Ready(ProtocolsHandlerEvent::Custom(message));
+                            }
+                            Poll::Ready(Some(Err(e))) => {
+                                debug!(target: "stegos_network::gatekeeper", "error waiting for input: error={}", e);
+                                SubstreamState::Closing(substream)
+                            }
+                            Poll::Ready(None) => SubstreamState::Closing(substream),
+                            Poll::Pending => {
+                                self.substreams
+                                    .push(SubstreamState::WaitingInput(substream));
+                                return Poll::Pending;
+                            }
                         }
-                        Ok(Async::Ready(None)) => SubstreamState::Closing(substream),
-                        Ok(Async::NotReady) => {
-                            self.substreams
-                                .push(SubstreamState::WaitingInput(substream));
-                            return Ok(Async::NotReady);
-                        }
-                        Err(e) => {
-                            debug!(target: "stegos_network::gatekeeper", "error waiting for input: error={}", e);
-                            SubstreamState::Closing(substream)
-                        }
-                    },
+                    }
                     SubstreamState::PendingSend(mut substream, message) => {
-                        match substream.start_send(message) {
-                            Ok(AsyncSink::Ready) => SubstreamState::PendingFlush(substream),
-                            Ok(AsyncSink::NotReady(message)) => {
+                        match Sink::poll_ready(Pin::new(&mut substream), cx) {
+                            Poll::Ready(Ok(())) => {
+                                match Sink::start_send(Pin::new(&mut substream), message) {
+                                    Ok(()) => (SubstreamState::PendingFlush(substream)),
+                                    Err(error) => {
+                                        debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", error);
+                                        return Poll::Pending;
+                                    }
+                                }
+                            }
+                            Poll::Pending => {
                                 self.substreams
                                     .push(SubstreamState::PendingSend(substream, message));
-                                return Ok(Async::NotReady);
+                                return Poll::Pending;
                             }
-                            Err(e) => {
-                                debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", e);
-                                return Ok(Async::NotReady);
+                            Poll::Ready(Err(error)) => {
+                                debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", error);
+                                return Poll::Pending;
                             }
                         }
                     }
                     SubstreamState::PendingFlush(mut substream) => {
-                        match substream.poll_complete() {
-                            Ok(Async::Ready(())) => SubstreamState::Closing(substream),
-                            Ok(Async::NotReady) => {
+                        match Sink::poll_flush(Pin::new(&mut substream), cx) {
+                            Poll::Ready(Ok(())) => SubstreamState::Closing(substream),
+                            Poll::Ready(Err(error)) => {
+                                debug!(target: "stegos_network::gatekeeper", "error sending message: error={}", error);
+                                return Poll::Pending;
+                            }
+                            Poll::Pending => {
                                 self.substreams
                                     .push(SubstreamState::PendingFlush(substream));
-                                return Ok(Async::NotReady);
-                            }
-                            Err(e) => {
-                                debug!(target: "stegos_network::gatekeeper", "error flushing substream: error={}", e);
-                                return Ok(Async::NotReady);
+                                return Poll::Pending;
                             }
                         }
                     }
-                    SubstreamState::Closing(mut substream) => match substream.close() {
-                        Ok(Async::Ready(())) => {
-                            self.substreams.shrink_to_fit();
-                            break;
+                    SubstreamState::Closing(mut substream) => {
+                        match Sink::poll_close(Pin::new(&mut substream), cx) {
+                            Poll::Ready(Ok(())) => {
+                                self.substreams.shrink_to_fit();
+                                break;
+                            }
+                            Poll::Ready(Err(error)) => {
+                                debug!(target: "stegos_network::gatekeeper", "failure closing substream: error={}", error);
+                                break;
+                            }
+                            Poll::Pending => {
+                                self.substreams.push(SubstreamState::Closing(substream));
+                                return Poll::Pending;
+                            }
                         }
-                        Ok(Async::NotReady) => {
-                            self.substreams.push(SubstreamState::Closing(substream));
-                            return Ok(Async::NotReady);
-                        }
-                        Err(e) => {
-                            debug!(target: "stegos_network::gatekeeper", "failure closing substream: error={}", e);
-                            break;
-                        }
-                    },
+                    }
                 }
             }
         }
@@ -261,14 +263,11 @@ where
             self.keep_alive = KeepAlive::Yes;
         }
 
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }
 
-impl<TSubstream> fmt::Debug for GatekeeperHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+impl fmt::Debug for GatekeeperHandler {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("GatekeeperHandler")
             .field("substreams", &self.substreams.len())

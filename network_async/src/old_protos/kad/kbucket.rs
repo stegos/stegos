@@ -113,7 +113,7 @@ pub trait KBucketsPeerId<TOther = Self>: IntoMultihash + Clone {
 impl KBucketsPeerId for PeerId {
     #[inline]
     fn distance_with(&self, other: &Self) -> u32 {
-        Multihash::distance_with(self.as_ref(), other.as_ref())
+        Multihash::distance_with(&self.clone().into(), &other.clone().into())
     }
 
     #[inline]
@@ -125,7 +125,7 @@ impl KBucketsPeerId for PeerId {
 impl KBucketsPeerId<Multihash> for PeerId {
     #[inline]
     fn distance_with(&self, other: &Multihash) -> u32 {
-        Multihash::distance_with(self.as_ref(), other)
+        Multihash::distance_with(&self.clone().into(), other)
     }
 
     #[inline]

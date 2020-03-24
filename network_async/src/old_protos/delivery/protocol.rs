@@ -1,7 +1,7 @@
 //
 // MIT License
 //
-// Copyright (c) 2018-2019 Stegos AG
+// Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,41 +30,46 @@ use futures::future;
 use futures_codec::{Decoder, Encoder, Framed};
 use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
-use protobuf::Message as ProtobufMessage;
+use protobuf::Message;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::pin::Pin;
 use std::{io, iter};
+use stegos_crypto::pbc;
 use unsigned_varint::codec;
 
-use super::proto::gatekeeper_proto::{self, Message, Message_oneof_typ};
+use super::proto::delivery_proto;
 
-// Prtocol label for metrics
-const PROTOCOL_LABEL: &'static str = "gatekeeper";
+// Protocol label for metrics
+const PROTOCOL_LABEL: &'static str = "delivery";
 
-/// Implementation of `ConnectionUpgrade` for the Gatekeeper protocol.
-#[derive(Debug, Clone, Default)]
-pub struct GatekeeperConfig {}
+/// Implementation of `ConnectionUpgrade` for the floodsub protocol.
+#[derive(Debug, Clone)]
+pub struct DeliveryConfig {}
 
-impl GatekeeperConfig {
-    pub fn new() -> Self {
-        GatekeeperConfig {}
+impl DeliveryConfig {
+    /// Builds a new `DeliveryConfig`.
+    #[inline]
+    pub fn new() -> DeliveryConfig {
+        DeliveryConfig {}
     }
 }
 
-impl UpgradeInfo for GatekeeperConfig {
+impl UpgradeInfo for DeliveryConfig {
     type Info = &'static [u8];
     type InfoIter = iter::Once<Self::Info>;
 
     #[inline]
     fn protocol_info(&self) -> Self::InfoIter {
-        iter::once(b"/stegos/gatekeeper/0.1.0")
+        iter::once(b"/stegos/delivery/1.0.0")
     }
 }
 
-impl<TSocket> InboundUpgrade<TSocket> for GatekeeperConfig
+impl<TSocket> InboundUpgrade<TSocket> for DeliveryConfig
 where
     TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<TSocket, GatekeeperCodec>;
+    type Output = Framed<TSocket, DeliveryCodec>;
     type Error = io::Error;
     type Future = FutureResult<Self::Output, Self::Error>;
 
@@ -72,18 +77,18 @@ where
     fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
-            GatekeeperCodec {
+            DeliveryCodec {
                 length_prefix: Default::default(),
             },
         ))
     }
 }
 
-impl<TSocket> OutboundUpgrade<TSocket> for GatekeeperConfig
+impl<TSocket> OutboundUpgrade<TSocket> for DeliveryConfig
 where
     TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<TSocket, GatekeeperCodec>;
+    type Output = Framed<TSocket, DeliveryCodec>;
     type Error = io::Error;
     type Future = FutureResult<Self::Output, Self::Error>;
 
@@ -91,7 +96,7 @@ where
     fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
-            GatekeeperCodec {
+            DeliveryCodec {
                 length_prefix: Default::default(),
             },
         ))
@@ -99,47 +104,38 @@ where
 }
 
 /// Implementation of `tokio_codec::Codec`.
-pub struct GatekeeperCodec {
+pub struct DeliveryCodec {
     /// The codec for encoding/decoding the length prefix of messages.
     length_prefix: codec::UviBytes,
 }
 
-impl Encoder for GatekeeperCodec {
-    type Item = GatekeeperMessage;
+impl Encoder for DeliveryCodec {
+    type Item = DeliveryMessage;
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let proto = match item {
-            GatekeeperMessage::UnlockRequest { proof } => {
-                let mut msg_typ = gatekeeper_proto::UnlockRequest::new();
-                if let Some(proof) = proof {
-                    let mut proof_proto = gatekeeper_proto::VDFProof::new();
-                    proof_proto.set_challenge(proof.challenge);
-                    proof_proto.set_difficulty(proof.difficulty);
-                    proof_proto.set_vdf_proof(proof.proof);
-                    msg_typ.set_proof(proof_proto);
+            DeliveryMessage::UnicastMessage(unicast) => {
+                let mut msg = delivery_proto::Message::new();
+                msg.set_seqno(unicast.seq_no);
+                let mut unicast_proto = delivery_proto::Unicast::new();
+                unicast_proto.set_to(unicast.to.to_bytes().to_vec());
+                unicast_proto.set_payload(unicast.payload);
+                unicast_proto.set_dont_route(unicast.dont_route);
+                msg.set_unicast(unicast_proto);
+                msg
+            }
+            DeliveryMessage::BroadcastMessage(broadcast) => {
+                let mut msg = delivery_proto::Message::new();
+                msg.set_seqno(broadcast.seq_no);
+                let mut broadcast_proto = delivery_proto::Broadcast::new();
+                broadcast_proto.set_payload(broadcast.payload);
+                broadcast_proto.set_from(broadcast.from.to_bytes().to_vec());
+                for t in broadcast.topics.iter() {
+                    broadcast_proto.topics.push(t.to_string());
                 }
-                let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_unlock_request(msg_typ);
-                proto_msg
-            }
-            GatekeeperMessage::ChallengeReply {
-                challenge,
-                difficulty,
-            } => {
-                let mut msg_typ = gatekeeper_proto::ChallengeReply::new();
-                msg_typ.set_challenge(challenge);
-                msg_typ.set_difficulty(difficulty);
-                let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_challenge_reply(msg_typ);
-                proto_msg
-            }
-            GatekeeperMessage::PermitReply { connection_allowed } => {
-                let mut msg_typ = gatekeeper_proto::PermitReply::new();
-                msg_typ.set_connection_allowed(connection_allowed);
-                let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_permit_reply(msg_typ);
-                proto_msg
+                msg.set_broadcast(broadcast_proto);
+                msg
             }
         };
 
@@ -161,8 +157,8 @@ impl Encoder for GatekeeperCodec {
     }
 }
 
-impl Decoder for GatekeeperCodec {
-    type Item = GatekeeperMessage;
+impl Decoder for DeliveryCodec {
+    type Item = DeliveryMessage;
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
@@ -170,101 +166,138 @@ impl Decoder for GatekeeperCodec {
             Some(p) => p,
             None => return Ok(None),
         };
-
         metrics::INCOMING_TRAFFIC
             .with_label_values(&[&PROTOCOL_LABEL])
             .inc_by(packet.len() as i64);
+        let message: delivery_proto::Message = protobuf::parse_from_bytes(&packet)?;
 
-        let message: Message = protobuf::parse_from_bytes(&packet)?;
+        let seq_no = message.get_seqno().to_vec();
 
         match message.typ {
-            Some(Message_oneof_typ::unlock_request(unlock_request_msg)) => {
-                let proof = if unlock_request_msg.has_proof() {
-                    let proof_msg = unlock_request_msg.get_proof();
-                    let challenge = proof_msg.get_challenge();
-                    let difficulty = proof_msg.get_difficulty();
-                    let vdf_proof = proof_msg.get_vdf_proof();
-                    Some(VDFProof {
-                        challenge: challenge.to_vec(),
-                        difficulty,
-                        proof: vdf_proof.to_vec(),
-                    })
-                } else {
-                    None
-                };
-                Ok(Some(GatekeeperMessage::UnlockRequest { proof }))
+            Some(delivery_proto::Message_oneof_typ::unicast(msg)) => {
+                let to = pbc::PublicKey::try_from_bytes(msg.get_to()).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "bad protobuf encoding, failed to decode unicast to field",
+                    )
+                })?;
+                let payload = msg.get_payload().to_vec();
+                let dont_route = msg.get_dont_route();
+                return Ok(Some(DeliveryMessage::UnicastMessage(Unicast {
+                    to,
+                    payload,
+                    dont_route,
+                    seq_no,
+                })));
             }
-            Some(Message_oneof_typ::challenge_reply(reply_msg)) => {
-                Ok(Some(GatekeeperMessage::ChallengeReply {
-                    challenge: reply_msg.get_challenge().to_vec(),
-                    difficulty: reply_msg.get_difficulty(),
-                }))
-            }
-            Some(Message_oneof_typ::permit_reply(reply_msg)) => {
-                Ok(Some(GatekeeperMessage::PermitReply {
-                    connection_allowed: reply_msg.get_connection_allowed(),
-                }))
+            Some(delivery_proto::Message_oneof_typ::broadcast(msg)) => {
+                let mut topics: Vec<String> = Vec::new();
+                let from = pbc::PublicKey::try_from_bytes(msg.get_from()).map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "bad protobuf encoding, failed to decode broadcast from field",
+                    )
+                })?;
+                let payload = msg.get_payload().to_vec();
+                for t in msg.get_topics().into_iter() {
+                    topics.push(t.to_string());
+                }
+                return Ok(Some(DeliveryMessage::BroadcastMessage(Broadcast {
+                    from,
+                    payload,
+                    topics,
+                    seq_no,
+                })));
             }
             None => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "bad protobuf encoding",
+                    "bad protobuf encoding, unknown message type",
                 ));
             }
         }
     }
 }
 
-/// Structs
-/// VDF solution proof
-#[derive(Debug, Clone, PartialEq)]
-pub struct VDFProof {
-    pub challenge: Vec<u8>,
-    pub difficulty: u64,
-    pub proof: Vec<u8>,
+/// Message that we can send to a peer or received from a peer.
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub enum DeliveryMessage {
+    UnicastMessage(Unicast),
+    BroadcastMessage(Broadcast),
 }
 
-/// Message that we can send to a peer or received from a peer.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GatekeeperMessage {
-    UnlockRequest { proof: Option<VDFProof> },
-    ChallengeReply { challenge: Vec<u8>, difficulty: u64 },
-    PermitReply { connection_allowed: bool },
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct Unicast {
+    pub to: pbc::PublicKey,
+    pub payload: Vec<u8>,
+    pub dont_route: bool,
+    pub seq_no: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Hash)]
+pub struct Broadcast {
+    pub from: pbc::PublicKey,
+    pub topics: Vec<String>,
+    pub payload: Vec<u8>,
+    pub seq_no: Vec<u8>,
+}
+
+impl Unicast {
+    pub fn digest(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl Broadcast {
+    pub fn digest(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{GatekeeperCodec, GatekeeperMessage, VDFProof};
+    use super::{Broadcast, DeliveryCodec, DeliveryMessage, Unicast};
     use futures::{future, Future, Sink, Stream};
-    use futures_codec::Framed;
+    use rand;
+    use stegos_crypto::pbc;
+    use tokio::codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
-        let unlock_request_null = GatekeeperMessage::UnlockRequest { proof: None };
-        test_one(unlock_request_null);
+        let (_, pkey) = pbc::make_random_keys();
 
-        let proof = VDFProof {
-            challenge: rand::random::<[u8; 20]>().to_vec(),
-            difficulty: rand::random::<u64>(),
-            proof: rand::random::<[u8; 20]>().to_vec(),
-        };
-        let unlock_request_proof = GatekeeperMessage::UnlockRequest { proof: Some(proof) };
-        test_one(unlock_request_proof);
+        let msg = DeliveryMessage::UnicastMessage(Unicast {
+            to: pkey,
+            payload: random_vec(1024),
+            dont_route: false,
+            seq_no: rand::random::<[u8; 20]>().to_vec(),
+        });
 
-        let challenge_reply = GatekeeperMessage::ChallengeReply {
-            challenge: random_vec(256),
-            difficulty: 16,
-        };
-        test_one(challenge_reply);
+        test_one(msg);
 
-        let permit_reply = GatekeeperMessage::PermitReply {
-            connection_allowed: false,
-        };
-        test_one(permit_reply);
+        let (_, node_id) = pbc::make_random_keys();
+
+        let msg = DeliveryMessage::BroadcastMessage(Broadcast {
+            from: node_id,
+            payload: random_vec(1024),
+            topics: vec![
+                "topic1".to_string(),
+                "topic2".to_string(),
+                "topic3".to_string(),
+                "topic4".to_string(),
+            ],
+            seq_no: rand::random::<[u8; 20]>().to_vec(),
+        });
+
+        test_one(msg);
     }
 
-    fn test_one(msg: GatekeeperMessage) {
+    fn test_one(msg: DeliveryMessage) {
         let msg_server = msg.clone();
         let msg_client = msg.clone();
 
@@ -278,7 +311,7 @@ mod tests {
             .and_then(|(c, _)| {
                 future::ok(Framed::new(
                     c.unwrap(),
-                    GatekeeperCodec {
+                    DeliveryCodec {
                         length_prefix: Default::default(),
                     },
                 ))
@@ -297,7 +330,7 @@ mod tests {
             .and_then(|c| {
                 future::ok(Framed::new(
                     c,
-                    GatekeeperCodec {
+                    DeliveryCodec {
                         length_prefix: Default::default(),
                     },
                 ))

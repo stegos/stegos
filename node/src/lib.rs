@@ -154,12 +154,14 @@ pub enum NodeOutgoingEvent {
     ChainNotification(ChainNotification),
     StatusNotification(StatusNotification),
     MacroBlockProposeTimer(Duration),
+    MacroBlockProposeTimerCancel,
     MacroBlockViewChangeTimer(Duration),
     MicroBlockProposeTimer {
         random: Hash,
         vdf: VDF,
         difficulty: u64,
     },
+    MicroBlockProposeTimerCancel,
     MicroBlockViewChangeTimer(Duration),
     RequestBlocksFrom {
         from: pbc::PublicKey,
@@ -1267,12 +1269,16 @@ impl NodeState {
                   leader);
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
+
             self.outgoing
-                .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
-                    self.cfg.micro_block_timeout,
-                ));
+                .push(NodeOutgoingEvent::MicroBlockProposeTimerCancel);
             std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
         };
+
+        self.outgoing
+            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+                self.cfg.micro_block_timeout,
+            ));
     }
 
     /// Called when a leader for the next macro block has changed.
@@ -1307,6 +1313,8 @@ impl NodeState {
                     )));
                 *block_timer = MacroBlockTimer::Propose;
             } else {
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
                 *block_timer = MacroBlockTimer::None;
             }
         } else {
@@ -1319,13 +1327,16 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
-            let relevant_round = 1 + consensus.round();
             self.outgoing
-                .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
-                    self.cfg.macro_block_timeout * relevant_round,
-                ));
+                .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
             *block_timer = MacroBlockTimer::ViewChange;
         }
+
+        let relevant_round = 1 + consensus.round();
+        self.outgoing
+            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
+                self.cfg.macro_block_timeout * relevant_round,
+            ));
     }
 
     /// Called when facilitator is changed.

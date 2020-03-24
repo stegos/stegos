@@ -1,28 +1,32 @@
-// Copyright 2018 Parity Technologies (UK) Ltd.
 //
-// Permission is hereby granted, free of charge, to any person obtaining a
-// copy of this software and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including without limitation
-// the rights to use, copy, modify, merge, publish, distribute, sublicense,
-// and/or sell copies of the Software, and to permit persons to whom the
-// Software is furnished to do so, subject to the following conditions:
+// MIT License
 //
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
+// Copyright (c) 2019 Stegos AG
 //
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 // FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
 // AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-// DEALINGS IN THE SOFTWARE.
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
 
-use super::behavior::{FloodsubRecvEvent, FloodsubSendEvent};
-use super::protocol::{FloodsubCodec, FloodsubConfig, FloodsubRpc};
+use super::protocol::{DeliveryCodec, DeliveryConfig, DeliveryMessage};
 
 use futures::prelude::*;
 use futures::task::{Context, Poll};
+use futures::Sink;
+use futures::StreamExt;
 use futures_codec::Framed;
 use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
@@ -32,43 +36,50 @@ use libp2p_swarm::protocols_handler::{
 use libp2p_swarm::NegotiatedSubstream;
 use log::{debug, trace};
 use smallvec::SmallVec;
+use std::collections::VecDeque;
 use std::pin::Pin;
 use std::{fmt, io, time::Instant};
 
 use crate::NETWORK_IDLE_TIMEOUT;
 
-/// Protocol handler that handles communication with the remote for the floodsub protocol.
+/// Protocol handler that handles communication with the remote for the Delivery protocol.
 ///
 /// The handler will automatically open a substream with the remote for each request we make.
 ///
 /// It also handles requests made by the remote.
-pub struct FloodsubHandler {
-    /// Configuration for the floodsub protocol.
-    config: FloodsubConfig,
+pub struct DeliveryHandler {
+    /// Configuration for the Delivery protocol.
+    config: DeliveryConfig,
+
     /// The active substreams.
     // TODO: add a limit to the number of allowed substreams
     substreams: Vec<SubstreamState>,
-    /// KeepAlive status
+
+    // How long to keep connection open
     keep_alive: KeepAlive,
+
     /// Queue of values that we want to send to the remote.
-    send_queue: SmallVec<[FloodsubRpc; 16]>,
+    send_queue: SmallVec<[DeliveryMessage; 16]>,
+
+    /// Events to send upstream
+    out_events: VecDeque<DeliveryRecvEvent>,
 }
 
 /// State of an active substream, opened either by us or by the remote.
 enum SubstreamState {
     /// Waiting for a message from the remote.
-    WaitingInput(Framed<NegotiatedSubstream, FloodsubCodec>),
+    WaitingInput(Framed<NegotiatedSubstream, DeliveryCodec>),
     /// Waiting to send a message to the remote.
-    PendingSend(Framed<NegotiatedSubstream, FloodsubCodec>, FloodsubRpc),
+    PendingSend(Framed<NegotiatedSubstream, DeliveryCodec>, DeliveryMessage),
     /// Waiting to flush the substream so that the data arrives to the remote.
-    PendingFlush(Framed<NegotiatedSubstream, FloodsubCodec>),
+    PendingFlush(Framed<NegotiatedSubstream, DeliveryCodec>),
     /// The substream is being closed.
-    Closing(Framed<NegotiatedSubstream, FloodsubCodec>),
+    Closing(Framed<NegotiatedSubstream, DeliveryCodec>),
 }
 
 impl SubstreamState {
     /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<NegotiatedSubstream, FloodsubCodec> {
+    fn into_substream(self) -> Framed<NegotiatedSubstream, DeliveryCodec> {
         match self {
             SubstreamState::WaitingInput(substream) => substream,
             SubstreamState::PendingSend(substream, _) => substream,
@@ -78,25 +89,26 @@ impl SubstreamState {
     }
 }
 
-impl FloodsubHandler {
-    /// Builds a new `FloodsubHandler`.
+impl DeliveryHandler {
+    /// Builds a new `DeliveryHandler`.
     pub fn new() -> Self {
-        FloodsubHandler {
-            config: FloodsubConfig::new(),
+        DeliveryHandler {
+            config: DeliveryConfig::new(),
             substreams: Vec::new(),
             keep_alive: KeepAlive::Yes,
             send_queue: SmallVec::new(),
+            out_events: VecDeque::new(),
         }
     }
 }
 
-impl ProtocolsHandler for FloodsubHandler {
-    type InEvent = FloodsubSendEvent;
-    type OutEvent = FloodsubRecvEvent;
+impl ProtocolsHandler for DeliveryHandler {
+    type InEvent = DeliverySendEvent;
+    type OutEvent = DeliveryRecvEvent;
     type Error = io::Error;
-    type InboundProtocol = FloodsubConfig;
-    type OutboundProtocol = FloodsubConfig;
-    type OutboundOpenInfo = FloodsubRpc;
+    type InboundProtocol = DeliveryConfig;
+    type OutboundProtocol = DeliveryConfig;
+    type OutboundOpenInfo = DeliveryMessage;
 
     #[inline]
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol> {
@@ -122,7 +134,7 @@ impl ProtocolsHandler for FloodsubHandler {
     #[inline]
     fn inject_event(&mut self, event: Self::InEvent) {
         match event {
-            FloodsubSendEvent::Publish(message) => {
+            DeliverySendEvent::Deliver(message) => {
                 self.send_queue.push(message);
             }
         }
@@ -132,11 +144,10 @@ impl ProtocolsHandler for FloodsubHandler {
     fn inject_dial_upgrade_error(
         &mut self,
         _: Self::OutboundOpenInfo,
-        e: ProtocolsHandlerUpgrErr<
+        _: ProtocolsHandlerUpgrErr<
             <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Error,
         >,
     ) {
-        trace!(target: "stegos_network::pubsub", "got dial outbound failure: {}", e);
     }
 
     #[inline]
@@ -155,6 +166,11 @@ impl ProtocolsHandler for FloodsubHandler {
             io::Error,
         >,
     > {
+        if !self.out_events.is_empty() {
+            let message = self.out_events.pop_front().unwrap();
+            return Poll::Ready(ProtocolsHandlerEvent::Custom(message));
+        }
+
         if !self.send_queue.is_empty() {
             let message = self.send_queue.remove(0);
             return Poll::Ready(ProtocolsHandlerEvent::OutboundSubstreamRequest {
@@ -173,11 +189,11 @@ impl ProtocolsHandler for FloodsubHandler {
                                 self.substreams
                                     .push(SubstreamState::WaitingInput(substream));
                                 return Poll::Ready(ProtocolsHandlerEvent::Custom(
-                                    FloodsubRecvEvent::Message(message),
+                                    DeliveryRecvEvent::Message(message),
                                 ));
                             }
-                            Poll::Ready(Some(Err(error))) => {
-                                debug!(target: "stegos_network::pubsub", "error reading from substream: error={}", error);
+                            Poll::Ready(Some(Err(e))) => {
+                                debug!(target: "stegos_network::delivery", "error reading from substream: error={}", e);
                                 SubstreamState::Closing(substream)
                             }
                             Poll::Ready(None) => SubstreamState::Closing(substream),
@@ -192,30 +208,25 @@ impl ProtocolsHandler for FloodsubHandler {
                         match Sink::poll_ready(Pin::new(&mut substream), cx) {
                             Poll::Ready(Ok(())) => {
                                 match Sink::start_send(Pin::new(&mut substream), message) {
-                                    Ok(()) => SubstreamState::PendingFlush(substream),
+                                    Ok(()) => (SubstreamState::PendingFlush(substream)),
                                     Err(error) => {
-                                        debug!(target: "stegos_network::pubsub", "error sending to substream: error={}", error);
+                                        debug!(target: "stegos_network::delivery", "error sending to substream: error={}", error);
                                         SubstreamState::Closing(substream)
                                     }
                                 }
                             }
-                            Poll::Pending => {
-                                self.substreams
-                                    .push(SubstreamState::PendingSend(substream, message));
-                                return Poll::Pending;
-                            }
+                            Poll::Pending => (SubstreamState::PendingSend(substream, message)),
                             Poll::Ready(Err(error)) => {
-                                debug!(target: "stegos_network::pubsub", "error sending to substream: error={}", error);
+                                debug!(target: "stegos_network::delivery", "error sending to substream: error={}", error);
                                 SubstreamState::Closing(substream)
                             }
                         }
                     }
-
                     SubstreamState::PendingFlush(mut substream) => {
                         match Sink::poll_flush(Pin::new(&mut substream), cx) {
                             Poll::Ready(Ok(())) => SubstreamState::Closing(substream),
-                            Poll::Ready(Err(error)) => {
-                                debug!(target: "stegos_network::pubsub", "error flushing substream: error={}", error);
+                            Poll::Ready(Err(e)) => {
+                                debug!(target: "stegos_network::delivery", "error flushing substream: error={}", e);
                                 SubstreamState::Closing(substream)
                             }
                             Poll::Pending => {
@@ -225,19 +236,18 @@ impl ProtocolsHandler for FloodsubHandler {
                             }
                         }
                     }
-
-                    SubstreamState::Closing(mut substream) => {
-                        match Sink::poll_close(Pin::new(&mut substream), cx) {
+                    SubstreamState::Closing(mut stream) => {
+                        match Sink::poll_close(Pin::new(&mut stream), cx) {
                             Poll::Ready(Ok(())) => {
                                 self.substreams.shrink_to_fit();
                                 break;
                             }
-                            Poll::Ready(Err(error)) => {
-                                trace!(target: "stegos_network::pubsub", "failure closing substream: {}", error);
+                            Poll::Ready(Err(e)) => {
+                                trace!(target: "stegos_network::delivery", "failure closing substream: {}", e);
                                 break;
                             }
                             Poll::Pending => {
-                                self.substreams.push(SubstreamState::Closing(substream));
+                                self.substreams.push(SubstreamState::Closing(stream));
                                 return Poll::Pending;
                             }
                         }
@@ -256,12 +266,22 @@ impl ProtocolsHandler for FloodsubHandler {
     }
 }
 
-impl fmt::Debug for FloodsubHandler {
+#[derive(Debug)]
+pub enum DeliveryRecvEvent {
+    Message(DeliveryMessage),
+}
+
+#[derive(Debug)]
+pub enum DeliverySendEvent {
+    Deliver(DeliveryMessage),
+}
+
+impl fmt::Debug for DeliveryHandler {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        f.debug_struct("FloodsubHandler")
-            .field("keep_alive", &self.keep_alive)
+        f.debug_struct("DeliveryHandler")
             .field("substreams", &self.substreams.len())
             .field("send_queue", &self.send_queue.len())
+            .field("out queue", &self.out_events.len())
             .finish()
     }
 }

@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use futures::prelude::*;
+use futures::task::{Context, Poll};
 use libp2p_core::{multiaddr::Protocol, ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,

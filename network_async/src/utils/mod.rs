@@ -33,22 +33,29 @@ pub use self::peer_id_key::PeerIdKey;
 
 use super::proto::unicast_proto;
 use failure::{format_err, Error};
+use futures::future::Future;
 use libp2p::identity::ed25519;
 use libp2p::Multiaddr;
 use log::*;
 use protobuf::Message;
 use std::net::{SocketAddr, SocketAddrV4};
+use std::pin::Pin;
 use std::str::FromStr;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;
 use trust_dns_resolver::config::{NameServerConfig, Protocol};
 
+pub type FutureResult<I, E> = futures::future::Ready<Result<I, E>>;
+
 const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
-pub fn resolve_seed_nodes(seed_pool: &str, dns_servers: &[String]) -> Result<Vec<String>, Error> {
+pub async fn resolve_seed_nodes(
+    seed_pool: &str,
+    dns_servers: &[String],
+) -> Result<Vec<String>, Error> {
     use trust_dns_resolver::{
         config::{ResolverConfig, ResolverOpts},
-        Resolver,
+        AsyncResolver,
     };
 
     let dns_servers: Result<Vec<_>, std::net::AddrParseError> = dns_servers
@@ -68,17 +75,18 @@ pub fn resolve_seed_nodes(seed_pool: &str, dns_servers: &[String]) -> Result<Vec
     if seed_pool != "" {
         debug!("Initialising dns resolver.");
         let resolver = if dns_servers.is_empty() {
-            Resolver::from_system_conf()?
+            AsyncResolver::tokio_from_system_conf().await?
         } else {
             debug!("Setting dns servers to {:?}.", dns_servers);
             let config = ResolverConfig::from_parts(None, vec![], dns_servers);
-            Resolver::new(config, ResolverOpts::default())?
+            AsyncResolver::tokio(config, ResolverOpts::default()).await?
         };
         info!("Trying to resolve seed nodes SRV records.");
-        let srv_records = resolver.srv_lookup(seed_pool)?;
+        let srv_records = resolver.srv_lookup(seed_pool).await?;
         for srv in srv_records.iter() {
             let addr_records = resolver
-                .ipv4_lookup(&srv.target().to_utf8())
+                .ipv4_lookup(srv.target().clone())
+                .await
                 .map_err(|e| format_err!("Failed to resolve seed_pool: {}", e))?;
 
             for addr in addr_records.iter() {
@@ -105,10 +113,10 @@ pub fn ed25519_from_pbc(source: &pbc::SecretKey) -> ed25519::Keypair {
 
 #[derive(Clone, Debug)]
 pub struct UnicastPayload {
-    from: pbc::PublicKey,
-    to: pbc::PublicKey,
-    protocol_id: String,
-    data: Vec<u8>,
+    pub from: pbc::PublicKey,
+    pub to: pbc::PublicKey,
+    pub protocol_id: String,
+    pub data: Vec<u8>,
 }
 
 // Encode unicast message

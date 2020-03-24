@@ -1,4 +1,6 @@
 //
+// MIT License
+//
 // Copyright (c) 2019 Stegos AG
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -19,9 +21,5 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod handler;
-pub mod protocol;
-
-mod behavior;
-
-pub use self::behavior::{Replication, ReplicationEvent};
+#![allow(bare_trait_objects)]
+include!(concat!(env!("OUT_DIR"), "/delivery_proto/mod.rs"));

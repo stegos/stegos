@@ -25,6 +25,8 @@ use super::protocol::{
 };
 
 use futures::prelude::*;
+use futures::task::{Context, Poll};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -32,13 +34,12 @@ use libp2p_swarm::{
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use smallvec::SmallVec;
-use std::time::{Duration, Instant};
+use std::pin::Pin;
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
     marker::PhantomData,
 };
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
+use tokio::time::{Delay, Duration, Instant};
 use update_rate::{RateCounter, RollingRateCounter};
 
 // How many samples to use for rate calculation
@@ -48,7 +49,7 @@ const LRU_EXPIRE_TIME: Duration = Duration::from_secs(60); // 1 minute to allow 
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
-pub struct Floodsub<TSubstream> {
+pub struct Floodsub {
     /// Events that need to be yielded to the outside when polling.
     events: VecDeque<NetworkBehaviourAction<FloodsubSendEvent, FloodsubEvent>>,
 
@@ -80,12 +81,9 @@ pub struct Floodsub<TSubstream> {
 
     /// Do we relay (disabled on edge nodes)
     relaying: bool,
-
-    /// Marker to pin the generics.
-    marker: PhantomData<TSubstream>,
 }
 
-impl<TSubstream> Floodsub<TSubstream> {
+impl Floodsub {
     /// Creates a `Floodsub`.
     pub fn new(local_peer_id: PeerId, relaying: bool) -> Self {
         Floodsub {
@@ -97,14 +95,13 @@ impl<TSubstream> Floodsub<TSubstream> {
             subscribed_topics: SmallVec::new(),
             received: LruCache::with_expiry_duration_and_capacity(LRU_EXPIRE_TIME, 1_000_000),
             incoming_rates: HashMap::new(),
-            metrics_update_delay: Delay::new(Instant::now() + METRICS_UPDATE_INTERVAL),
+            metrics_update_delay: tokio::time::delay_for(METRICS_UPDATE_INTERVAL),
             relaying,
-            marker: PhantomData,
         }
     }
 }
 
-impl<TSubstream> Floodsub<TSubstream> {
+impl Floodsub {
     /// Subscribes to a topic.
     ///
     /// Returns true if the subscription worked. Returns false if we were already subscribed.
@@ -217,11 +214,8 @@ impl<TSubstream> Floodsub<TSubstream> {
     }
 }
 
-impl<TSubstream> NetworkBehaviour for Floodsub<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
-    type ProtocolsHandler = FloodsubHandler<TSubstream>;
+impl NetworkBehaviour for Floodsub {
+    type ProtocolsHandler = FloodsubHandler;
     type OutEvent = FloodsubEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
@@ -361,16 +355,17 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
         _: &mut impl PollParameters,
-    ) -> Async<
+    ) -> Poll<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
             Self::OutEvent,
         >,
     > {
         loop {
-            match self.metrics_update_delay.poll() {
-                Ok(Async::Ready(_)) => {
+            match self.metrics_update_delay.poll_unpin(cx) {
+                Poll::Ready(_) => {
                     for (peer_id, counter) in self.incoming_rates.iter() {
                         metrics::INCOMING_RATES
                             .with_label_values(&[&peer_id.clone().to_base58()])
@@ -379,19 +374,15 @@ where
                     self.metrics_update_delay
                         .reset(Instant::now() + METRICS_UPDATE_INTERVAL);
                 }
-                Ok(Async::NotReady) => break,
-                Err(e) => {
-                    debug!(target: "stegos_network::pubsub", "metrics delay timer error: error={}", e);
-                    break;
-                }
+                Poll::Pending => break,
             }
         }
 
         if let Some(event) = self.events.pop_front() {
-            return Async::Ready(event);
+            return Poll::Ready(event);
         }
 
-        Async::NotReady
+        Poll::Pending
     }
 }
 

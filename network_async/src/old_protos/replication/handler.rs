@@ -22,20 +22,27 @@
 use super::protocol::{ReplicationCodec, ReplicationConfig};
 
 use futures::prelude::*;
-use futures::sync::mpsc;
 //use libp2p_core::nodes::Substream;
 use futures::future;
 use futures::sink;
+use futures::sink::SinkExt;
 use futures::stream;
+use futures::task::{Context, Poll};
 use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
 use libp2p_swarm::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
+use libp2p_swarm::NegotiatedSubstream;
+
 use log::*;
 use std::fmt;
 use std::io;
-use tokio::codec::Framed;
-use tokio::io::{AsyncRead, AsyncWrite};
+use std::io::ErrorKind;
+use std::pin::Pin;
+
+use futures::channel::mpsc;
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 
 const INPUT_BUFFER_SIZE: usize = 10;
 const OUTPUT_BUFFER_SIZE: usize = 10;
@@ -68,10 +75,7 @@ type Message = Vec<u8>;
 
 /// State of an active substream, opened either by us or by the remote.
 /// Sic: this structure is `pub` because it doesn't compile otherwise.
-enum SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
+enum SubstreamState {
     /// A new peer.
     Registered,
     /// A request to establish connection has been received.
@@ -83,45 +87,17 @@ where
     ConnectionFailed { error: io::Error },
     /// Connected to a remote side.
     Connected {
-        protocol: Framed<Negotiated<TSubstream>, ReplicationCodec>,
+        protocol: Framed<NegotiatedSubstream, ReplicationCodec>,
     },
     /// Accepted a remote side.
     Accepted {
-        protocol: Framed<Negotiated<TSubstream>, ReplicationCodec>,
+        protocol: Framed<NegotiatedSubstream, ReplicationCodec>,
     },
     /// Forwarding network <-> mpsc::channel().
     /// Sic: Rust doesn't support Box::new() for <T> type.
     Forwarding {
-        rx_forward: future::Map<
-            stream::Forward<
-                stream::SplitStream<Framed<Negotiated<TSubstream>, ReplicationCodec>>,
-                sink::SinkMapErr<
-                    futures::sync::mpsc::Sender<Vec<u8>>,
-                    fn(futures::sync::mpsc::SendError<Vec<u8>>) -> io::Error,
-                >,
-            >,
-            fn(
-                (
-                    stream::SplitStream<Framed<Negotiated<TSubstream>, ReplicationCodec>>,
-                    sink::SinkMapErr<
-                        futures::sync::mpsc::Sender<Vec<u8>>,
-                        fn(futures::sync::mpsc::SendError<Vec<u8>>) -> io::Error,
-                    >,
-                ),
-            ),
-        >,
-        tx_forward: future::Map<
-            stream::Forward<
-                stream::MapErr<futures::sync::mpsc::Receiver<Vec<u8>>, fn(()) -> io::Error>,
-                stream::SplitSink<Framed<Negotiated<TSubstream>, ReplicationCodec>>,
-            >,
-            fn(
-                (
-                    stream::MapErr<futures::sync::mpsc::Receiver<Vec<u8>>, fn(()) -> io::Error>,
-                    stream::SplitSink<Framed<Negotiated<TSubstream>, ReplicationCodec>>,
-                ),
-            ),
-        >,
+        rx_forward: Pin<Box<dyn Future<Output = Result<(), io::Error>> + Send>>,
+        tx_forward: Pin<Box<dyn Future<Output = Result<(), io::Error>> + Send>>,
     },
 }
 
@@ -129,18 +105,15 @@ fn to_io_error<E>(_e: E) -> io::Error {
     io::Error::new(io::ErrorKind::ConnectionReset, "channel")
 }
 
-impl<TSubstream> Future for SubstreamState<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
-    type Item = (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>);
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, ()> {
+impl SubstreamState {
+    fn poll_unpin(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>), io::Error>> {
         match self {
             SubstreamState::Registered
             | SubstreamState::InjectConnecting
-            | SubstreamState::Connecting => Ok(Async::NotReady),
+            | SubstreamState::Connecting => Poll::Pending,
             SubstreamState::Connected { .. } | SubstreamState::Accepted { .. } => {
                 let protocol = match std::mem::replace(self, SubstreamState::Registered) {
                     SubstreamState::Connected { protocol }
@@ -151,43 +124,48 @@ where
                 let (net_tx, net_rx) = protocol.split();
                 let (node_tx, rx) = mpsc::channel::<Vec<u8>>(INPUT_BUFFER_SIZE);
                 let (tx, node_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER_SIZE);
-                let node_tx = node_tx.sink_map_err(to_io_error as fn(_) -> _);
-                let node_rx = node_rx.map_err(to_io_error as fn(_) -> _);
+                let node_tx =
+                    node_tx.sink_map_err(|e| io::Error::new(ErrorKind::Other, "forward error"));
+                let node_rx = node_rx.map(|e| Ok(e));
+                let rx_forward = Box::pin(net_rx.forward(node_tx));
+                let tx_forward = Box::pin(node_rx.forward(net_tx));
 
-                let rx_forward = net_rx.forward(node_tx).map(drop as fn(_));
-                let tx_forward = node_rx.forward(net_tx).map(drop as fn(_) -> _);
+                let rx_forward =
+                    rx_forward as Pin<Box<dyn Future<Output = Result<(), io::Error>> + Send>>;
+                let tx_forward =
+                    tx_forward as Pin<Box<dyn Future<Output = Result<(), io::Error>> + Send>>;
 
                 let state = SubstreamState::Forwarding {
                     rx_forward,
                     tx_forward,
                 };
                 std::mem::replace(self, state);
-                Ok(Async::Ready((tx, rx)))
+                Poll::Ready(Ok((tx, rx)))
             }
             SubstreamState::Forwarding {
                 tx_forward,
                 rx_forward,
-            } => match tx_forward.poll() {
-                Ok(Async::Ready(())) => {
+            } => match tx_forward.poll_unpin(cx) {
+                Poll::Ready(Ok(())) => {
                     std::mem::replace(self, SubstreamState::Registered);
-                    Ok(Async::NotReady)
+                    Poll::Pending
                 }
-                Ok(Async::NotReady) => match rx_forward.poll() {
-                    Ok(Async::Ready(())) => {
+                Poll::Pending => match rx_forward.poll_unpin(cx) {
+                    Poll::Ready(Ok(())) => {
                         std::mem::replace(self, SubstreamState::Registered);
-                        Ok(Async::NotReady)
+                        Poll::Pending
                     }
-                    Ok(Async::NotReady) => Ok(Async::NotReady),
-                    Err(error) => {
+                    Poll::Ready(Err(error)) => {
                         error!("rx error: {:?}", error);
                         std::mem::replace(self, SubstreamState::Registered);
-                        Ok(Async::NotReady)
+                        Poll::Pending
                     }
+                    Poll::Pending => Poll::Pending,
                 },
-                Err(error) => {
+                Poll::Ready(Err(error)) => {
                     error!("tx error: {:?}", error);
                     std::mem::replace(self, SubstreamState::Registered);
-                    Ok(Async::NotReady)
+                    Poll::Pending
                 }
             },
             SubstreamState::ConnectionFailed { .. } => {
@@ -198,21 +176,15 @@ where
     }
 }
 
-pub struct ReplicationHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
+pub struct ReplicationHandler {
     /// Configuration for the floodsub protocol.
     config: ReplicationConfig,
 
-    upstream: SubstreamState<TSubstream>,
-    downstream: SubstreamState<TSubstream>,
+    upstream: SubstreamState,
+    downstream: SubstreamState,
 }
 
-impl<TSubstream> ReplicationHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
+impl ReplicationHandler {
     /// Builds a new `ReplicationHandler`.
     pub fn new() -> Self {
         ReplicationHandler {
@@ -223,14 +195,10 @@ where
     }
 }
 
-impl<TSubstream> ProtocolsHandler for ReplicationHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
+impl ProtocolsHandler for ReplicationHandler {
     type InEvent = HandlerInEvent;
     type OutEvent = HandlerOutEvent;
     type Error = io::Error;
-    type Substream = TSubstream;
     type InboundProtocol = ReplicationConfig;
     type OutboundProtocol = ReplicationConfig;
     type OutboundOpenInfo = ();
@@ -242,7 +210,7 @@ where
 
     fn inject_fully_negotiated_inbound(
         &mut self,
-        protocol: <Self::InboundProtocol as InboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
     ) {
         match self.downstream {
             SubstreamState::Registered | SubstreamState::ConnectionFailed { .. } => {
@@ -257,7 +225,7 @@ where
 
     fn inject_fully_negotiated_outbound(
         &mut self,
-        protocol: <Self::OutboundProtocol as OutboundUpgrade<TSubstream>>::Output,
+        protocol: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
         _open_info: Self::OutboundOpenInfo,
     ) {
         match self.upstream {
@@ -291,7 +259,7 @@ where
         &mut self,
         _: Self::OutboundOpenInfo,
         e: ProtocolsHandlerUpgrErr<
-            <Self::OutboundProtocol as OutboundUpgrade<Self::Substream>>::Error,
+            <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Error,
         >,
     ) {
         trace!("Connection failed: {}", e);
@@ -310,52 +278,56 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
     ) -> Poll<
-        ProtocolsHandlerEvent<Self::OutboundProtocol, Self::OutboundOpenInfo, Self::OutEvent>,
-        io::Error,
+        ProtocolsHandlerEvent<
+            Self::OutboundProtocol,
+            Self::OutboundOpenInfo,
+            Self::OutEvent,
+            Self::Error,
+        >,
     > {
         trace!("Poll");
 
         if let SubstreamState::InjectConnecting = &self.upstream {
             // Create a new substream.
             self.upstream = SubstreamState::Connecting;
-            return Ok(Async::Ready(
-                ProtocolsHandlerEvent::OutboundSubstreamRequest {
-                    info: (),
-                    protocol: SubstreamProtocol::new(self.config.clone()),
-                },
-            ));
+            return Poll::Ready(ProtocolsHandlerEvent::OutboundSubstreamRequest {
+                info: (),
+                protocol: SubstreamProtocol::new(self.config.clone()),
+            });
         } else if let SubstreamState::ConnectionFailed { .. } = &self.upstream {
             // Substream creation failed.
             let error = match std::mem::replace(&mut self.upstream, SubstreamState::Registered) {
                 SubstreamState::ConnectionFailed { error } => error,
                 _ => unreachable!("Expected ConnectionFailed state"),
             };
-            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(
+            return Poll::Ready(ProtocolsHandlerEvent::Custom(
                 HandlerOutEvent::ConnectionFailed { error },
-            )));
+            ));
         };
 
-        if let Async::Ready((tx, rx)) = self.upstream.poll().unwrap() {
-            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(
-                HandlerOutEvent::Connected { rx, tx },
-            )));
+        if let Poll::Ready(r) = self.upstream.poll_unpin(cx) {
+            let (tx, rx) = r.unwrap();
+            return Poll::Ready(ProtocolsHandlerEvent::Custom(HandlerOutEvent::Connected {
+                rx,
+                tx,
+            }));
         }
 
-        if let Async::Ready((tx, rx)) = self.downstream.poll().unwrap() {
-            return Ok(Async::Ready(ProtocolsHandlerEvent::Custom(
-                HandlerOutEvent::Accepted { rx, tx },
-            )));
+        if let Poll::Ready(r) = self.downstream.poll_unpin(cx) {
+            let (tx, rx) = r.unwrap();
+            return Poll::Ready(ProtocolsHandlerEvent::Custom(HandlerOutEvent::Accepted {
+                rx,
+                tx,
+            }));
         }
 
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }
 
-impl<TSubstream> fmt::Debug for ReplicationHandler<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite + Send,
-{
+impl fmt::Debug for ReplicationHandler {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         f.debug_struct("ReplicationHandler").finish()
     }

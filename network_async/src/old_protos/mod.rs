@@ -23,9 +23,10 @@
 
 pub use self::replication::ReplicationEvent;
 
-// pub mod discovery;
-// pub mod gatekeeper;
-// pub mod kad;
+pub mod delivery;
+pub mod discovery;
+pub mod gatekeeper;
+pub mod kad;
 // pub mod ncp;
-// pub mod pubsub;
+pub mod pubsub;
 pub mod replication;

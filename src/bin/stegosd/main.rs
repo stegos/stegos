@@ -534,11 +534,12 @@ async fn run() -> Result<(), Error> {
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
     // Initialize network
-    let (network, network_service, peer_id) = Libp2pNetwork::new(
+    let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
         cfg.network.clone(),
         network_skey.clone(),
         network_pkey.clone(),
-    )?;
+    )
+    .await?;
 
     // // Start metrics exporter
     // if cfg.general.prometheus_endpoint != "" {
@@ -561,9 +562,6 @@ async fn run() -> Result<(), Error> {
         cfg.general.chain,
         Hash::digest(&genesis)
     );
-
-    let (replication_tx, replication_rx) = futures::channel::mpsc::unbounded();
-
     let (node, wallet): (_, Option<()>) = {
         //if !args.is_present("light")
         info!("Starting the full node");

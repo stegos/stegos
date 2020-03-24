@@ -32,9 +32,11 @@ use protobuf::Message;
 use std::convert::TryFrom;
 use std::{io, iter};
 use stegos_crypto::pbc;
-use tokio::codec::{Decoder, Encoder, Framed};
-use tokio::io::{AsyncRead, AsyncWrite};
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
+use std::pin::Pin;
+use crate::utils::FutureResult;
 
 use super::proto::ncp_proto;
 
@@ -65,14 +67,14 @@ impl UpgradeInfo for NcpConfig {
 
 impl<TSocket> InboundUpgrade<TSocket> for NcpConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, NcpCodec>;
+    type Output = Framed<TSocket, NcpCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_inbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             NcpCodec {
@@ -84,11 +86,11 @@ where
 
 impl<TSocket> OutboundUpgrade<TSocket> for NcpConfig
 where
-    TSocket: AsyncRead + AsyncWrite,
+    TSocket: AsyncRead + AsyncWrite + Unpin,
 {
     type Output = Framed<Negotiated<TSocket>, NcpCodec>;
     type Error = io::Error;
-    type Future = future::FutureResult<Self::Output, Self::Error>;
+    type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
     fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
@@ -257,7 +259,7 @@ mod tests {
     use futures::{future, Future, Sink, Stream};
     use libp2p_core::PeerId;
     use stegos_crypto::pbc;
-    use tokio::codec::Framed;
+    use futures_codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]

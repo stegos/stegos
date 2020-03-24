@@ -57,15 +57,17 @@ use std::error;
 use std::io;
 
 // use std::time::Duration;
-// use stegos_crypto::utils::u8v_to_hexstr;
+use stegos_crypto::utils::u8v_to_hexstr;
 // use tokio::io::{AsyncRead, AsyncWrite};
+pub mod proto;
 
-// use crate::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
-// use crate::discovery::{Discovery, DiscoveryOutEvent};
-// use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
-// use crate::ncp::{Ncp, NcpOutEvent};
-// use crate::pubsub::{Floodsub, FloodsubEvent};
-// use crate::replication::{Replication, ReplicationEvent};
+use crate::old_protos::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
+use crate::old_protos::discovery::{Discovery, DiscoveryOutEvent};
+use crate::old_protos::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
+// use crate::old_protos::ncp::{Ncp, NcpOutEvent};
+use crate::old_protos::pubsub::{Floodsub, FloodsubEvent};
+
+use crate::replication::{Replication, ReplicationEvent};
 use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
 use std::str::FromStr;
 
@@ -81,9 +83,10 @@ pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
 // Max number of topic for one floodsub message.
 
 pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
+use crate::utils::{encode_unicast, UnicastPayload};
 
 impl Libp2pNetwork {
-    pub fn new(
+    pub async fn new(
         mut config: NetworkConfig,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
@@ -92,28 +95,26 @@ impl Libp2pNetwork {
             Network,
             impl Future<Output = ()>,
             PeerId,
-            // mpsc::UnboundedReceiver<ReplicationEvent>,
+            mpsc::UnboundedReceiver<ReplicationEvent>,
         ),
         Error,
     > {
         // Resolve network.seed_pool.
-        config
-            .seed_nodes
-            .extend_from_slice(&utils::resolve_seed_nodes(
-                &config.seed_pool,
-                &config.dns_servers,
-            )?);
+        config.seed_nodes.extend_from_slice(
+            &utils::resolve_seed_nodes(&config.seed_pool, &config.dns_servers).await?,
+        );
 
-        let (service, control_tx, peer_id) = new_service(&config, network_skey, network_pkey)?;
+        let (service, control_tx, peer_id, replication_rx) =
+            new_service(&config, network_skey, network_pkey)?;
         let network = Libp2pNetwork { control_tx };
-        Ok((Box::new(network), service, peer_id))
+        Ok((Box::new(network), service, peer_id, replication_rx))
     }
 }
 
 impl NetworkProvider for Libp2pNetwork {
     /// Subscribe to topic, returns Stream<Vec<u8>> of messages incoming to topic
     fn subscribe(&self, topic: &str) -> Result<mpsc::UnboundedReceiver<Vec<u8>>, Error> {
-        let topic: Topic = Topic::new(topic.to_owned());
+        let topic = topic.to_owned();
         let (tx, rx) = mpsc::unbounded();
         let msg = ControlMessage::Subscribe { topic, handler: tx };
         self.control_tx.unbounded_send(msg)?;
@@ -122,7 +123,7 @@ impl NetworkProvider for Libp2pNetwork {
 
     /// Published message to topic
     fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
-        let topic: Topic = Topic::new(topic.to_owned());
+        let topic = topic.to_owned();
         let msg = ControlMessage::Publish { topic, data };
         self.control_tx.unbounded_send(msg)?;
         Ok(())
@@ -200,6 +201,7 @@ fn new_service(
         impl Future<Output = ()>,
         mpsc::UnboundedSender<ControlMessage>,
         PeerId,
+        mpsc::UnboundedReceiver<ReplicationEvent>,
     ),
     Error,
 > {
@@ -208,11 +210,19 @@ fn new_service(
     let local_pub_key = local_key.public();
     let peer_id = local_pub_key.clone().into_peer_id();
 
+    let (replication_tx, replication_rx) = mpsc::unbounded();
+
     // Set up a an encrypted DNS-enabled TCP Transport over the Mplex and Yamux protocols
     // let transpor t = build_tcp_ws_secio_yamux(local_key);
-    let transport = libp2p::build_development_transport(local_key)?;
+    let transport = build_tcp_ws_secio_yamux(local_key);
     // Create a Swarm to manage peers and events
-    let behaviour = Libp2pBehaviour::new(config, network_skey, network_pkey, peer_id.clone());
+    let behaviour = Libp2pBehaviour::new(
+        config,
+        network_skey,
+        network_pkey,
+        peer_id.clone(),
+        replication_tx,
+    );
 
     let mut swarm = Swarm::new(transport, behaviour, peer_id.clone());
 
@@ -232,7 +242,6 @@ fn new_service(
         Swarm::dial_addr(&mut swarm, addr)?;
     }
     let service = future::poll_fn(move |cx: &mut Context| {
-        info!("Poll");
         loop {
             match control_rx.poll_next_unpin(cx) {
                 Poll::Ready(Some(msg)) => swarm.process_event(msg),
@@ -262,23 +271,32 @@ fn new_service(
         Poll::Pending
     });
 
-    Ok((service, control_tx, peer_id.clone()))
+    Ok((service, control_tx, peer_id.clone(), replication_rx))
 }
 
 #[derive(NetworkBehaviour)]
 pub struct Libp2pBehaviour {
     gossipsub: Gossipsub,
-    // ncp: Ncp,
-    // gatekeeper: Gatekeeper<TSubstream>,
-    // delivery: Delivery<TSubstream>,
-    // discovery: Discovery<TSubstream>,
-    // replication: Replication<TSubstream>,
-    // #[behaviour(ignore)]
-    // unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
-    // #[behaviour(ignore)]
-    // replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+
+    // OLD PROTOS BEGIN
+    floodsub: Floodsub,
+
+    replication: Replication,
+    gatekeeper: Gatekeeper, // handshake
+    // ncp: Ncp, // Peer sharing, ping (should be merged with discovery)
+    discovery: Discovery,
+    delivery: Delivery,
+
     #[behaviour(ignore)]
-    consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+    unicast_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<UnicastMessage>; 3]>>,
+    // OLD PROTOS END
+    #[behaviour(ignore)]
+    replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+    #[behaviour(ignore)]
+    gossip_consumers: HashMap<TopicHash, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
+
+    #[behaviour(ignore)]
+    floodsub_consumers: HashMap<String, SmallVec<[mpsc::UnboundedSender<Vec<u8>>; 3]>>,
     #[behaviour(ignore)]
     my_pkey: pbc::PublicKey,
     #[behaviour(ignore)]
@@ -293,6 +311,7 @@ impl Libp2pBehaviour {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         peer_id: PeerId,
+        replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
     ) -> Self {
         let relaying = if config.advertised_endpoint == "".to_string() {
             false
@@ -319,17 +338,20 @@ impl Libp2pBehaviour {
         // let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
         let behaviour = Libp2pBehaviour {
             gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
-            // ncp: Ncp::new(config, network_pkey.clone()),
-            // gatekeeper: Gatekeeper::new(config),
-            // delivery: Delivery::new(),
-            // discovery: Discovery::new(network_pkey.clone()),
-            // replication: Replication::new(),
-            // replication_tx,
-            // unicast_consumers: HashMap::new(),
-            consumers: HashMap::new(),
+            gossip_consumers: HashMap::new(),
             my_pkey: network_pkey.clone(),
             my_skey: network_skey.clone(),
             connected_peers: HashSet::new(),
+
+            // ncp: Ncp::new(config, network_pkey.clone()),
+            floodsub: Floodsub::new(peer_id.clone(), relaying),
+            floodsub_consumers: HashMap::new(),
+            gatekeeper: Gatekeeper::new(config),
+            delivery: Delivery::new(),
+            discovery: Discovery::new(network_pkey.clone()),
+            replication: Replication::new(),
+            replication_tx,
+            unicast_consumers: HashMap::new(),
         };
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
@@ -349,26 +371,34 @@ impl Libp2pBehaviour {
         trace!("Control event: {:#?}", msg);
         match msg {
             ControlMessage::Subscribe { topic, handler } => {
-                if topic.no_hash().as_str() != NETWORK_STATUS_TOPIC {
+                if topic != NETWORK_STATUS_TOPIC {
                     debug!(target: "stegos_network::pubsub",
                         "Subscribing: topic={}",
-                        topic.no_hash().as_str(),
+                        topic,
                     );
-                    self.consumers
-                        .entry(topic.no_hash())
+                    let gossipsub_topic = Topic::new(topic.clone());
+                    self.gossip_consumers
+                        .entry(gossipsub_topic.no_hash())
+                        .or_insert(SmallVec::new())
+                        .push(handler.clone());
+                    self.floodsub_consumers
+                        .entry(topic.clone())
                         .or_insert(SmallVec::new())
                         .push(handler);
-                    self.gossipsub.subscribe(topic);
+                    self.gossipsub.subscribe(gossipsub_topic);
+                    self.floodsub.subscribe(topic);
                     return;
                 }
             }
             ControlMessage::Publish { topic, data } => {
                 debug!(target: "stegos_network::pubsub",
                     "Sending broadcast message: topic={}, size={}",
-                    topic.no_hash().as_str(),
+                    topic,
                     data.len(),
                 );
-                self.gossipsub.publish(&topic, data)
+                let gossipsub_topic = Topic::new(topic.clone());
+                self.gossipsub.publish(&gossipsub_topic, data.clone());
+                self.floodsub.publish(topic, data);
             }
             ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {
                 debug!(target: "stegos_network::libp2p_network","changing network key: from={}, to={}", self.my_pkey, new_pkey);
@@ -383,12 +413,10 @@ impl Libp2pBehaviour {
                 protocol_id,
                 consumer,
             } => {
-                error!("Not implemented");
-                // unimplemented!()
-                // self.unicast_consumers
-                //     .entry(protocol_id)
-                //     .or_insert(SmallVec::new())
-                //     .push(consumer);
+                self.unicast_consumers
+                    .entry(protocol_id)
+                    .or_insert(SmallVec::new())
+                    .push(consumer);
             }
             ControlMessage::SendUnicast {
                 to,
@@ -402,46 +430,45 @@ impl Libp2pBehaviour {
                     protocol_id,
                     data.len(),
                 );
-                unimplemented!();
 
-                // if to == self.my_pkey {
-                //     let msg = UnicastMessage {
-                //         from: to.clone(),
-                //         data,
-                //     };
-                //     self.unicast_consumers
-                //         .entry(protocol_id)
-                //         .or_insert(SmallVec::new())
-                //         .retain({
-                //             move |c| {
-                //                 if let Err(e) = c.unbounded_send(msg.clone()) {
-                //                     error!("Error sending data to consumer: {}", e);
-                //                     false
-                //                 } else {
-                //                     true
-                //                 }
-                //             }
-                //         })
-                // } else {
-                //     let payload = UnicastPayload {
-                //         from: self.my_pkey.clone(),
-                //         to: to.clone(),
-                //         protocol_id,
-                //         data,
-                //     };
-                //     let msg = encode_unicast(payload, &self.my_skey);
-                //     // self.floodsub.publish(floodsub_topic, msg);
-                //     self.discovery.deliver_unicast(&to, msg);
-                // }
+                if to == self.my_pkey {
+                    let msg = UnicastMessage {
+                        from: to.clone(),
+                        data,
+                    };
+                    self.unicast_consumers
+                        .entry(protocol_id)
+                        .or_insert(SmallVec::new())
+                        .retain({
+                            move |c| {
+                                if let Err(e) = c.unbounded_send(msg.clone()) {
+                                    error!("Error sending data to consumer: {}", e);
+                                    false
+                                } else {
+                                    true
+                                }
+                            }
+                        })
+                } else {
+                    let payload = UnicastPayload {
+                        from: self.my_pkey.clone(),
+                        to: to.clone(),
+                        protocol_id,
+                        data,
+                    };
+                    let msg = encode_unicast(payload, &self.my_skey);
+                    // self.floodsub.publish(floodsub_topic, msg);
+                    self.discovery.deliver_unicast(&to, msg);
+                }
             }
             ControlMessage::EnableReplicationUpstream { peer_id } => {
-                unimplemented!(); // self.replication.connect(peer_id);
+                self.replication.connect(peer_id);
             }
             ControlMessage::DisableReplicationUpstream { peer_id } => {
-                unimplemented!(); // self.replication.disconnect(peer_id);
+                self.replication.disconnect(peer_id);
             }
             ControlMessage::ConnectedNodesRequest { tx } => {
-                unimplemented!();
+                error!("Unimplemented ConnectedNodesRequest")
                 // let nodes = self.ncp.get_connected_nodes();
                 // if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes }) {
                 //     warn!(target: "stegos_network", "Failed send API response for connected nodes");
@@ -473,12 +500,15 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for Libp2pBehaviour {
                     return;
                 }
                 let topic = message.topics[0].clone();
-                debug!(target: "stegos_network::pubsub",
+                debug!(target: "stegos_network::gossip",
                        "Received broadcast message: topic={}, size={}",
                        topic.as_str(),
                        message.data.len(),
                 );
-                let consumers = self.consumers.entry(topic).or_insert(SmallVec::new());
+                let consumers = self
+                    .gossip_consumers
+                    .entry(topic)
+                    .or_insert(SmallVec::new());
                 consumers.retain({
                     let data = &message.data;
                     move |c| {
@@ -497,14 +527,52 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for Libp2pBehaviour {
     }
 }
 
+impl NetworkBehaviourEventProcess<FloodsubEvent> for Libp2pBehaviour {
+    // Called when `floodsub` produces an event.
+    // Send received message to consumers.
+    fn inject_event(&mut self, message: FloodsubEvent) {
+        match message {
+            FloodsubEvent::Message(message) => {
+                // ignore messages with NETWORK_STATUS_TOPIC
+                if message.topic == NETWORK_STATUS_TOPIC {
+                    return;
+                }
+
+                debug!(target: "stegos_network::pubsub",
+                       "Received broadcast message: topic={}, size={}",
+                       &message.topic,
+                       message.data.len(),
+                );
+                let consumers = self
+                    .floodsub_consumers
+                    .entry(message.topic)
+                    .or_insert(SmallVec::new());
+                consumers.retain({
+                    let data = &message.data;
+                    move |c| {
+                        if let Err(e) = c.unbounded_send(data.clone()) {
+                            error!(target: "stegos_network::pubsub", "Error sending data to consumer: {}", e);
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                })
+            }
+            FloodsubEvent::Subscribed { .. } => {}
+            FloodsubEvent::Unsubscribed { .. } => {}
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum ControlMessage {
     Subscribe {
-        topic: Topic,
+        topic: String,
         handler: mpsc::UnboundedSender<Vec<u8>>,
     },
     Publish {
-        topic: Topic,
+        topic: String,
         data: Vec<u8>,
     },
     SendUnicast {
@@ -611,143 +679,131 @@ pub fn build_tcp_ws_secio_yamux(
 //     }
 // }
 
-// impl<TSubstream> NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour<TSubstream>
-// where
-//     TSubstream: AsyncRead + AsyncWrite,
-// {
-//     fn inject_event(&mut self, event: GatekeeperOutEvent) {
-//         match event {
-//             GatekeeperOutEvent::PrepareListener { peer_id } => {
-//                 self.floodsub.enable_incoming(&peer_id);
-//                 self.gatekeeper
-//                     .notify(PeerEvent::EnabledListener { peer_id });
-//             }
-//             GatekeeperOutEvent::PrepareDialer { peer_id } => {
-//                 self.floodsub.enable_outgoing(&peer_id);
-//                 self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
-//             }
-//             GatekeeperOutEvent::Finished { peer_id } => {
-//                 self.floodsub.enable_outgoing(&peer_id);
-//             }
-//             GatekeeperOutEvent::NetworkReady => {
-//                 debug!(target: "stegos_network::gatekeeper", "network is ready");
-//                 let consumers = self
-//                     .consumers
-//                     .entry(NETWORK_STATUS_TOPIC.to_string())
-//                     .or_insert(SmallVec::new());
-//                 consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
-//             }
-//             GatekeeperOutEvent::Message { .. } => {}
-//             GatekeeperOutEvent::Connected { .. } => {}
-//             GatekeeperOutEvent::Disconnected { .. } => {}
-//         }
-//     }
-// }
+impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
+    fn inject_event(&mut self, event: GatekeeperOutEvent) {
+        match event {
+            GatekeeperOutEvent::PrepareListener { peer_id } => {
+                self.floodsub.enable_incoming(&peer_id);
+                self.gatekeeper
+                    .notify(PeerEvent::EnabledListener { peer_id });
+            }
+            GatekeeperOutEvent::PrepareDialer { peer_id } => {
+                self.floodsub.enable_outgoing(&peer_id);
+                self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
+            }
+            GatekeeperOutEvent::Finished { peer_id } => {
+                self.floodsub.enable_outgoing(&peer_id);
+            }
+            GatekeeperOutEvent::NetworkReady => {
+                debug!(target: "stegos_network::gatekeeper", "network is ready");
+                let consumers = self
+                    .floodsub_consumers
+                    .entry(NETWORK_STATUS_TOPIC.to_string())
+                    .or_insert(SmallVec::new());
+                consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
+            }
+            GatekeeperOutEvent::Message { .. } => {}
+            GatekeeperOutEvent::Connected { .. } => {}
+            GatekeeperOutEvent::Disconnected { .. } => {}
+        }
+    }
+}
 
-// impl<TSubstream> NetworkBehaviourEventProcess<DiscoveryOutEvent> for Libp2pBehaviour<TSubstream>
-// where
-//     TSubstream: AsyncRead + AsyncWrite,
-// {
-//     fn inject_event(&mut self, event: DiscoveryOutEvent) {
-//         match event {
-//             DiscoveryOutEvent::DialPeer { peer_id } => {
-//                 debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id);
-//                 self.gatekeeper.dial_peer(peer_id);
-//             }
-//             DiscoveryOutEvent::Route { next_hop, message } => {
-//                 debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop);
-//                 self.delivery.deliver_unicast(&next_hop, message);
-//             } // _ => {}
-//             DiscoveryOutEvent::KadEvent { .. } => {}
-//         }
-//     }
-// }
+impl NetworkBehaviourEventProcess<DiscoveryOutEvent> for Libp2pBehaviour {
+    fn inject_event(&mut self, event: DiscoveryOutEvent) {
+        match event {
+            DiscoveryOutEvent::DialPeer { peer_id } => {
+                debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id);
+                self.gatekeeper.dial_peer(peer_id);
+            }
+            DiscoveryOutEvent::Route { next_hop, message } => {
+                debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop);
+                self.delivery.deliver_unicast(&next_hop, message);
+            } // _ => {}
+            DiscoveryOutEvent::KadEvent { .. } => {}
+        }
+    }
+}
 
-// impl<TSubstream> NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour<TSubstream>
-// where
-//     TSubstream: AsyncRead + AsyncWrite,
-// {
-//     fn inject_event(&mut self, event: DeliveryEvent) {
-//         match event {
-//             DeliveryEvent::Message(msg) => match msg {
-//                 DeliveryMessage::UnicastMessage(unicast) => {
-//                     debug!(target: "stegos_network::delivery", "received message: dest={}", unicast.to);
-//                     // Check for duplicate
-//                     if self.discovery.is_duplicate(&unicast) {
-//                         debug!(target: "stegos_network::delivery", "got duplicate unicast message: seq_no={}", u8v_to_hexstr(&unicast.seq_no));
-//                         return;
-//                     }
-//                     if unicast.to == self.my_pkey {
-//                         // Unicast message to us, deliver
-//                         debug!(target: "stegos_network::delivery", "message for us, delivering");
-//                         match decode_unicast(unicast.payload.clone()) {
-//                             Ok((payload, signature, rval)) => {
-//                                 // send unicast message upstream
-//                                 if payload.to == self.my_pkey {
-//                                     let payload = match decrypt_message(
-//                                         &self.my_skey,
-//                                         payload,
-//                                         signature,
-//                                         rval,
-//                                     ) {
-//                                         Ok(p) => p,
-//                                         Err(e) => {
-//                                             debug!(target: "stegos_network::delivery", "bad unicast message received: {}", e);
-//                                             return;
-//                                         }
-//                                     };
-//                                     debug!(target: "stegos_network::delivery",
-//                                         "Received unicast message: from={}, protocol={} size={}",
-//                                         payload.from,
-//                                         payload.protocol_id,
-//                                         payload.data.len()
-//                                     );
-//                                     let msg = UnicastMessage {
-//                                         from: payload.from,
-//                                         data: payload.data,
-//                                     };
-//                                     self.unicast_consumers
-//                                         .entry(payload.protocol_id)
-//                                         .or_insert(SmallVec::new())
-//                                         .retain({
-//                                             move |c| {
-//                                                 if let Err(e) = c.unbounded_send(msg.clone()) {
-//                                                     error!(target:"stegos_network::delivery", "Error sending data to consumer: {}", e);
-//                                                     false
-//                                                 } else {
-//                                                     true
-//                                                 }
-//                                             }
-//                                         })
-//                                 }
-//                             }
-//                             Err(e) => {
-//                                 error!(target:"stegos_network::delivery", "Failure decoding unicast message: {}", e)
-//                             }
-//                         }
-//                         return;
-//                     }
-//                     // Mesage to somebody else, try to route again...
-//                     let dest = unicast.to.clone();
-//                     self.discovery.route(&dest, unicast);
-//                 }
-//                 DeliveryMessage::BroadcastMessage(_) => unimplemented!(),
-//             },
-//         }
-//     }
-// }
+impl NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour {
+    fn inject_event(&mut self, event: DeliveryEvent) {
+        match event {
+            DeliveryEvent::Message(msg) => match msg {
+                DeliveryMessage::UnicastMessage(unicast) => {
+                    debug!(target: "stegos_network::delivery", "received message: dest={}", unicast.to);
+                    // Check for duplicate
+                    if self.discovery.is_duplicate(&unicast) {
+                        debug!(target: "stegos_network::delivery", "got duplicate unicast message: seq_no={}", u8v_to_hexstr(&unicast.seq_no));
+                        return;
+                    }
+                    if unicast.to == self.my_pkey {
+                        // Unicast message to us, deliver
+                        debug!(target: "stegos_network::delivery", "message for us, delivering");
+                        match utils::decode_unicast(unicast.payload.clone()) {
+                            Ok((payload, signature, rval)) => {
+                                // send unicast message upstream
+                                if payload.to == self.my_pkey {
+                                    let payload = match utils::decrypt_message(
+                                        &self.my_skey,
+                                        payload,
+                                        signature,
+                                        rval,
+                                    ) {
+                                        Ok(p) => p,
+                                        Err(e) => {
+                                            debug!(target: "stegos_network::delivery", "bad unicast message received: {}", e);
+                                            return;
+                                        }
+                                    };
+                                    debug!(target: "stegos_network::delivery",
+                                        "Received unicast message: from={}, protocol={} size={}",
+                                        payload.from,
+                                        payload.protocol_id,
+                                        payload.data.len()
+                                    );
+                                    let msg = UnicastMessage {
+                                        from: payload.from,
+                                        data: payload.data,
+                                    };
+                                    self.unicast_consumers
+                                        .entry(payload.protocol_id)
+                                        .or_insert(SmallVec::new())
+                                        .retain({
+                                            move |c| {
+                                                if let Err(e) = c.unbounded_send(msg.clone()) {
+                                                    error!(target:"stegos_network::delivery", "Error sending data to consumer: {}", e);
+                                                    false
+                                                } else {
+                                                    true
+                                                }
+                                            }
+                                        })
+                                }
+                            }
+                            Err(e) => {
+                                error!(target:"stegos_network::delivery", "Failure decoding unicast message: {}", e)
+                            }
+                        }
+                        return;
+                    }
+                    // Mesage to somebody else, try to route again...
+                    let dest = unicast.to.clone();
+                    self.discovery.route(&dest, unicast);
+                }
+                DeliveryMessage::BroadcastMessage(_) => unimplemented!(),
+            },
+        }
+    }
+}
 
-// impl<TSubstream> NetworkBehaviourEventProcess<ReplicationEvent> for Libp2pBehaviour<TSubstream>
-// where
-//     TSubstream: AsyncRead + AsyncWrite,
-// {
-//     fn inject_event(&mut self, event: ReplicationEvent) {
-//         trace!(target: "stegos_network::replication", "Received event: event={:?}", event);
-//         if let Err(_e) = self.replication_tx.unbounded_send(event) {
-//             error!("Failed to send replication event");
-//         }
-//     }
-// }
+impl NetworkBehaviourEventProcess<ReplicationEvent> for Libp2pBehaviour {
+    fn inject_event(&mut self, event: ReplicationEvent) {
+        trace!(target: "stegos_network::replication", "Received event: event={:?}", event);
+        if let Err(_e) = self.replication_tx.unbounded_send(event) {
+            error!("Failed to send replication event");
+        }
+    }
+}
 
 /// Implementation of `Transport` that supports the most common protocols.
 ///

@@ -30,19 +30,24 @@ use crate::metrics;
 
 use super::dht_proto;
 use bytes::BytesMut;
-use futures::{future, sink, stream, Sink, Stream};
+use futures::{future, sink, stream, Sink, SinkExt, Stream, TryStreamExt};
+
+use crate::utils::FutureResult;
+use futures::future::Ready;
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{
     upgrade::Negotiated, InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo,
 };
 use parity_multihash::Multihash;
 use protobuf::{self, Message};
 use std::convert::TryFrom;
-use std::io::{Error as IoError, ErrorKind as IoErrorKind};
+use std::io::{self, Error as IoError, ErrorKind as IoErrorKind};
 use std::iter;
+use std::pin::Pin;
 use stegos_crypto::pbc;
-use tokio::codec::Framed;
-use tokio::io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
+use unsigned_varint::codec::UviBytes;
 
 // Protocol label for metrics
 const PROTOCOL_LABEL: &'static str = "kademlia";
@@ -175,41 +180,41 @@ impl UpgradeInfo for KademliaProtocolConfig {
 
 impl<C> InboundUpgrade<C> for KademliaProtocolConfig
 where
-    C: AsyncRead + AsyncWrite,
+    C: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = KadInStreamSink<Negotiated<C>>;
-    type Future = future::FutureResult<Self::Output, IoError>;
+    type Output = KadInStreamSink<C>;
+    type Future = FutureResult<Self::Output, IoError>;
     type Error = IoError;
 
     #[inline]
-    fn upgrade_inbound(self, incoming: Negotiated<C>, _: Self::Info) -> Self::Future {
+    fn upgrade_inbound(self, incoming: C, _: Self::Info) -> Self::Future {
         let mut codec = codec::UviBytes::default();
         codec.set_max_len(4096);
 
         future::ok(
             Framed::new(incoming, codec)
-                .from_err::<IoError>()
-                .with::<_, fn(_) -> _, _>(|response| -> Result<_, IoError> {
+                .err_into()
+                .with::<_, _, fn(_) -> _, _>(|response| -> Ready<Result<_, IoError>> {
                     let proto_struct = resp_msg_to_proto(response);
                     let res = proto_struct
                         .write_to_bytes()
                         .map_err(|err| IoError::new(IoErrorKind::InvalidData, err.to_string()));
-                    match res {
+                    future::ready(match res {
                         Ok(bytes) => {
                             metrics::OUTGOING_TRAFFIC
                                 .with_label_values(&[&PROTOCOL_LABEL])
                                 .inc_by(bytes.len() as i64);
-                            Ok(bytes)
+                            Ok(io::Cursor::new(bytes))
                         }
                         Err(e) => Err(e),
-                    }
+                    })
                 })
-                .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                .and_then::<_, fn(_) -> _>(|bytes: BytesMut| {
                     metrics::INCOMING_TRAFFIC
                         .with_label_values(&[&PROTOCOL_LABEL])
                         .inc_by(bytes.len() as i64);
-                    let request = protobuf::parse_from_bytes(&bytes)?;
-                    proto_to_req_msg(request)
+                    let request = protobuf::parse_from_bytes(&bytes);
+                    future::ready(request.map_err(From::from).and_then(proto_to_req_msg))
                 }),
         )
     }
@@ -217,65 +222,59 @@ where
 
 impl<C> OutboundUpgrade<C> for KademliaProtocolConfig
 where
-    C: AsyncRead + AsyncWrite,
+    C: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = KadOutStreamSink<Negotiated<C>>;
-    type Future = future::FutureResult<Self::Output, IoError>;
+    type Output = KadOutStreamSink<C>;
+    type Future = FutureResult<Self::Output, IoError>;
     type Error = IoError;
 
     #[inline]
-    fn upgrade_outbound(self, incoming: Negotiated<C>, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, incoming: C, _: Self::Info) -> Self::Future {
         let mut codec = codec::UviBytes::default();
         codec.set_max_len(4096);
 
         future::ok(
             Framed::new(incoming, codec)
-                .from_err::<IoError>()
-                .with::<_, fn(_) -> _, _>(|request| -> Result<_, IoError> {
+                .err_into()
+                .with::<_, _, fn(_) -> _, _>(|request| -> Ready<Result<_, IoError>> {
                     let proto_struct = req_msg_to_proto(request);
-                    match proto_struct.write_to_bytes() {
+                    future::ready(match proto_struct.write_to_bytes() {
                         Ok(msg) => {
                             metrics::OUTGOING_TRAFFIC
                                 .with_label_values(&[&PROTOCOL_LABEL])
                                 .inc_by(msg.len() as i64);
-                            Ok(msg)
+                            Ok(io::Cursor::new(msg))
                         }
                         Err(err) => Err(IoError::new(IoErrorKind::Other, err.to_string())),
-                    }
+                    })
                 })
-                .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                .and_then::<_, fn(_) -> _>(|bytes: BytesMut| {
                     metrics::INCOMING_TRAFFIC
                         .with_label_values(&[&PROTOCOL_LABEL])
                         .inc_by(bytes.len() as i64);
-                    let response = protobuf::parse_from_bytes(&bytes)?;
-                    proto_to_resp_msg(response)
+                    let response = protobuf::parse_from_bytes(&bytes);
+                    future::ready(response.map_err(From::from).and_then(proto_to_resp_msg))
                 }),
         )
     }
 }
 
 /// Sink of responses and stream of requests.
-pub type KadInStreamSink<S> = stream::AndThen<
-    sink::With<
-        stream::FromErr<Framed<S, codec::UviBytes<Vec<u8>>>, IoError>,
-        KadResponseMsg,
-        fn(KadResponseMsg) -> Result<Vec<u8>, IoError>,
-        Result<Vec<u8>, IoError>,
-    >,
-    fn(BytesMut) -> Result<KadRequestMsg, IoError>,
-    Result<KadRequestMsg, IoError>,
->;
+pub type KadInStreamSink<S> = KadStreamSink<S, KadResponseMsg, KadRequestMsg>;
 
 /// Sink of requests and stream of responses.
-pub type KadOutStreamSink<S> = stream::AndThen<
+pub type KadOutStreamSink<S> = KadStreamSink<S, KadRequestMsg, KadResponseMsg>;
+
+pub type KadStreamSink<S, A, B> = stream::AndThen<
     sink::With<
-        stream::FromErr<Framed<S, codec::UviBytes<Vec<u8>>>, IoError>,
-        KadRequestMsg,
-        fn(KadRequestMsg) -> Result<Vec<u8>, IoError>,
-        Result<Vec<u8>, IoError>,
+        stream::ErrInto<Framed<S, UviBytes<io::Cursor<Vec<u8>>>>, io::Error>,
+        io::Cursor<Vec<u8>>,
+        A,
+        future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
+        fn(A) -> future::Ready<Result<io::Cursor<Vec<u8>>, io::Error>>,
     >,
-    fn(BytesMut) -> Result<KadResponseMsg, IoError>,
-    Result<KadResponseMsg, IoError>,
+    future::Ready<Result<B, io::Error>>,
+    fn(BytesMut) -> future::Ready<Result<B, io::Error>>,
 >;
 
 /// Request that we can send to a peer or that we received from a peer.
@@ -588,7 +587,7 @@ mod tests {
                                     IoError::new(IoErrorKind::InvalidData, err.to_string())
                                 })
                             })
-                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                            .and_then::<_, fn(_) -> _, _>(|bytes: BytesMut| {
                                 let request = protobuf::parse_from_bytes(&bytes)?;
                                 proto_to_req_msg(request)
                             }),
@@ -660,7 +659,7 @@ mod tests {
                                     IoError::new(IoErrorKind::InvalidData, err.to_string())
                                 })
                             })
-                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                            .and_then::<_, fn(_) -> _, _>(|bytes: BytesMut| {
                                 let request = protobuf::parse_from_bytes(&bytes)?;
                                 proto_to_req_msg(request)
                             }),
@@ -686,7 +685,7 @@ mod tests {
                                     }
                                 }
                             })
-                            .and_then::<fn(_) -> _, _>(|bytes: BytesMut| {
+                            .and_then::<_, fn(_) -> _, _>(|bytes: BytesMut| {
                                 let response = protobuf::parse_from_bytes(&bytes)?;
                                 proto_to_resp_msg(response)
                             }),

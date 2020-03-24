@@ -25,6 +25,8 @@ use crate::delivery::Unicast;
 use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut, NodeInfo};
 use crate::utils::LruBimap;
 use futures::prelude::*;
+use futures::task::{Context, Poll};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::ConnectedPoint;
 use libp2p_core::{Multiaddr, PeerId};
 use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, PollParameters, ProtocolsHandler};
@@ -32,11 +34,9 @@ use log::*;
 use lru_time_cache::LruCache;
 use std::cmp;
 use std::collections::{HashSet, VecDeque};
-use std::time::{Duration, Instant};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
+use tokio::time::{Delay, Duration, Instant};
 
 // How often check connections to the known closest peers
 const MONITORING_INTERVAL: u64 = 30;
@@ -54,10 +54,10 @@ pub enum DiscoveryOutEvent {
 }
 
 /// Kademlia-based network discovery
-pub struct Discovery<TSubstream> {
+pub struct Discovery {
     my_id: pbc::PublicKey,
     /// Kademlia systems
-    kademlia: Kademlia<TSubstream>,
+    kademlia: Kademlia,
     /// Known nodes
     known_nodes: LruBimap<pbc::PublicKey, PeerId>,
     /// Outbound events
@@ -77,10 +77,7 @@ pub struct Discovery<TSubstream> {
     next_connection_check: Delay,
 }
 
-impl<TSubstream> Discovery<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
+impl Discovery {
     pub fn new(local_node_id: pbc::PublicKey) -> Self {
         Discovery {
             my_id: local_node_id.clone(),
@@ -88,11 +85,9 @@ where
             known_nodes: LruBimap::<pbc::PublicKey, PeerId>::with_expiry_duration(NODES_TTL),
             out_events: VecDeque::new(),
             connected_peers: HashSet::new(),
-            next_query: Delay::new(Instant::now() + Duration::from_secs(30)),
+            next_query: tokio::time::delay_for(Duration::from_secs(30)),
             delay_between_queries: Duration::from_secs(1),
-            next_connection_check: Delay::new(
-                Instant::now() + Duration::from_secs(MONITORING_INTERVAL),
-            ),
+            next_connection_check: tokio::time::delay_for(Duration::from_secs(MONITORING_INTERVAL)),
             received: LruCache::with_expiry_duration_and_capacity(
                 Duration::from_secs(60 * 15),
                 100_000,
@@ -226,11 +221,8 @@ where
     }
 }
 
-impl<TSubstream> NetworkBehaviour for Discovery<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
-    type ProtocolsHandler = <Kademlia<TSubstream> as NetworkBehaviour>::ProtocolsHandler;
+impl NetworkBehaviour for Discovery {
+    type ProtocolsHandler = <Kademlia as NetworkBehaviour>::ProtocolsHandler;
     type OutEvent = DiscoveryOutEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
@@ -263,8 +255,9 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
         params: &mut impl PollParameters,
-    ) -> Async<
+    ) -> Poll<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
             Self::OutEvent,
@@ -272,12 +265,12 @@ where
     > {
         // Return pending events
         if let Some(event) = self.out_events.pop_front() {
-            return Async::Ready(NetworkBehaviourAction::GenerateEvent(event));
+            return Poll::Ready(NetworkBehaviourAction::GenerateEvent(event));
         }
 
         // Process results of Kademlia discovery
-        match self.kademlia.poll(params) {
-            Async::Ready(NetworkBehaviourAction::GenerateEvent(action)) => {
+        match self.kademlia.poll(cx, params) {
+            Poll::Ready(NetworkBehaviourAction::GenerateEvent(action)) => {
                 trace!(target: "stegos_network::discovery", "Event from Kademlia: {:?}", action);
                 match action {
                     KademliaOut::FindNodeResult {
@@ -330,29 +323,29 @@ where
                         }
                     }
                 }
-                return Async::Ready(NetworkBehaviourAction::GenerateEvent(
+                return Poll::Ready(NetworkBehaviourAction::GenerateEvent(
                     DiscoveryOutEvent::KadEvent { event: action },
                 ));
             }
-            Async::Ready(NetworkBehaviourAction::DialAddress { address }) => {
-                return Async::Ready(NetworkBehaviourAction::DialAddress { address });
+            Poll::Ready(NetworkBehaviourAction::DialAddress { address }) => {
+                return Poll::Ready(NetworkBehaviourAction::DialAddress { address });
             }
-            Async::Ready(NetworkBehaviourAction::DialPeer { peer_id }) => {
-                return Async::Ready(NetworkBehaviourAction::DialPeer { peer_id });
+            Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id }) => {
+                return Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id });
             }
-            Async::Ready(NetworkBehaviourAction::SendEvent { peer_id, event }) => {
-                return Async::Ready(NetworkBehaviourAction::SendEvent { peer_id, event });
+            Poll::Ready(NetworkBehaviourAction::SendEvent { peer_id, event }) => {
+                return Poll::Ready(NetworkBehaviourAction::SendEvent { peer_id, event });
             }
-            Async::Ready(NetworkBehaviourAction::ReportObservedAddr { address }) => {
-                return Async::Ready(NetworkBehaviourAction::ReportObservedAddr { address });
+            Poll::Ready(NetworkBehaviourAction::ReportObservedAddr { address }) => {
+                return Poll::Ready(NetworkBehaviourAction::ReportObservedAddr { address });
             }
-            Async::NotReady => (),
+            Poll::Pending => (),
         }
         // Check if we are connected to enough closes peers
         loop {
-            match self.next_connection_check.poll() {
-                Ok(Async::NotReady) => break,
-                Ok(Async::Ready(_)) => {
+            match self.next_connection_check.poll_unpin(cx) {
+                Poll::Pending => break,
+                Poll::Ready(_) => {
                     self.next_connection_check
                         .reset(Instant::now() + Duration::from_secs(MONITORING_INTERVAL));
                     let my_id = self.kademlia.my_id().clone();
@@ -382,17 +375,13 @@ where
                         }
                     }
                 }
-                Err(err) => {
-                    warn!(target: "stegos_network::discovery", "monitoring timer error: {}", err);
-                    break;
-                }
             }
         }
         // Initiate new shake of DHT network
         loop {
-            match self.next_query.poll() {
-                Ok(Async::NotReady) => break,
-                Ok(Async::Ready(_)) => {
+            match self.next_query.poll_unpin(cx) {
+                Poll::Pending => break,
+                Poll::Ready(_) => {
                     debug!(target: "stegos_network::discovery", "Shooting at DHT to gather nodes information");
                     let random_node_id = pbc::make_random_keys().1;
                     self.kademlia.find_node(random_node_id);
@@ -403,12 +392,8 @@ where
                     self.delay_between_queries =
                         cmp::min(self.delay_between_queries * 2, Duration::from_secs(60));
                 }
-                Err(err) => {
-                    warn!(target: "stegos_network::discovery", "Kad discovery timer errored: {:?}", err);
-                    break;
-                }
             }
         }
-        Async::NotReady
+        Poll::Pending
     }
 }

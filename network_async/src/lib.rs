@@ -21,16 +21,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// #![deny(warnings)]
+
 use failure::{Error, Fail};
 use futures::channel::{mpsc, oneshot};
 use std::fmt;
 use stegos_crypto::pbc;
 
 mod libp2p_network;
+pub mod metrics;
 mod old_protos;
 mod proto;
 
 pub use old_protos::*;
+
 pub mod utils;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::libp2p_network::Multiaddr;
@@ -39,6 +43,10 @@ pub use self::libp2p_network::NETWORK_STATUS_TOPIC;
 
 mod config;
 pub use self::config::*;
+use std::time::Duration;
+
+pub const NETWORK_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
+
 pub type Network = Box<dyn NetworkProvider + Send + Sync>;
 
 pub trait NetworkProvider

@@ -89,7 +89,7 @@ where
         }
     }
 
-    fn poll(&mut self, cx: &mut Context) -> Poll<Result<(K, Option<V>), Error>> {
+    pub fn poll(&mut self, cx: &mut Context) -> Poll<Result<(K, Option<V>), Error>> {
         loop {
             match self.expirations.poll_expired(cx) {
                 Poll::Ready(Some(Ok(entry))) => {

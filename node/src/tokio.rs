@@ -460,7 +460,6 @@ impl NodeService {
         );
 
         // let mut chain_readers = future::select_all(self.chain_readers.into_iter().map(Box::pin)).fuse();
-
         /// Subscribers for chain events which are fed from the disk.
         /// Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -569,6 +568,35 @@ impl NodeService {
                 },
 
             }
+            // Replication
+            'inner: loop {
+                // Replication interface need deep interaction with state and blockchain.
+                // So we create a temporary feature that fastly return result of poll.
+                // TODO: Replace by refcell and local task
+                let replication_fut = future::poll_fn(|cx| {
+                    let micro_blocks_in_epoch = state.chain.cfg().micro_blocks_in_epoch;
+                    let block_reader: &dyn BlockReader = &state.chain;
+                    Poll::Ready(replication.poll(
+                        cx,
+                        state.chain.epoch(),
+                        state.chain.offset(),
+                        micro_blocks_in_epoch,
+                        block_reader,
+                    ))
+                });
+
+                match replication_fut.await {
+                    Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
+                        panic!("Received the light block from the replication");
+                    }
+                    Poll::Ready(Some(ReplicationRow::Block(block))) => {
+                        let event = NodeIncomingEvent::DecodedBlock(block);
+                        state.handle_event(event);
+                    }
+                    Poll::Ready(None) => return (), // Shutdown main feature (replication failure).
+                    Poll::Pending => break 'inner,
+                }
+            }
 
             for event in std::mem::replace(&mut state.outgoing, Vec::new()) {
                 trace!("Outgoing event = {:?}", event);
@@ -594,12 +622,14 @@ impl NodeService {
                     }
                     NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
                         macro_block_propose_timer.set(time::delay_for(duration).fuse());
-                        // task::current().notify();
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
+                        macro_block_propose_timer.set(Fuse::terminated());
                         Ok(())
                     }
                     NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
                         macro_block_view_change_timer.set(time::delay_for(duration).fuse());
-                        // task::current().notify();
                         Ok(())
                     }
                     NodeOutgoingEvent::MicroBlockProposeTimer {
@@ -617,6 +647,10 @@ impl NodeService {
                         thread::spawn(solver);
                         micro_block_propose_timer.set(rx.fuse());
                         // task::current().notify();
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MicroBlockProposeTimerCancel => {
+                        micro_block_propose_timer.set(Fuse::terminated());
                         Ok(())
                     }
                     NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
@@ -668,27 +702,5 @@ impl NodeService {
                 }
             }
         }
-
-        // // Replication
-        // loop {
-        //     let micro_blocks_in_epoch = self.state.chain.cfg().micro_blocks_in_epoch;
-        //     let block_reader: &dyn BlockReader = &self.state.chain;
-        //     match self.replication.poll(
-        //         self.state.chain.epoch(),
-        //         self.state.chain.offset(),
-        //         micro_blocks_in_epoch,
-        //         block_reader,
-        //     ) {
-        //         Async::Ready(Some(ReplicationRow::LightBlock(_block))) => {
-        //             panic!("Received the light block from the replication");
-        //         }
-        //         Async::Ready(Some(ReplicationRow::Block(block))) => {
-        //             let event = NodeIncomingEvent::DecodedBlock(block);
-        //             self.state.handle_event(event);
-        //         }
-        //         Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-        //         Async::NotReady => break,
-        //     }
-        // }
     }
 }

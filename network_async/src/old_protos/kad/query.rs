@@ -27,13 +27,14 @@
 use super::handler::KademliaHandlerIn;
 use super::kbucket::KBucketsPeerId;
 use futures::prelude::*;
+use futures::task::{Context, Poll};
 use log::debug;
 use parity_multihash::Multihash;
 use smallvec::SmallVec;
 use std::time::{Duration, Instant};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
-use tokio_timer::Delay;
+use tokio::time::Delay;
 
 use crate::utils::IntoMultihash;
 
@@ -303,7 +304,7 @@ impl QueryState {
     }
 
     /// Polls this individual query.
-    pub fn poll(&mut self) -> Async<QueryStatePollOut<'_>> {
+    pub fn poll(&mut self, cx: &mut Context) -> Poll<QueryStatePollOut<'_>> {
         // While iterating over peers, count the number of queries currently being processed.
         // This is used to not go over the limit of parallel requests.
         // If this is still 0 at the end of the function, that means the query is finished.
@@ -321,15 +322,15 @@ impl QueryState {
             // Start by "killing" the query if it timed out.
             {
                 let timed_out = match state {
-                    QueryPeerState::InProgress(timeout) => match timeout.poll() {
-                        Ok(Async::Ready(_)) | Err(_) => true,
-                        Ok(Async::NotReady) => false,
+                    QueryPeerState::InProgress(timeout) => match timeout.poll_unpin(cx) {
+                        Poll::Ready(_) => true,
+                        Poll::Pending => false,
                     },
                     _ => false,
                 };
                 if timed_out {
                     *state = QueryPeerState::Failed;
-                    return Async::Ready(QueryStatePollOut::CancelRpc { node_id });
+                    return Poll::Ready(QueryStatePollOut::CancelRpc { node_id });
                 }
             }
 
@@ -352,7 +353,7 @@ impl QueryState {
                 .map(|&c| c >= num_results)
                 .unwrap_or(false)
             {
-                return Async::Ready(QueryStatePollOut::Finished);
+                return Poll::Ready(QueryStatePollOut::Finished);
             }
 
             // Dial the node if it needs dialing.
@@ -368,11 +369,11 @@ impl QueryState {
             };
 
             if need_connect {
-                let delay = Delay::new(Instant::now() + self.rpc_timeout);
+                let delay = tokio::time::delay_for(self.rpc_timeout);
                 *state = QueryPeerState::InProgress(delay);
                 debug!(target: "stegos_network::kad", "query wants to connect: target={}, node_id={}",
                     u8v_to_hexstr(self.target.as_hash().as_bytes()), node_id);
-                return Async::Ready(QueryStatePollOut::SendRpc {
+                return Poll::Ready(QueryStatePollOut::SendRpc {
                     node_id,
                     query_target: &self.target,
                 });
@@ -382,9 +383,9 @@ impl QueryState {
         // If we don't have any query in progress, return `Finished` as we don't have anything more
         // we can do.
         if active_counter > 0 {
-            Async::NotReady
+            Poll::Pending
         } else {
-            Async::Ready(QueryStatePollOut::Finished)
+            Poll::Ready(QueryStatePollOut::Finished)
         }
     }
 
@@ -516,7 +517,7 @@ mod tests {
         tokio::run(futures::future::poll_fn(move || {
             match try_ready!(Ok(query.poll())) {
                 QueryStatePollOut::SendRpc { node_id, .. } if node_id == &random_id => {
-                    Ok(Async::Ready(()))
+                    Poll::Ready(())
                 }
                 _ => panic!(),
             }
@@ -544,7 +545,7 @@ mod tests {
             let query = query.clone();
             move || match try_ready!(Ok(query.lock().unwrap().poll())) {
                 QueryStatePollOut::SendRpc { node_id, .. } if node_id == &random_id => {
-                    Ok(Async::Ready(()))
+                    Poll::Ready(())
                 }
                 _ => panic!(),
             }
@@ -561,7 +562,7 @@ mod tests {
             let query = query.clone();
             move || match try_ready!(Ok(query.lock().unwrap().poll())) {
                 QueryStatePollOut::SendRpc { node_id, .. } if node_id == &random_id2 => {
-                    Ok(Async::Ready(()))
+                    Poll::Ready(())
                 }
                 _ => panic!(),
             }
@@ -588,7 +589,7 @@ mod tests {
             let query = query.clone();
             move || match try_ready!(Ok(query.lock().unwrap().poll())) {
                 QueryStatePollOut::SendRpc { node_id, .. } if node_id == &random_id => {
-                    Ok(Async::Ready(()))
+                    Poll::Ready(())
                 }
                 _ => panic!(),
             }
@@ -602,7 +603,7 @@ mod tests {
             let query = query.clone();
             move || match try_ready!(Ok(query.lock().unwrap().poll())) {
                 QueryStatePollOut::CancelRpc { node_id, .. } if node_id == &random_id => {
-                    Ok(Async::Ready(()))
+                    Poll::Ready(())
                 }
                 _ => panic!(),
             }
@@ -612,7 +613,7 @@ mod tests {
         tokio::run(futures::future::poll_fn({
             let query = query.clone();
             move || match try_ready!(Ok(query.lock().unwrap().poll())) {
-                QueryStatePollOut::Finished => Ok(Async::Ready(())),
+                QueryStatePollOut::Finished => Poll::Ready(()),
                 _ => panic!(),
             }
         }));

@@ -15,11 +15,11 @@ description = "Stegos - Network Library"
 [dependencies]
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
 stegos_serialization = { version = "1.0.0", path = "../serialization" }
-# arrayvec = "0.4"
-# bigint = "4.4"
+arrayvec = "0.4"
+bigint = "4.4"
 # bs58 = "0.2"
-# bytes = { version = "0.4", features = ["serde"] }
 # byteorder = "1.3.2"
+bytes = { version = "0.5.4", features = ["serde"] }
 cuckoofilter = "0.3"
 env_logger = "0.7"
 failure = "0.1"
@@ -41,18 +41,19 @@ smallvec = "0.6"
 protobuf = "2.6"
 tokio = { version = "0.2"}
 lru_time_cache = "0.9"
-# num_cpus = "1.10"
+num_cpus = "1.10"
 parity-multihash = "0.2"
-# prometheus = "0.7"
-# rand = "0.7.0"
+prometheus = "0.7"
+rand = "0.7.0"
 serde = "1.0"
 serde_derive = "1.0"
+futures_codec = "0.3"
 
 # tokio-timer = "0.2"
-# tokio-io = "0.1"
-# unsigned-varint = { version = "0.2", features = ["codec"]}
-# update_rate = "2.0"
-# void = "1.0"
+futures-io = "0.3"
+unsigned-varint = { version = "0.3.2", features = ["futures-codec"]}
+update_rate = "2.0"
+void = "1.0"
 
 [build-dependencies]
 stegos_serialization = { version = "1.0.0", path = "../serialization" }

@@ -21,8 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::prelude::*;
-use futures::sync::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
+use futures::task::{Context, Poll};
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
@@ -57,7 +58,7 @@ const HASH_CASH_PROOF_TTL: Duration = Duration::from_secs(365 * 24 * 60 * 60);
 const HANDSHAKE_STEP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Network behavior to handle initial nodes handshake
-pub struct Gatekeeper<TSubstream> {
+pub struct Gatekeeper {
     /// Events that need to be yielded to the outside when polling.
     events: VecDeque<NetworkBehaviourAction<GatekeeperSendEvent, GatekeeperOutEvent>>,
     /// List of connected peers
@@ -92,11 +93,9 @@ pub struct Gatekeeper<TSubstream> {
     hanshake_puzzle_difficulty: u64,
     /// Netwrok readyness threshold
     readiness_threshold: usize,
-    /// Marker to pin the generics.
-    marker: PhantomData<TSubstream>,
 }
 
-impl<TSubstream> Gatekeeper<TSubstream> {
+impl Gatekeeper {
     /// Creates a NetworkBehaviour for Gatekeeper.
     pub fn new(config: &NetworkConfig) -> Self {
         let mut desired_addesses: HashSet<Multiaddr> = HashSet::new();
@@ -144,7 +143,6 @@ impl<TSubstream> Gatekeeper<TSubstream> {
             challenges_queue: VecDeque::new(),
             hanshake_puzzle_difficulty: config.hanshake_puzzle_difficulty,
             readiness_threshold: config.readiness_threshold,
-            marker: PhantomData,
         }
     }
 
@@ -288,11 +286,8 @@ impl<TSubstream> Gatekeeper<TSubstream> {
     }
 }
 
-impl<TSubstream> NetworkBehaviour for Gatekeeper<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
-{
-    type ProtocolsHandler = GatekeeperHandler<TSubstream>;
+impl NetworkBehaviour for Gatekeeper {
+    type ProtocolsHandler = GatekeeperHandler;
     type OutEvent = GatekeeperOutEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
@@ -416,15 +411,16 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
         _poll_parameters: &mut impl PollParameters,
-    ) -> Async<
+    ) -> Poll<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
             Self::OutEvent,
         >,
     > {
-        match self.solution_stream.poll() {
-            Ok(Async::Ready(Some((peer_id, proof, duration)))) => {
+        match self.solution_stream.poll_next_unpin(cx) {
+            Poll::Ready(Some((peer_id, proof, duration))) => {
                 self.solvers.remove(&peer_id);
                 debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
                 self.protocol_updates.push_back(PeerEvent::VDFSolved {
@@ -432,13 +428,10 @@ where
                     proof: proof.clone(),
                 });
             }
-            Ok(Async::Ready(None)) => {
+            Poll::Ready(None) => {
                 debug!(target: "stegos_network::gatekeeper", "solution stream gone!");
             }
-            Ok(Async::NotReady) => {}
-            Err(_e) => {
-                debug!(target: "stegos_network::gatekeeper", "error pollion solution_stream channel!");
-            }
+            Poll::Pending => {}
         }
 
         if self.solvers.len() < self.solver_threads && self.challenges_queue.len() > 0 {
@@ -551,38 +544,38 @@ where
 
         // Expire outbound peer negotiations
         loop {
-            match self.pending_out_peers.poll() {
-                Ok(Async::Ready(ref entry)) => {
+            match self.pending_out_peers.poll(cx) {
+                Poll::Ready(Ok(ref entry)) => {
                     debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
-                Ok(Async::NotReady) => break,
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     error!(target: "stegos_network::delivery", "dial_queue timer error: {}", e);
                     break;
                 }
+                Poll::Pending => break,
             }
         }
         // Expire inbound peers negotiations
         loop {
-            match self.pending_in_peers.poll() {
-                Ok(Async::Ready(ref entry)) => {
+            match self.pending_in_peers.poll(cx) {
+                Poll::Ready(Ok(ref entry)) => {
                     debug!(target: "stegos_network::gatekeeper", "peer VDF expired: peer_id={}", entry.clone().0);
                     // Do cleanup
                 }
-                Ok(Async::NotReady) => break,
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     error!(target: "stegos_network::delivery", "dial_queue timer error: {}", e);
                     break;
                 }
+                Poll::Pending => break,
             }
         }
 
         if let Some(event) = self.events.pop_front() {
-            return Async::Ready(event);
+            return Poll::Ready(event);
         }
 
-        Async::NotReady
+        Poll::Pending
     }
 }
 

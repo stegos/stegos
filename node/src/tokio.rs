@@ -622,6 +622,8 @@ impl NodeService {
                     }
                     NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
                         macro_block_propose_timer.set(time::delay_for(duration).fuse());
+                        micro_block_propose_timer.set(Fuse::terminated());
+                        micro_block_view_change_timer.set(Fuse::terminated());
                         Ok(())
                     }
                     NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
@@ -630,6 +632,8 @@ impl NodeService {
                     }
                     NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
                         macro_block_view_change_timer.set(time::delay_for(duration).fuse());
+                        micro_block_propose_timer.set(Fuse::terminated());
+                        micro_block_view_change_timer.set(Fuse::terminated());
                         Ok(())
                     }
                     NodeOutgoingEvent::MicroBlockProposeTimer {
@@ -646,6 +650,8 @@ impl NodeService {
                         // Spawn a background thread to solve VDF puzzle.
                         thread::spawn(solver);
                         micro_block_propose_timer.set(rx.fuse());
+                        macro_block_propose_timer.set(Fuse::terminated());
+                        macro_block_view_change_timer.set(Fuse::terminated());
                         // task::current().notify();
                         Ok(())
                     }
@@ -655,6 +661,8 @@ impl NodeService {
                     }
                     NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
                         micro_block_view_change_timer.set(time::delay_for(duration).fuse());
+                        macro_block_propose_timer.set(Fuse::terminated());
+                        macro_block_view_change_timer.set(Fuse::terminated());
                         // task::current().notify();
                         Ok(())
                     }

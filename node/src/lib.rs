@@ -172,19 +172,20 @@ pub enum NodeOutgoingEvent {
         offset: u32,
     },
 }
-
+#[derive(Debug)]
 enum MicroBlockTimer {
     None,
     Propose,
     ViewChange,
 }
-
+#[derive(Debug)]
 enum MacroBlockTimer {
     None,
     Propose,
     ViewChange,
 }
 
+#[derive(Debug)]
 enum Validation {
     MicroBlockAuditor,
     MicroBlockValidator {
@@ -1746,7 +1747,7 @@ impl NodeState {
                 block_timer,
                 ..
             } => (view_change_collector, block_timer),
-            _ => panic!("Invalid state"),
+            s => panic!("Invalid state = {:?}", s),
         };
 
         // Update timer.

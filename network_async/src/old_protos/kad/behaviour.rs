@@ -29,9 +29,11 @@ use fnv::{FnvHashMap, FnvHashSet};
 use futures::task::{Context, Poll};
 use futures::{prelude::*, stream};
 use futures_io::{AsyncRead, AsyncWrite};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use log::{debug, trace};
 use lru_time_cache::LruCache;
@@ -428,10 +430,12 @@ impl NetworkBehaviour for Kademlia {
 
         if let Some(pos) = self.pending_rpcs.iter().position(|(p, _)| p == node_id) {
             let (_, rpc) = self.pending_rpcs.remove(pos);
-            self.queued_events.push(NetworkBehaviourAction::SendEvent {
-                peer_id: id.clone(),
-                event: rpc,
-            });
+            self.queued_events
+                .push(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: id.clone(),
+                    handler: NotifyHandler::Any,
+                    event: rpc,
+                });
         }
 
         if let Update::Pending(to_ping) = self.kbuckets.set_connected(&node_id) {
@@ -507,41 +511,12 @@ impl NetworkBehaviour for Kademlia {
         self.kbuckets.set_disconnected(&node_id);
     }
 
-    fn inject_replaced(
+    fn inject_event(
         &mut self,
-        peer_id: PeerId,
-        old_endpoint: ConnectedPoint,
-        new_endpoint: ConnectedPoint,
+        source: PeerId,
+        _: ConnectionId,
+        event: KademliaHandlerEvent<QueryId>,
     ) {
-        let peer = peer_id.clone().into_bytes();
-        let node_id = match self.known_peers.get(&peer) {
-            Some(id) => id,
-            None => return,
-        };
-        // We need to re-send the active queries.
-        for (query_id, (query, _, _)) in self.active_queries.iter() {
-            if query.is_waiting(&node_id) {
-                self.queued_events.push(NetworkBehaviourAction::SendEvent {
-                    peer_id: peer_id.clone(),
-                    event: query.target().to_rpc_request(*query_id),
-                });
-            }
-        }
-
-        if let ConnectedPoint::Dialer { address } = old_endpoint {
-            if let Some(node_info) = self.kbuckets.get_mut(&node_id) {
-                node_info.addresses.set_disconnected(&address);
-            }
-        }
-
-        if let ConnectedPoint::Dialer { address } = new_endpoint {
-            if let Some(node_info) = self.kbuckets.entry_mut(&node_id) {
-                node_info.addresses.insert_connected(address);
-            }
-        }
-    }
-
-    fn inject_node_event(&mut self, source: PeerId, event: KademliaHandlerEvent<QueryId>) {
         match event {
             KademliaHandlerEvent::FindNodeReq { key, request_id } => {
                 self.remote_requests
@@ -732,8 +707,9 @@ impl NetworkBehaviour for Kademlia {
         if !self.remote_requests.is_empty() {
             let (peer_id, request_id, query) = self.remote_requests.remove(0);
             let result = self.build_result(query, request_id, parameters);
-            return Poll::Ready(NetworkBehaviourAction::SendEvent {
+            return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                 peer_id,
+                handler: NotifyHandler::Any,
                 event: result,
             });
         }
@@ -775,8 +751,9 @@ impl NetworkBehaviour for Kademlia {
                             if let Some(peer_id) = target_peer {
                                 if self.connected_peers.contains(&peer_id) {
                                     debug!(target: "stegos_network::kad", "sending event to node: node_id={}, peer_id={}", node_id, peer_id);
-                                    return Poll::Ready(NetworkBehaviourAction::SendEvent {
+                                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                                         peer_id: peer_id.clone(),
+                                        handler: NotifyHandler::Any,
                                         event: rpc,
                                     });
                                 } else {
@@ -840,8 +817,9 @@ impl NetworkBehaviour for Kademlia {
                                 None => continue,
                             };
                             if let Some(peer_id) = &node_info.peer_id {
-                                let event = NetworkBehaviourAction::SendEvent {
+                                let event = NetworkBehaviourAction::NotifyHandler {
                                     peer_id: peer_id.clone(),
+                                    handler: NotifyHandler::Any,
                                     event: KademliaHandlerIn::AddProvider {
                                         key: key.clone(),
                                         provider_peer: build_kad_peer(

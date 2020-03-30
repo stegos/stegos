@@ -234,6 +234,7 @@ impl From<ProtocolsHandlerUpgrErr<io::Error>> for KademliaHandlerQueryErr {
 }
 
 /// Event to send to the handler.
+#[derive(Clone)]
 pub enum KademliaHandlerIn<TUserData> {
     /// Request for the list of nodes whose IDs are the closest to `key`. The number of nodes
     /// returned is not specified, but should be around 20.
@@ -292,7 +293,7 @@ pub enum KademliaHandlerIn<TUserData> {
 ///
 /// We don't implement `Clone` on purpose, in order to prevent users from answering the same
 /// request twice.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct KademliaRequestId {
     /// Unique identifier for an incoming connection.
     connec_unique_id: UniqueConnecId,

@@ -24,9 +24,11 @@
 use futures::channel::mpsc::{unbounded, UnboundedReceiver, UnboundedSender};
 use futures::prelude::*;
 use futures::task::{Context, Poll};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;
@@ -177,13 +179,15 @@ impl Gatekeeper {
         );
         self.pending_in_peers
             .insert(peer_id.clone(), ListenerPeerState::WaitingProof);
-        self.events.push_back(NetworkBehaviourAction::SendEvent {
-            peer_id,
-            event: GatekeeperSendEvent::Send(GatekeeperMessage::ChallengeReply {
-                challenge,
-                difficulty: self.hanshake_puzzle_difficulty,
-            }),
-        })
+        self.events
+            .push_back(NetworkBehaviourAction::NotifyHandler {
+                peer_id,
+                handler: NotifyHandler::Any,
+                event: GatekeeperSendEvent::Send(GatekeeperMessage::ChallengeReply {
+                    challenge,
+                    difficulty: self.hanshake_puzzle_difficulty,
+                }),
+            })
     }
 
     fn handle_unlock_request(&mut self, peer_id: PeerId, proof: Option<VDFProof>) {
@@ -266,12 +270,14 @@ impl Gatekeeper {
                     difficulty: p.0.difficulty,
                     proof: p.1.clone().expect("Checked for Some earlier"),
                 };
-                self.events.push_back(NetworkBehaviourAction::SendEvent {
-                    peer_id: peer_id.clone(),
-                    event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
-                        proof: Some(proof),
-                    }),
-                });
+                self.events
+                    .push_back(NetworkBehaviourAction::NotifyHandler {
+                        peer_id: peer_id.clone(),
+                        handler: NotifyHandler::Any,
+                        event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
+                            proof: Some(proof),
+                        }),
+                    });
                 self.pending_out_peers
                     .insert(peer_id, DialerPeerState::UnlockRequestSent);
                 return;
@@ -342,16 +348,6 @@ impl NetworkBehaviour for Gatekeeper {
         }
     }
 
-    fn inject_replaced(
-        &mut self,
-        peer_id: PeerId,
-        closed_endpoint: ConnectedPoint,
-        new_endpoint: ConnectedPoint,
-    ) {
-        debug!(target: "stegos_network::gatekeeper", "connection replaced: peer_id={}, old_endpoint={}, new_endpoint={}", peer_id, closed_endpoint.display(), new_endpoint.display());
-        self.inject_connected(peer_id, new_endpoint);
-    }
-
     /// Indicates to the behaviour that we tried to reach an address, but failed.
     ///
     /// If we were trying to reach a specific node, its ID is passed as parameter. If this is the
@@ -376,7 +372,12 @@ impl NetworkBehaviour for Gatekeeper {
         debug!(target: "stegos_network::gatekeeper", "failure reaching address: peer_id={}", peer_id);
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: GatekeeperMessage) {
+    fn inject_event(
+        &mut self,
+        propagation_source: PeerId,
+        _: ConnectionId,
+        event: GatekeeperMessage,
+    ) {
         // Process received Gatekeeper message (passed from Handler as Custom(message))
         debug!(target: "stegos_network::gatekeeper", "Received a message: {:?}", event);
         match event {
@@ -489,23 +490,27 @@ impl NetworkBehaviour for Gatekeeper {
                     debug!(target: "stegos_network::gatekeeper", "listener enabled, sending unlock request: peer_id={}, with_proof={}", peer_id, proof.is_some());
                     self.pending_out_peers
                         .insert(peer_id.clone().into(), DialerPeerState::UnlockRequestSent);
-                    self.events.push_back(NetworkBehaviourAction::SendEvent {
-                        peer_id,
-                        event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
-                            proof,
-                        }),
-                    })
+                    self.events
+                        .push_back(NetworkBehaviourAction::NotifyHandler {
+                            peer_id,
+                            handler: NotifyHandler::Any,
+                            event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
+                                proof,
+                            }),
+                        })
                 }
                 PeerEvent::EnabledDialer { peer_id } => {
                     if self.pending_in_peers.contains_key(&peer_id) {
                         debug!(target: "stegos_network::gatekeeper", "dialer enabled, sending permit reply: peer_id={}", peer_id);
                         self.pending_in_peers.remove(&peer_id);
-                        self.events.push_back(NetworkBehaviourAction::SendEvent {
-                            peer_id,
-                            event: GatekeeperSendEvent::Send(GatekeeperMessage::PermitReply {
-                                connection_allowed: true,
-                            }),
-                        });
+                        self.events
+                            .push_back(NetworkBehaviourAction::NotifyHandler {
+                                peer_id,
+                                handler: NotifyHandler::Any,
+                                event: GatekeeperSendEvent::Send(GatekeeperMessage::PermitReply {
+                                    connection_allowed: true,
+                                }),
+                            });
                     } else {
                         debug!(target: "stegos_network::gatekeeper", "dialer enabled, peer fully negotiated: peer_id={}", peer_id);
                         self.pending_out_peers.remove(&peer_id);
@@ -523,14 +528,16 @@ impl NetworkBehaviour for Gatekeeper {
                             proof: proof.clone(),
                         };
                         if self.connected_peers.contains(&peer_id) {
-                            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                                peer_id,
-                                event: GatekeeperSendEvent::Send(
-                                    GatekeeperMessage::UnlockRequest {
-                                        proof: Some(vdf_proof),
-                                    },
-                                ),
-                            })
+                            self.events
+                                .push_back(NetworkBehaviourAction::NotifyHandler {
+                                    peer_id,
+                                    handler: NotifyHandler::Any,
+                                    event: GatekeeperSendEvent::Send(
+                                        GatekeeperMessage::UnlockRequest {
+                                            proof: Some(vdf_proof),
+                                        },
+                                    ),
+                                })
                         } else {
                             debug!(target: "stegos_network::gatekeeper", "peer already gone, trying to reconnect: peer_id={}", peer_id);
                             self.dial_peer(peer_id);

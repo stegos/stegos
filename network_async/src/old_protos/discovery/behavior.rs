@@ -27,6 +27,7 @@ use crate::utils::LruBimap;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures_io::{AsyncRead, AsyncWrite};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::ConnectedPoint;
 use libp2p_core::{Multiaddr, PeerId};
 use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, PollParameters, ProtocolsHandler};
@@ -245,12 +246,13 @@ impl NetworkBehaviour for Discovery {
         NetworkBehaviour::inject_disconnected(&mut self.kademlia, peer_id, endpoint)
     }
 
-    fn inject_node_event(
+    fn inject_event(
         &mut self,
         peer_id: PeerId,
+        cid: ConnectionId,
         event: <Self::ProtocolsHandler as ProtocolsHandler>::OutEvent,
     ) {
-        NetworkBehaviour::inject_node_event(&mut self.kademlia, peer_id, event)
+        NetworkBehaviour::inject_event(&mut self.kademlia, peer_id, cid, event)
     }
 
     fn poll(
@@ -333,8 +335,16 @@ impl NetworkBehaviour for Discovery {
             Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id }) => {
                 return Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id });
             }
-            Poll::Ready(NetworkBehaviourAction::SendEvent { peer_id, event }) => {
-                return Poll::Ready(NetworkBehaviourAction::SendEvent { peer_id, event });
+            Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                peer_id,
+                handler,
+                event,
+            }) => {
+                return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
+                    peer_id,
+                    handler,
+                    event,
+                });
             }
             Poll::Ready(NetworkBehaviourAction::ReportObservedAddr { address }) => {
                 return Poll::Ready(NetworkBehaviourAction::ReportObservedAddr { address });

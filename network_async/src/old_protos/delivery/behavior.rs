@@ -28,8 +28,10 @@ use crate::utils::ExpiringQueue;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
-use libp2p_swarm::{NetworkBehaviour, NetworkBehaviourAction, PollParameters, ProtocolsHandler};
+use libp2p_core::{connection::ConnectionId, ConnectedPoint, Multiaddr, PeerId};
+use libp2p_swarm::{
+    NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters, ProtocolsHandler,
+};
 use log::{debug, error};
 use smallvec::SmallVec;
 use std::{
@@ -74,10 +76,12 @@ impl Delivery {
     pub fn deliver_unicast(&mut self, next_hop: &PeerId, message: Unicast) {
         if self.connected_peers.contains(next_hop) {
             debug!(target: "stegos_network::delivery", "delivering message to connected peer: peer_id={}, seq_no={}", next_hop, u8v_to_hexstr(&message.seq_no));
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id: next_hop.clone(),
-                event: DeliverySendEvent::Deliver(DeliveryMessage::UnicastMessage(message)),
-            });
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: next_hop.clone(),
+                    handler: NotifyHandler::Any,
+                    event: DeliverySendEvent::Deliver(DeliveryMessage::UnicastMessage(message)),
+                });
             return;
         }
 
@@ -115,10 +119,12 @@ impl NetworkBehaviour for Delivery {
             if let Some(queue) = self.send_queue.get_mut(&id) {
                 debug!(target: "stegos_network::delivery", "delivering queued messages: peer_id={}, queue_len={}", id, queue.len());
                 for m in queue.drain() {
-                    self.events.push_back(NetworkBehaviourAction::SendEvent {
-                        peer_id: id.clone(),
-                        event: DeliverySendEvent::Deliver(m),
-                    });
+                    self.events
+                        .push_back(NetworkBehaviourAction::NotifyHandler {
+                            peer_id: id.clone(),
+                            handler: NotifyHandler::Any,
+                            event: DeliverySendEvent::Deliver(m),
+                        });
                 }
             }
             self.send_queue.remove(&id);
@@ -130,7 +136,12 @@ impl NetworkBehaviour for Delivery {
         debug_assert!(was_in);
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: DeliveryRecvEvent) {
+    fn inject_event(
+        &mut self,
+        propagation_source: PeerId,
+        _: ConnectionId,
+        event: DeliveryRecvEvent,
+    ) {
         match event {
             DeliveryRecvEvent::Message(msg) => match msg {
                 DeliveryMessage::UnicastMessage(unicast) => {

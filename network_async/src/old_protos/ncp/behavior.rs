@@ -38,6 +38,7 @@ use std::{
     net::Ipv4Addr,
     time::{Duration, Instant},
 };
+use libp2p_core::connection::ConnectionId;
 use stegos_crypto::pbc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_timer::Delay;
@@ -218,7 +219,7 @@ where
         });
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: NcpRecvEvent) {
+    fn inject_event(&mut self, propagation_source: PeerId, _: ConnectionId, event: NcpRecvEvent) {
         // Process received NCP message (passed from Handler as Custom(message))
         debug!(target: "stegos_network::ncp", "Received a message: {:?}", event);
         self.connected_peers
@@ -417,36 +418,41 @@ where
                         peer_info.addresses.push(advertised_endpoint.clone());
                     }
                     response.peers.push(peer_info);
-                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
+                        handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::GetPeersResponse { response }),
                     });
                 }
                 NcpEvent::RequestPeers { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending peers request: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
+                        handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::GetPeersRequest),
                     });
                 }
                 NcpEvent::SendPing { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending ping request: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
+                        handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::Ping),
                     });
                 }
                 NcpEvent::SendPong { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending pong reply: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
+                        handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::Pong),
                     });
                 }
                 NcpEvent::Terminate { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending terminate to handler: peer_id={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::SendEvent {
+                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
+                        handler: NotifyHandler::Any,
                         event: NcpSendEvent::Terminate,
                     });
                 }

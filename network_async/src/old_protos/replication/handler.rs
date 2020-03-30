@@ -49,7 +49,7 @@ const OUTPUT_BUFFER_SIZE: usize = 10;
 
 /// Events consumed to ReplicationHandler.
 /// Sic: this structure is `pub` because it doesn't compile otherwise.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum HandlerInEvent {
     Connect,
     Disconnect,

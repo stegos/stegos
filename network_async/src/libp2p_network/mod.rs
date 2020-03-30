@@ -624,7 +624,10 @@ pub fn build_tcp_ws_secio_yamux(
 > + Clone {
     let mut mplex_config = libp2p_mplex::MplexConfig::new();
     mplex_config.max_buffer_len_behaviour(libp2p_mplex::MaxBufferBehaviour::Block);
-
+    mplex_config.max_substreams(256);
+    // let mut yamux_config = yamux::Config::default();
+    // yamux_config.set_window_update_mode(yamux::WindowUpdateMode::OnRead);
+    // let yamux_config = libp2p_yamux::Config::new(yamux_config);
     CommonTransport::new()
         .upgrade(libp2p_core::upgrade::Version::V1)
         .authenticate(secio::SecioConfig::new(keypair))

@@ -35,11 +35,11 @@ impl IntoMultihash for pbc::PublicKey {
     }
 }
 
-impl IntoMultihash for PeerId {
-    fn into_multihash(self) -> Multihash {
-        std::convert::Into::into(self)
-    }
-}
+// impl IntoMultihash for PeerId {
+//     fn into_multihash(self) -> Multihash {
+//         std::convert::Into::into(self)
+//     }
+// }
 
 impl IntoMultihash for Multihash {
     fn into_multihash(self) -> Multihash {

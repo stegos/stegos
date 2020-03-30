@@ -40,6 +40,7 @@ use std::{fmt, io, time::Instant};
 use crate::NETWORK_IDLE_TIMEOUT;
 
 /// Event passed to protocol handler from upper level
+#[derive(Clone)]
 pub enum GatekeeperSendEvent {
     Send(GatekeeperMessage),
 }

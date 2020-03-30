@@ -266,12 +266,12 @@ impl ProtocolsHandler for DeliveryHandler {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DeliveryRecvEvent {
     Message(DeliveryMessage),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DeliverySendEvent {
     Deliver(DeliveryMessage),
 }

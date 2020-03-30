@@ -110,29 +110,29 @@ pub trait KBucketsPeerId<TOther = Self>: IntoMultihash + Clone {
     fn max_distance() -> usize;
 }
 
-impl KBucketsPeerId for PeerId {
-    #[inline]
-    fn distance_with(&self, other: &Self) -> u32 {
-        Multihash::distance_with(&self.clone().into(), &other.clone().into())
-    }
+// impl KBucketsPeerId for PeerId {
+//     #[inline]
+//     fn distance_with(&self, other: &Self) -> u32 {
+//         Multihash::distance_with(&self.clone().into(), &other.clone().into())
+//     }
 
-    #[inline]
-    fn max_distance() -> usize {
-        <Multihash as KBucketsPeerId>::max_distance()
-    }
-}
+//     #[inline]
+//     fn max_distance() -> usize {
+//         <Multihash as KBucketsPeerId>::max_distance()
+//     }
+// }
 
-impl KBucketsPeerId<Multihash> for PeerId {
-    #[inline]
-    fn distance_with(&self, other: &Multihash) -> u32 {
-        Multihash::distance_with(&self.clone().into(), other)
-    }
+// impl KBucketsPeerId<Multihash> for PeerId {
+//     #[inline]
+//     fn distance_with(&self, other: &Multihash) -> u32 {
+//         Multihash::distance_with(&self.clone().into(), other)
+//     }
 
-    #[inline]
-    fn max_distance() -> usize {
-        <Multihash as KBucketsPeerId>::max_distance()
-    }
-}
+//     #[inline]
+//     fn max_distance() -> usize {
+//         <Multihash as KBucketsPeerId>::max_distance()
+//     }
+// }
 
 impl KBucketsPeerId for pbc::PublicKey {
     #[inline]

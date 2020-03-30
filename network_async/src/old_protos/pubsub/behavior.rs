@@ -27,9 +27,11 @@ use super::protocol::{
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures_io::{AsyncRead, AsyncWrite};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use log::{debug, trace};
 use lru_time_cache::LruCache;
@@ -111,16 +113,18 @@ impl Floodsub {
         }
 
         for peer in self.unlocked_remotes.keys() {
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id: peer.clone(),
-                event: FloodsubSendEvent::Publish(FloodsubRpc {
-                    messages: Vec::new(),
-                    subscriptions: vec![FloodsubSubscription {
-                        topic: topic.clone(),
-                        action: FloodsubSubscriptionAction::Subscribe,
-                    }],
-                }),
-            });
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer.clone(),
+                    handler: NotifyHandler::Any,
+                    event: FloodsubSendEvent::Publish(FloodsubRpc {
+                        messages: Vec::new(),
+                        subscriptions: vec![FloodsubSubscription {
+                            topic: topic.clone(),
+                            action: FloodsubSubscriptionAction::Subscribe,
+                        }],
+                    }),
+                });
         }
 
         self.subscribed_topics.push(topic);
@@ -148,13 +152,15 @@ impl Floodsub {
             }
 
             trace!(target: "stegos_network::pubsub", "sending message to peer: peer_id={}", peer_id);
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id: peer_id.clone(),
-                event: FloodsubSendEvent::Publish(FloodsubRpc {
-                    subscriptions: Vec::new(),
-                    messages: vec![message.clone()],
-                }),
-            });
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer_id.clone(),
+                    handler: NotifyHandler::Any,
+                    event: FloodsubSendEvent::Publish(FloodsubRpc {
+                        subscriptions: Vec::new(),
+                        messages: vec![message.clone()],
+                    }),
+                });
         }
     }
 
@@ -182,16 +188,18 @@ impl Floodsub {
 
         // We need to send our subscriptions to the newly-enabled node.
         for topic in self.subscribed_topics.iter() {
-            self.events.push_back(NetworkBehaviourAction::SendEvent {
-                peer_id: peer_id.clone(),
-                event: FloodsubSendEvent::Publish(FloodsubRpc {
-                    messages: Vec::new(),
-                    subscriptions: vec![FloodsubSubscription {
-                        topic: topic.clone(),
-                        action: FloodsubSubscriptionAction::Subscribe,
-                    }],
-                }),
-            });
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer_id.clone(),
+                    handler: NotifyHandler::Any,
+                    event: FloodsubSendEvent::Publish(FloodsubRpc {
+                        messages: Vec::new(),
+                        subscriptions: vec![FloodsubSubscription {
+                            topic: topic.clone(),
+                            action: FloodsubSubscriptionAction::Subscribe,
+                        }],
+                    }),
+                });
         }
     }
 
@@ -242,7 +250,12 @@ impl NetworkBehaviour for Floodsub {
         super::metrics::UNLOCKED_PEERS.set(self.unlocked_remotes.len() as i64);
     }
 
-    fn inject_node_event(&mut self, propagation_source: PeerId, event: FloodsubRecvEvent) {
+    fn inject_event(
+        &mut self,
+        propagation_source: PeerId,
+        _: ConnectionId,
+        event: FloodsubRecvEvent,
+    ) {
         self.incoming_rates
             .entry(propagation_source.clone())
             .or_insert(RollingRateCounter::new(PUBSUB_SAMPLES))
@@ -344,10 +357,12 @@ impl NetworkBehaviour for Floodsub {
                 }
 
                 for (peer_id, rpc) in rpcs_to_dispatch {
-                    self.events.push_back(NetworkBehaviourAction::SendEvent {
-                        peer_id,
-                        event: FloodsubSendEvent::Publish(rpc),
-                    });
+                    self.events
+                        .push_back(NetworkBehaviourAction::NotifyHandler {
+                            peer_id,
+                            handler: NotifyHandler::Any,
+                            event: FloodsubSendEvent::Publish(rpc),
+                        });
                 }
             }
         }
@@ -409,7 +424,7 @@ pub enum FloodsubEvent {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// Event passed to protocol handler
 pub enum FloodsubSendEvent {
     /// Publish message

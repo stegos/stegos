@@ -24,9 +24,11 @@ use futures::channel::mpsc;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures_io::{AsyncRead, AsyncWrite};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use log::*;
 use std::collections::VecDeque;
@@ -75,8 +77,9 @@ impl Replication {
 
     pub fn connect(&mut self, peer_id: PeerId) {
         debug!("[{}] Connecting", peer_id);
-        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
+        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::NotifyHandler {
             peer_id,
+            handler: NotifyHandler::Any,
             event: HandlerInEvent::Connect,
         };
         self.events.push_back(event);
@@ -84,8 +87,9 @@ impl Replication {
 
     pub fn disconnect(&mut self, peer_id: PeerId) {
         debug!("[{}] Disconnecting", peer_id);
-        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::SendEvent {
+        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::NotifyHandler {
             peer_id,
+            handler: NotifyHandler::Any,
             event: HandlerInEvent::Disconnect,
         };
         self.events.push_back(event);
@@ -130,7 +134,7 @@ impl NetworkBehaviour for Replication {
     }
 
     /// Called on incoming events from handler.
-    fn inject_node_event(&mut self, peer_id: PeerId, event: HandlerOutEvent) {
+    fn inject_event(&mut self, peer_id: PeerId, _: ConnectionId, event: HandlerOutEvent) {
         let event = match event {
             HandlerOutEvent::Connected { tx, rx } => {
                 ReplicationEvent::Connected { peer_id, tx, rx }

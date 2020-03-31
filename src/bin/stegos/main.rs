@@ -31,7 +31,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::runtime::Runtime;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let name = "Stegos CLI".to_string();
     let version = format!(
         "{}.{}.{} ({} {})",
@@ -160,9 +161,7 @@ fn main() {
         }
     };
     let formatter = Formatter::from_str(args.value_of("formatter").unwrap()).unwrap();
-
-    let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service = ConsoleService::new(
+    ConsoleService::spawn(
         chain,
         name,
         version,
@@ -171,7 +170,5 @@ fn main() {
         history_file,
         formatter,
         raw,
-    );
-    rt.block_on(console_service)
-        .expect("errors are handled earlier");
+    ).await;
 }

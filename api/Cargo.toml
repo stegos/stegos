@@ -13,20 +13,23 @@ description = "Stegos - WebSocket API"
 [dependencies]
 base64 = "0.10"
 failure = "0.1"
-futures = "0.1"
+futures = "0.3"
 log = "0.4"
 rand = "0.7.0"
 aes-ctr = "0.3.0"
 serde = "1.0"
 serde_derive = "1.0"
 serde_json = "1.0"
+anymap="0.12"
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
-stegos_network = { version = "1.0.0", path = "../network" }
+stegos_network = { version = "1.0.0", path = "../network_async", package="stegos_network_async"}
 stegos_node = { version = "1.0.0", path = "../node" }
-stegos_wallet = { version = "1.0.0", path = "../wallet" }
-tokio = { version = "0.1", default-features = false, features = []}
-tokio-timer = "0.2"
-websocket = { version = "0.22", default-features = false, features = ["async"] }
+# stegos_wallet = { version = "1.0.0", path = "../wallet" }
+tokio = { version = "0.2.11", default-features = false, features = []}
+async-trait="0.1.2"
 
+
+tokio-tungstenite="0.10.1"
+tungstenite="0.10"
 [dev-dependencies]
 lipsum = "0.6"

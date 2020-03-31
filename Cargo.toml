@@ -33,7 +33,7 @@ members = [
 ]
 
 [dependencies]
-# stegos_api = { version = "1.0.0", path = "./api" }
+stegos_api = { version = "1.0.0", path = "./api" }
 stegos_blockchain = { version = "1.0.0", path = "./blockchain" }
 stegos_consensus = { version = "1.0.0", path = "./consensus" }
 stegos_crypto = { version = "1.0.0", path = "./crypto" }
@@ -103,13 +103,3 @@ overflow-checks = false
 
 [patch.crates-io]
 cc = { git = 'https://github.com/stegos/cc-rs.git' }
-# quicksink = {git="https://github.com/twittner/quicksink", rev="80e5bc9f928482793f0ade81094deae85c6024e4"}
-libp2p={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-core ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-core-derive ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-tcp ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-dns ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-secio ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-mplex ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-yamux ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}
-libp2p-swarm ={git="https://github.com/twittner/rust-libp2p", rev="5732d3650c4a77ab893dc8cb336209ace937a306"}

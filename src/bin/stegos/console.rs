@@ -20,9 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use failure::{format_err, Error};
-use futures::sync::mpsc::{channel, Receiver, Sender};
-use futures::try_ready;
-use futures::{Async, Future, Poll, Sink, Stream};
+use futures::channel::mpsc::{channel, Receiver, Sender};
+use futures::prelude::*;
+use futures::select;
 use lazy_static::*;
 use log::debug;
 use regex::Regex;
@@ -147,25 +147,8 @@ impl FromStr for Formatter {
     }
 }
 
-pub enum ChainNameResolver {
-    NotSet,
-    Resolving,
-    Set(String),
-}
-
-impl From<Option<String>> for ChainNameResolver {
-    fn from(chain: Option<String>) -> Self {
-        match chain {
-            None => ChainNameResolver::NotSet,
-            Some(v) => ChainNameResolver::Set(v),
-        }
-    }
-}
-
 /// Console (stdin) service.
 pub struct ConsoleService {
-    /// Chain name.
-    chain: ChainNameResolver,
     /// API client.
     client: WebSocketClient,
     /// Current Account Id.
@@ -182,7 +165,7 @@ pub struct ConsoleService {
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(
+    pub async fn spawn(
         chain: Option<String>,
         name: String,
         version: String,
@@ -200,6 +183,8 @@ impl ConsoleService {
             debug!("Initialising cli for chain = {}", chain);
             stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
                 .expect("Network prefix not initialised.");
+        } else {
+            self.try_chain_name_resolve().await?;
         }
         let (stdin_th, raw) = if atty::is(atty::Stream::Stdin) {
             println!("{} {}", name, version);
@@ -218,13 +203,26 @@ impl ConsoleService {
         };
         let stdin = rx;
         ConsoleService {
-            chain: chain.into(),
             client,
             account_id,
             stdin,
             stdin_th,
             formatter,
             raw,
+        }
+    }
+
+    fn run(self) -> Result<(), Error> {
+        select! {
+            item = self.client.notifications() => {
+                self.on_notification(item.unwrap());
+            }
+            input = self.stdin.next() => {
+                match input {
+                    Some(line ) => self.on_input(&line).await,
+                    None => self.on_exit();
+                }
+            }
         }
     }
 
@@ -1047,105 +1045,22 @@ impl ConsoleService {
         }
     }
 
-    fn try_chain_name_resolve(&mut self) -> Poll<(), ()> {
-        match &mut self.chain {
-            // Request name if it was not set.
-            ChainNameResolver::NotSet => {
-                debug!("ChainNameResolver::NotSet");
-                // Wait for connect before send.
-                if !self.client.is_connected() {
-                    match self.client.poll() {
-                        Ok(Async::NotReady) => {}
-                        Ok(Async::Ready(_)) | Err(()) => unreachable!(),
-                    }
-                    return Ok(Async::NotReady);
-                }
-
-                let request = Request {
-                    kind: RequestKind::NetworkRequest(NetworkRequest::ChainName {}),
-                    id: 0,
-                };
-
-                match self.client.send(request) {
-                    Err(e) => panic!("Cannot send prefix request = {}", e),
-                    Ok(_) => {
-                        self.chain = ChainNameResolver::Resolving;
-                        Ok(Async::NotReady)
-                    }
-                }
-            }
-            ChainNameResolver::Resolving => {
-                debug!("ChainNameResolver::Resolving");
-                match self.client.poll().unwrap() {
-                    Async::Ready(response) => {
-                        let chain = match response.unwrap() {
-                            Response {
-                                kind:
-                                    ResponseKind::NetworkResponse(NetworkResponse::ChainName { name }),
-                                ..
-                            } => name,
-                            response => {
-                                panic!("Wrong reponse to chain name request = {:?}", response)
-                            }
-                        };
-                        debug!("Initialising cli for chain = {}", chain);
-                        stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
-                            .expect("Network prefix not initialised.");
-                        self.chain = ChainNameResolver::Set(chain);
-                        Ok(Async::Ready(()))
-                    }
-                    Async::NotReady => Ok(Async::NotReady),
-                }
-            }
-            ChainNameResolver::Set(_) => Ok(Async::Ready(())), // If name was set just resume work
-        }
-    }
-}
-
-// Event loop.
-impl Future for ConsoleService {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        try_ready!(self.try_chain_name_resolve());
-
-        loop {
-            match self.client.poll() {
-                Ok(Async::Ready(response)) => {
-                    self.on_response(response.unwrap());
-                }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Err(()) => unreachable!(),
-            }
-        }
-
-        // Ignore stdin until client is connected.
-        if !self.client.is_connected() {
-            return Ok(Async::NotReady);
-        }
-
-        loop {
-            match self.stdin.poll() {
-                Ok(Async::Ready(Some(line))) => match self.on_input(&line) {
-                    Ok(true) => {
-                        self.stdin_th.thread().unpark();
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        self.stdin_th.thread().unpark();
-                    }
-                },
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => unreachable!(),
-            }
-        }
-
-        return Ok(Async::NotReady);
+    async fn try_chain_name_resolve(&mut self) {
+        let request = Request {
+            kind: RequestKind::NetworkRequest(NetworkRequest::ChainName {}),
+            id: 0,
+        };
+        let response = self.client.request(request).await.unwrap();
+        let chain = match response.unwrap() {
+            Response {
+                kind: ResponseKind::NetworkResponse(NetworkResponse::ChainName { name }),
+                ..
+            } => name,
+            response => panic!("Wrong reponse to chain name request = {:?}", response),
+        };
+        debug!("Initialising cli for chain = {}", chain);
+        stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
+            .expect("Network prefix not initialised.");
     }
 }
 

@@ -21,27 +21,27 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![deny(warnings)]
+// #![deny(warnings)]
 
 mod client;
 mod crypto;
 mod error;
-mod server;
+pub mod server;
 
-pub use crate::client::{url, WebSocketClient};
+pub use crate::client::WebSocketClient;
 use crate::crypto::{decrypt, encrypt};
 pub use crate::crypto::{load_api_token, load_or_create_api_token, ApiToken};
 pub use crate::error::KeyError;
-pub use crate::server::WebSocketServer;
+// pub use crate::server::WebSocketServer;
+use failure::{bail, Error};
 use log::*;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::pbc;
-pub use stegos_network::NodeInfo;
+// pub use stegos_network::NodeInfo;
 pub use stegos_node::{ChainNotification, NodeRequest, NodeResponse, StatusNotification};
-pub use stegos_wallet::api::*;
-pub use websocket::WebSocketError;
+// pub use stegos_wallet::api::*;
 
 pub type RequestId = u64;
 
@@ -49,53 +49,53 @@ fn is_request_id_default(id: &RequestId) -> bool {
     *id == 0
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
-pub enum NetworkRequest {
-    // VersionInfo is not about Network, but let's keep it here to simplify all things.
-    VersionInfo {},
-    ChainName {},
-    SubscribeUnicast {
-        topic: String,
-    },
-    SubscribeBroadcast {
-        topic: String,
-    },
-    UnsubscribeUnicast {
-        topic: String,
-    },
-    UnsubscribeBroadcast {
-        topic: String,
-    },
-    SendUnicast {
-        topic: String,
-        to: pbc::PublicKey,
-        data: Vec<u8>,
-    },
-    PublishBroadcast {
-        topic: String,
-        data: Vec<u8>,
-    },
-    ConnectedNodesRequest {},
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// #[serde(tag = "type")]
+// #[serde(rename_all = "snake_case")]
+// pub enum NetworkRequest {
+//     // VersionInfo is not about Network, but let's keep it here to simplify all things.
+//     VersionInfo {},
+//     ChainName {},
+//     SubscribeUnicast {
+//         topic: String,
+//     },
+//     SubscribeBroadcast {
+//         topic: String,
+//     },
+//     UnsubscribeUnicast {
+//         topic: String,
+//     },
+//     UnsubscribeBroadcast {
+//         topic: String,
+//     },
+//     SendUnicast {
+//         topic: String,
+//         to: pbc::PublicKey,
+//         data: Vec<u8>,
+//     },
+//     PublishBroadcast {
+//         topic: String,
+//         data: Vec<u8>,
+//     },
+//     ConnectedNodesRequest {},
+// }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-#[serde(rename_all = "snake_case")]
-pub enum NetworkResponse {
-    VersionInfo { version: String },
-    ChainName { name: String },
-    SubscribedUnicast,
-    SubscribedBroadcast,
-    UnsubscribedUnicast,
-    UnsubscribedBroadcast,
-    SentUnicast,
-    PublishedBroadcast,
-    ConnectedNodesRequested,
-    ConnectedNodes { total: usize, nodes: Vec<NodeInfo> },
-    Error { error: String },
-}
+// #[derive(Debug, Serialize, Deserialize)]
+// #[serde(tag = "type")]
+// #[serde(rename_all = "snake_case")]
+// pub enum NetworkResponse {
+//     VersionInfo { version: String },
+//     ChainName { name: String },
+//     SubscribedUnicast,
+//     SubscribedBroadcast,
+//     UnsubscribedUnicast,
+//     UnsubscribedBroadcast,
+//     SentUnicast,
+//     PublishedBroadcast,
+//     ConnectedNodesRequested,
+//     ConnectedNodes { total: usize, nodes: Vec<NodeInfo> },
+//     Error { error: String },
+// }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -112,15 +112,15 @@ pub enum NetworkNotification {
     },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RequestKind {
-    NetworkRequest(NetworkRequest),
-    WalletsRequest(WalletRequest),
+    // NetworkRequest(NetworkRequest),
+    // WalletsRequest(WalletRequest),
     NodeRequest(NodeRequest),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Request {
     #[serde(flatten)]
@@ -133,10 +133,10 @@ pub struct Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ResponseKind {
-    NetworkResponse(NetworkResponse),
-    NetworkNotification(NetworkNotification),
-    WalletResponse(WalletResponse),
-    WalletNotification(WalletNotification),
+    // NetworkResponse(NetworkResponse),
+    // NetworkNotification(NetworkNotification),
+    // WalletResponse(WalletResponse),
+    // WalletNotification(WalletNotification),
     NodeResponse(NodeResponse),
     StatusNotification(StatusNotification),
     ChainNotification(ChainNotification),
@@ -159,12 +159,12 @@ pub fn encode<T: Serialize>(api_token: &ApiToken, msg: &T) -> String {
     msg
 }
 
-pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T, WebSocketError> {
+pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T, Error> {
     let msg = match base64::decode(&msg) {
         Ok(r) => r,
         Err(e) => {
             error!("Failed to base64::decode message: error={}", e);
-            return Err(WebSocketError::RequestError("Failed to base64::decode"));
+            bail!("Failed to base64::decode");
         }
     };
     let msg = decrypt(api_token, &msg);
@@ -173,7 +173,7 @@ pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T,
     const RIGHT_BRACKET: u8 = 125;
     if msg.len() < 2 || msg[0] != LEFT_BRACKET || msg[msg.len() - 1] != RIGHT_BRACKET {
         error!("Failed to decrypt message");
-        return Err(WebSocketError::RequestError("Failed to decrypt"));
+        bail!("Failed to decrypt");
     }
     let msg: T = match serde_json::from_slice(&msg) {
         Ok(r) => r,
@@ -183,7 +183,7 @@ pub fn decode<T: DeserializeOwned>(api_token: &ApiToken, msg: &str) -> Result<T,
                 String::from_utf8_lossy(&msg),
                 e
             );
-            return Err(WebSocketError::RequestError("Failed to parse JSON"));
+            bail!("Failed to parse JSON");
         }
     };
     Ok(msg)

@@ -24,7 +24,7 @@ anymap="0.12"
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
 stegos_network = { version = "1.0.0", path = "../network_async", package="stegos_network_async"}
 stegos_node = { version = "1.0.0", path = "../node" }
-# stegos_wallet = { version = "1.0.0", path = "../wallet" }
+stegos_wallet = { version = "1.0.0", path = "../wallet" }
 tokio = { version = "0.2.11", default-features = false, features = []}
 async-trait="0.1.2"
 

@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![recursion_limit="1024"] // used for futures::select in server/mod.rs
-// #![deny(warnings)]
+#![recursion_limit = "1024"] // used for futures::select in server/mod.rs
+                             // #![deny(warnings)]
 
 mod client;
 mod crypto;
@@ -33,7 +33,6 @@ pub use crate::client::WebSocketClient;
 use crate::crypto::{decrypt, encrypt};
 pub use crate::crypto::{load_api_token, load_or_create_api_token, ApiToken};
 pub use crate::error::KeyError;
-// pub use crate::server::WebSocketServer;
 use failure::{bail, Error};
 use log::*;
 use serde::de::DeserializeOwned;
@@ -42,7 +41,7 @@ use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::pbc;
 // pub use stegos_network::NodeInfo;
 pub use stegos_node::{ChainNotification, NodeRequest, NodeResponse, StatusNotification};
-// pub use stegos_wallet::api::*;
+pub use stegos_wallet::api::*;
 
 pub type RequestId = u64;
 
@@ -117,7 +116,7 @@ pub enum NetworkNotification {
 #[serde(untagged)]
 pub enum RequestKind {
     // NetworkRequest(NetworkRequest),
-    // WalletsRequest(WalletRequest),
+    WalletsRequest(WalletRequest),
     NodeRequest(NodeRequest),
 }
 
@@ -136,8 +135,8 @@ pub struct Request {
 pub enum ResponseKind {
     // NetworkResponse(NetworkResponse),
     // NetworkNotification(NetworkNotification),
-    // WalletResponse(WalletResponse),
-    // WalletNotification(WalletNotification),
+    WalletResponse(WalletResponse),
+    WalletNotification(WalletNotification),
     NodeResponse(NodeResponse),
     StatusNotification(StatusNotification),
     ChainNotification(ChainNotification),

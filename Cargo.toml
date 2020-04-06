@@ -42,7 +42,7 @@ stegos_network = { version = "1.0.0", path = "./network_async", package="stegos_
 stegos_replication = { version = "1.0.0", path = "./replication" }
 stegos_node = { version = "1.0.0", path = "./node" }
 stegos_serialization = { version = "1.0.0", path = "./serialization" }
-# stegos_wallet = { version = "1.0.0", path = "./wallet" }
+stegos_wallet = { version = "1.0.0", path = "./wallet" }
 stegos_txpool = { version = "1.0.0", path = "./txpool" }
 assert_matches = "1.3.0"
 bit-vec = "0.6"

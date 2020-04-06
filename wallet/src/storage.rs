@@ -31,7 +31,6 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::mem;
 use std::path::Path;
-use std::time::{Duration, Instant};
 use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::mvcc::MultiVersionedMap;
 use stegos_blockchain::*;
@@ -39,7 +38,7 @@ use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 use stegos_crypto::scc::{self, Fr};
 use stegos_serialization::traits::ProtoConvert;
-use tokio_timer::clock;
+use tokio::time::{Duration, Instant};
 
 // colon families.
 const HISTORY: &'static str = "history";
@@ -1306,7 +1305,7 @@ impl LightDatabase {
     }
 
     pub fn lock_input(&mut self, input: &Hash) {
-        let time = clock::now();
+        let time = Instant::now();
         assert!(self
             .locked_inputs
             .insert(*input, LockedInput { time })
@@ -1322,7 +1321,7 @@ impl LightDatabase {
     }
 
     pub fn expire_locked_inputs(&mut self, pending_time: Duration) -> Vec<Hash> {
-        let now = clock::now();
+        let now = Instant::now();
         let mut expired_inputs = Vec::new();
         let pending = std::mem::replace(&mut self.locked_inputs, HashMap::new());
         for (input_hash, p) in pending {
@@ -1627,7 +1626,7 @@ impl TransactionValue {
 /// Convert Time from instant to timestamp, for visualise in API.
 fn pending_timestamp(pending: Option<&LockedInput>) -> Option<Timestamp> {
     pending.and_then(|p| {
-        let now = tokio_timer::clock::now();
+        let now = Instant::now();
         if p.time + super::PENDING_UTXO_TIME < now {
             return None;
         }

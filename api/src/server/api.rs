@@ -24,13 +24,17 @@ use failure::{bail, Error};
 
 use async_trait::async_trait;
 
+use crate::{Request, RequestKind, ResponseKind};
+use futures::stream::StreamExt;
+use futures::Stream;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
-use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, StatusNotification};
-use futures::Stream;
-use crate::{Request, RequestKind, ResponseKind};
 use std::convert::{TryFrom, TryInto};
-use futures::stream::StreamExt;
+use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, StatusNotification};
+use stegos_wallet::{
+    api::{WalletRequest, WalletResponse},
+    Wallet,
+};
 
 #[derive(Clone, Debug)]
 pub struct RawRequest(pub Request);
@@ -38,12 +42,11 @@ pub struct RawRequest(pub Request);
 impl RawRequest {
     pub(super) fn is_subscribe(&self) -> bool {
         match &self.0.kind {
-           RequestKind::NodeRequest(r) => {
-               match r {
-                   NodeRequest::SubscribeStatus{..} | NodeRequest::SubscribeChain{..} => true,
-                   _ => false
-               }
-            }
+            RequestKind::NodeRequest(r) => match r {
+                NodeRequest::SubscribeStatus { .. } | NodeRequest::SubscribeChain { .. } => true,
+                _ => false,
+            },
+            RequestKind::WalletsRequest(r) => false,
         }
     }
 }
@@ -58,11 +61,23 @@ impl TryFrom<RawRequest> for NodeRequest {
     }
 }
 
+impl TryFrom<RawRequest> for WalletRequest {
+    type Error = Error;
+    fn try_from(request: RawRequest) -> Result<WalletRequest, Self::Error> {
+        match request.0.kind {
+            RequestKind::WalletsRequest(req) => Ok(req),
+            _ => bail!("Cannot parse request as wallet request."),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RawResponse(pub ResponseKind);
 
 impl RawResponse {
-    pub(super) fn subscribe_to_stream(&mut self) -> Result<Box<dyn Stream<Item=RawResponse> + Unpin + Send>, Error>{
+    pub(super) fn subscribe_to_stream(
+        &mut self,
+    ) -> Result<Box<dyn Stream<Item = RawResponse> + Unpin + Send>, Error> {
         match &mut self.0 {
             ResponseKind::NodeResponse(r) => {
                 match &mut *r {
@@ -72,17 +87,25 @@ impl RawResponse {
                     response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
                 }
             }
-            ResponseKind::ChainNotification (_) |ResponseKind::StatusNotification(_)  => {
+            ResponseKind::WalletResponse(_) | ResponseKind::WalletNotification(_) => {
+                bail!("Wallets notification didn't support.")
+            }
+            ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) => {
                 bail!("Got notification message, expected response.")
             }
         }
     }
 }
 
-
 impl From<NodeResponse> for RawResponse {
     fn from(response: NodeResponse) -> RawResponse {
         RawResponse(ResponseKind::NodeResponse(response))
+    }
+}
+
+impl From<WalletResponse> for RawResponse {
+    fn from(response: WalletResponse) -> RawResponse {
+        RawResponse(ResponseKind::WalletResponse(response))
     }
 }
 
@@ -112,9 +135,8 @@ impl<T: ApiHandler + Sync + Clone + 'static> ApiHandler for Option<T> {
             bail!("Api not inited.")
         }
     }
-    
-    fn cloned(&self) -> Box<dyn ApiHandler>
-    {
+
+    fn cloned(&self) -> Box<dyn ApiHandler> {
         Box::new(self.clone())
     }
 }
@@ -129,13 +151,24 @@ impl ApiHandler for Node {
         Ok(response.into())
     }
 
-    fn cloned(&self) -> Box<dyn ApiHandler>
-    {
+    fn cloned(&self) -> Box<dyn ApiHandler> {
         Box::new(self.clone())
     }
 }
 
-pub(super) fn clone_apis(apis:&[Box<dyn ApiHandler>]) -> Vec<Box<dyn ApiHandler>> {
-    apis.iter().map(|h|h.cloned()).collect()
+#[async_trait]
+impl ApiHandler for Wallet {
+    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+        let request: WalletRequest = req.try_into()?;
+        let response = self.request(request).await?;
+        Ok(response.into())
+    }
+
+    fn cloned(&self) -> Box<dyn ApiHandler> {
+        Box::new(self.clone())
+    }
 }
 
+pub(super) fn clone_apis(apis: &[Box<dyn ApiHandler>]) -> Vec<Box<dyn ApiHandler>> {
+    apis.iter().map(|h| h.cloned()).collect()
+}

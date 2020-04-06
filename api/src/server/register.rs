@@ -22,20 +22,20 @@
 // SOFTWARE.
 use super::api::{ApiHandler, RawRequest, RawResponse};
 use failure::{bail, Error};
-use log::{trace, debug};
 use futures::stream::SelectAll;
 use futures::Stream;
+use log::{debug, trace};
 
 pub struct Register {
     methods: Vec<Box<dyn ApiHandler>>,
-    pub notifications: SelectAll<Box<dyn Stream<Item=RawResponse> + Unpin + Send>> ,
+    pub notifications: SelectAll<Box<dyn Stream<Item = RawResponse> + Unpin + Send>>,
 }
 
 impl Register {
     pub fn new() -> Self {
         Register {
             methods: Vec::new(),
-            notifications: SelectAll::new()
+            notifications: SelectAll::new(),
         }
     }
 
@@ -52,14 +52,14 @@ impl Register {
 
         for api in &self.methods {
             debug!("Trying to parse api request: api_name={}", api.name());
-             
+
             match api.try_process(req.clone()).await {
                 Ok(mut response) => {
-                    if  notification {
+                    if notification {
                         let notification = response.subscribe_to_stream()?;
                         self.notifications.push(notification);
-                        return Ok(response)
                     }
+                    return Ok(response);
                 }
                 Err(e) => trace!("Error when parsing request: error={}", e),
             }

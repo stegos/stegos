@@ -37,7 +37,7 @@ use stegos_crypto::utils::{
 };
 use stegos_replication::api::*;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "output_type")]
 #[serde(rename_all = "snake_case")]
 pub enum OutputType {
@@ -45,7 +45,7 @@ pub enum OutputType {
     Payment { comment: String },
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NewOutputInfo {
     #[serde(flatten)]
     pub output_type: OutputType,
@@ -55,7 +55,7 @@ pub struct NewOutputInfo {
 ///
 /// RPC requests.
 ///
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum NodeRequest {

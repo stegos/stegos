@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub use crate::snowball::State as SnowballStatus;
+// pub use crate::snowball::State as SnowballStatus;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use stegos_blockchain::api::StatusInfo;
@@ -135,7 +135,7 @@ pub enum AccountNotification {
     Unsealed,
     Sealed,
     BalanceChanged(AccountBalance),
-    SnowballStatus(SnowballStatus),
+    // SnowballStatus(SnowballStatus),
     TransactionStatus {
         tx_hash: Hash,
         #[serde(flatten)]

@@ -234,13 +234,13 @@ impl NetworkBehaviour for Floodsub {
         Vec::new()
     }
 
-    fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
+    fn inject_connected(&mut self, id: &PeerId) {
         debug!(target: "stegos_network::pubsub", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
         super::metrics::CONNECTED_PEERS.set(self.connected_peers.len() as i64);
     }
 
-    fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
+    fn inject_disconnected(&mut self, id: &PeerId) {
         debug!(target: "stegos_network::pubsub", "peer disconnected: peer_id={}", id);
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in);

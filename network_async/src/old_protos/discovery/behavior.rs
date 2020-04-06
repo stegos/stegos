@@ -234,16 +234,32 @@ impl NetworkBehaviour for Discovery {
         self.kademlia.addresses_of_peer(peer_id)
     }
 
-    fn inject_connected(&mut self, peer_id: PeerId, endpoint: ConnectedPoint) {
-        debug!(target: "stegos_network::discovery", "new peer connected: peer_id={}", peer_id);
+    fn inject_connected(&mut self, peer_id: &PeerId) {
         self.connected_peers.insert(peer_id.clone());
-        NetworkBehaviour::inject_connected(&mut self.kademlia, peer_id, endpoint)
     }
 
-    fn inject_disconnected(&mut self, peer_id: &PeerId, endpoint: ConnectedPoint) {
+    fn inject_connection_established(
+        &mut self,
+        peer_id: &PeerId,
+        conn: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
+        debug!(target: "stegos_network::discovery", "new peer connected: peer_id={}", peer_id);
+        NetworkBehaviour::inject_connection_established(&mut self.kademlia, peer_id, conn, endpoint)
+    }
+
+    fn inject_connection_closed(
+        &mut self,
+        peer_id: &PeerId,
+        conn: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
         debug!(target: "stegos_network::discovery", "peer disconnected: peer_id={}", peer_id);
+        NetworkBehaviour::inject_connection_closed(&mut self.kademlia, peer_id, conn, endpoint)
+    }
+
+    fn inject_disconnected(&mut self, peer_id: &PeerId) {
         self.connected_peers.remove(peer_id);
-        NetworkBehaviour::inject_disconnected(&mut self.kademlia, peer_id, endpoint)
     }
 
     fn inject_event(
@@ -332,8 +348,8 @@ impl NetworkBehaviour for Discovery {
             Poll::Ready(NetworkBehaviourAction::DialAddress { address }) => {
                 return Poll::Ready(NetworkBehaviourAction::DialAddress { address });
             }
-            Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id }) => {
-                return Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id });
+            Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id, condition }) => {
+                return Poll::Ready(NetworkBehaviourAction::DialPeer { peer_id, condition });
             }
             Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                 peer_id,

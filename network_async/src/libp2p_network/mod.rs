@@ -39,7 +39,7 @@ use libp2p_core::{identity, transport::TransportError, Transport};
 use libp2p_core_derive::NetworkBehaviour;
 use libp2p_dns as dns;
 use libp2p_secio as secio;
-use libp2p_swarm::{NetworkBehaviourEventProcess, Swarm};
+use libp2p_swarm::{NetworkBehaviourEventProcess, Swarm, SwarmBuilder};
 use libp2p_tcp as tcp;
 use log::*;
 use smallvec::SmallVec;
@@ -224,7 +224,9 @@ fn new_service(
         replication_tx,
     );
 
-    let mut swarm = Swarm::new(transport, behaviour, peer_id.clone());
+    let mut swarm = SwarmBuilder::new(transport, behaviour, peer_id.clone())
+        .peer_connection_limit(1)
+        .build();
 
     if config.endpoint != "" {
         let endpoint = SocketAddr::from_str(&config.endpoint).expect("Invalid endpoint");
@@ -276,7 +278,7 @@ fn new_service(
 
 #[derive(NetworkBehaviour)]
 pub struct Libp2pBehaviour {
-    gossipsub: Gossipsub,
+    // gossipsub: Gossipsub,
 
     // OLD PROTOS BEGIN
     floodsub: Floodsub,
@@ -332,12 +334,13 @@ impl Libp2pBehaviour {
         let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
             .heartbeat_interval(Duration::from_secs(10))
             .message_id_fn(message_id_fn) // content-address messages. No two messages of the
+            .max_transmit_size(2048 * 1024) // 2MB;
             //same content will be propagated.
             .build();
 
         // let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
         let behaviour = Libp2pBehaviour {
-            gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
+            // gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
             gossip_consumers: HashMap::new(),
             my_pkey: network_pkey.clone(),
             my_skey: network_skey.clone(),
@@ -385,7 +388,7 @@ impl Libp2pBehaviour {
                         .entry(topic.clone())
                         .or_insert(SmallVec::new())
                         .push(handler);
-                    self.gossipsub.subscribe(gossipsub_topic);
+                    // self.gossipsub.subscribe(gossipsub_topic);
                     self.floodsub.subscribe(topic);
                     return;
                 }
@@ -397,7 +400,7 @@ impl Libp2pBehaviour {
                     data.len(),
                 );
                 let gossipsub_topic = Topic::new(topic.clone());
-                self.gossipsub.publish(&gossipsub_topic, data.clone());
+                // self.gossipsub.publish(&gossipsub_topic, data.clone());
                 self.floodsub.publish(topic, data);
             }
             ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {

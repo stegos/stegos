@@ -32,8 +32,8 @@ use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
-    PollParameters,
+    protocols_handler::ProtocolsHandler, DialPeerCondition, NetworkBehaviour,
+    NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
 use log::{debug, trace};
 use lru_time_cache::LruCache;
@@ -418,8 +418,25 @@ impl NetworkBehaviour for Kademlia {
             Vec::new()
         }
     }
+    fn inject_connection_established(
+        &mut self,
+        peer: &PeerId,
+        _: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
+        let peer_id = peer.clone().into_bytes();
+        let node_id = match self.known_peers.get(&peer_id) {
+            Some(id) => id,
+            None => return,
+        };
+        if let ConnectedPoint::Dialer { address } = endpoint {
+            if let Some(node_info) = self.kbuckets.entry_mut(&node_id) {
+                node_info.addresses.insert_connected(address.clone());
+            }
+        }
+    }
 
-    fn inject_connected(&mut self, id: PeerId, endpoint: ConnectedPoint) {
+    fn inject_connected(&mut self, id: &PeerId) {
         let peer_id = id.clone().into_bytes();
         self.connected_peers.insert(id.clone());
 
@@ -444,14 +461,9 @@ impl NetworkBehaviour for Kademlia {
                 if let Some(ref peer_id) = node_info.peer_id {
                     self.queued_events.push(NetworkBehaviourAction::DialPeer {
                         peer_id: peer_id.clone(),
+                        condition: DialPeerCondition::Disconnected,
                     })
                 }
-            }
-        }
-
-        if let ConnectedPoint::Dialer { address } = endpoint {
-            if let Some(node_info) = self.kbuckets.entry_mut(&node_id) {
-                node_info.addresses.insert_connected(address);
             }
         }
     }
@@ -488,8 +500,26 @@ impl NetworkBehaviour for Kademlia {
             query.0.inject_rpc_error(node_id);
         }
     }
+    fn inject_connection_closed(
+        &mut self,
+        id: &PeerId,
+        _: &ConnectionId,
+        old_endpoint: &ConnectedPoint,
+    ) {
+        let peer_id = id.clone().into_bytes();
+        let node_id = match self.known_peers.get(&peer_id) {
+            Some(id) => id,
+            None => return,
+        };
 
-    fn inject_disconnected(&mut self, id: &PeerId, old_endpoint: ConnectedPoint) {
+        if let ConnectedPoint::Dialer { address } = old_endpoint {
+            if let Some(node_info) = self.kbuckets.get_mut(&node_id) {
+                node_info.addresses.set_disconnected(&address);
+            }
+        }
+    }
+
+    fn inject_disconnected(&mut self, id: &PeerId) {
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in);
         let peer_id = id.clone().into_bytes();
@@ -500,12 +530,6 @@ impl NetworkBehaviour for Kademlia {
 
         for (query, _, _) in self.active_queries.values_mut() {
             query.inject_rpc_error(&node_id);
-        }
-
-        if let ConnectedPoint::Dialer { address } = old_endpoint {
-            if let Some(node_info) = self.kbuckets.get_mut(&node_id) {
-                node_info.addresses.set_disconnected(&address);
-            }
         }
 
         self.kbuckets.set_disconnected(&node_id);
@@ -761,6 +785,7 @@ impl NetworkBehaviour for Kademlia {
                                     self.pending_rpcs.push((node_id.clone(), rpc));
                                     return Poll::Ready(NetworkBehaviourAction::DialPeer {
                                         peer_id: peer_id.clone(),
+                                        condition: DialPeerCondition::NotDialing,
                                     });
                                 }
                             } else {

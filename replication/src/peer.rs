@@ -30,6 +30,7 @@ use futures::{
     Sink, Stream, StreamExt,
 };
 use log::*;
+use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock, MacroBlockHeader, MicroBlockHeader};
 use stegos_network::{Multiaddr, PeerId};
@@ -50,19 +51,19 @@ pub(super) enum Peer {
     /// Peer has been discovered by libp2p.
     Registered {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer is connecting to a remote side.
     Connecting {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer has been connected to a remote side.
     Connected {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
         last_clock: Instant,
         tx: mpsc::Sender<Vec<u8>>,
@@ -71,14 +72,14 @@ pub(super) enum Peer {
     /// Peer
     Accepted {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
         tx: mpsc::Sender<Vec<u8>>,
         rx: mpsc::Receiver<Vec<u8>>,
     },
     Receiving {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
         last_clock: Instant,
         start_clock: Instant,
@@ -92,7 +93,7 @@ pub(super) enum Peer {
     },
     Sending {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
         last_clock: Instant,
         start_clock: Instant,
@@ -105,7 +106,7 @@ pub(super) enum Peer {
     },
     Failed {
         peer_id: PeerId,
-        multiaddr: Multiaddr,
+        multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
         error: std::io::Error,
     },
@@ -190,10 +191,54 @@ impl NextEpochOffset for LightBlock {
 }
 
 impl Peer {
+    pub(super) fn add_addr(&mut self, addr: Multiaddr) -> bool {
+        trace!("Add addr = {}", addr.to_string());
+        let multiaddr = match self {
+            Peer::Registered { multiaddr, .. }
+            | Peer::Connecting { multiaddr, .. }
+            | Peer::Connected { multiaddr, .. }
+            | Peer::Receiving { multiaddr, .. }
+            | Peer::Accepted { multiaddr, .. }
+            | Peer::Sending { multiaddr, .. }
+            | Peer::Failed { multiaddr, .. } => multiaddr,
+        };
+        multiaddr.insert(addr, true).is_some()
+    }
+    pub(super) fn remove_addr(&mut self, addr: Multiaddr) {
+        trace!("Remove addr = {}", addr.to_string());
+        let multiaddr = match self {
+            Peer::Registered { multiaddr, .. }
+            | Peer::Connecting { multiaddr, .. }
+            | Peer::Connected { multiaddr, .. }
+            | Peer::Receiving { multiaddr, .. }
+            | Peer::Accepted { multiaddr, .. }
+            | Peer::Sending { multiaddr, .. }
+            | Peer::Failed { multiaddr, .. } => multiaddr,
+        };
+        if multiaddr.get_mut(&addr).map(|addr| *addr = false).is_none() {
+            error!("Removed peer that didn't exist.");
+        }
+    }
+    pub(super) fn is_empty(&self) -> bool {
+        let multiaddr = match self {
+            Peer::Registered { multiaddr, .. }
+            | Peer::Connecting { multiaddr, .. }
+            | Peer::Connected { multiaddr, .. }
+            | Peer::Receiving { multiaddr, .. }
+            | Peer::Accepted { multiaddr, .. }
+            | Peer::Sending { multiaddr, .. }
+            | Peer::Failed { multiaddr, .. } => multiaddr,
+        };
+        multiaddr.is_empty()
+    }
     ///
     /// Create a new peer in Registered state.
     ///
-    pub(super) fn registered(peer_id: PeerId, multiaddr: Multiaddr) -> Self {
+    pub(super) fn registered<H>(peer_id: PeerId, multiaddr: H) -> Self
+    where
+        H: IntoIterator<Item = (Multiaddr, bool)>,
+    {
+        let multiaddr = multiaddr.into_iter().collect();
         debug!("[{}] Disconnected", peer_id);
         Peer::Registered {
             peer_id,
@@ -337,6 +382,13 @@ impl Peer {
             }
         }
     }
+    fn format_addr((m, b): (&Multiaddr, &bool)) -> String {
+        format!(
+            "{} = {}",
+            m.to_string(),
+            if *b { "active" } else { "inactive" }
+        )
+    }
 
     ///
     /// Returns information about this peer.
@@ -350,7 +402,7 @@ impl Peer {
                 ..
             } => PeerInfo::Discovered {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Connecting {
@@ -360,7 +412,7 @@ impl Peer {
                 ..
             } => PeerInfo::Connecting {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Connected {
@@ -370,7 +422,7 @@ impl Peer {
                 ..
             } => PeerInfo::Connected {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Receiving {
@@ -384,7 +436,7 @@ impl Peer {
                 ..
             } => PeerInfo::Receiving {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
                 epoch: *epoch,
                 offset: *offset,
@@ -398,7 +450,7 @@ impl Peer {
                 ..
             } => PeerInfo::Accepted {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
             },
             Peer::Sending {
@@ -412,7 +464,7 @@ impl Peer {
                 ..
             } => PeerInfo::Sending {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
                 epoch: *epoch,
                 offset: *offset,
@@ -427,7 +479,7 @@ impl Peer {
                 ..
             } => PeerInfo::Failed {
                 peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.to_string(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
                 error: format!("{}", error),
             },

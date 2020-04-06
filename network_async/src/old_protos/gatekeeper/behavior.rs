@@ -27,8 +27,8 @@ use futures::task::{Context, Poll};
 use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
-    PollParameters,
+    protocols_handler::ProtocolsHandler, DialPeerCondition, NetworkBehaviour,
+    NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;
@@ -38,11 +38,9 @@ use std::error;
 use std::time::{Duration, SystemTime};
 use std::{
     collections::{HashSet, VecDeque},
-    marker::PhantomData,
     thread,
 };
 use stegos_crypto::vdf::VDF;
-use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
 use super::protocol::{GatekeeperMessage, VDFProof};
@@ -154,8 +152,10 @@ impl Gatekeeper {
 
     pub fn dial_peer(&mut self, peer_id: PeerId) {
         self.desired_peers.insert(peer_id.clone());
-        self.events
-            .push_back(NetworkBehaviourAction::DialPeer { peer_id });
+        self.events.push_back(NetworkBehaviourAction::DialPeer {
+            peer_id,
+            condition: DialPeerCondition::NotDialing,
+        });
     }
 
     pub fn dial_address(&mut self, address: Multiaddr) {
@@ -304,7 +304,14 @@ impl NetworkBehaviour for Gatekeeper {
         Vec::new()
     }
 
-    fn inject_connected(&mut self, id: PeerId, cp: ConnectedPoint) {
+    fn inject_connected(&mut self, _id: &PeerId) {}
+
+    fn inject_connection_established(
+        &mut self,
+        id: &PeerId,
+        _: &ConnectionId,
+        cp: &ConnectedPoint,
+    ) {
         debug!(target: "stegos_network::gatekeeper", "peer connected: peer_id={}, endpoint={}", id, cp.display());
         self.connected_peers.insert(id.clone());
         // FIXME: use LRU cache for dialing addresses/peers
@@ -312,25 +319,32 @@ impl NetworkBehaviour for Gatekeeper {
             if self.desired_addesses.contains(&address) {
                 self.desired_peers.insert(id.clone());
             }
-            if self.desired_peers.contains(&id) {
+            if self.desired_peers.contains(id) {
                 self.pending_out_peers
                     .insert(id.clone().into(), DialerPeerState::Connected);
-                self.protocol_updates
-                    .push_back(PeerEvent::Connected { peer_id: id });
+                self.protocol_updates.push_back(PeerEvent::Connected {
+                    peer_id: id.clone(),
+                });
             }
             return;
         }
 
-        if self.desired_peers.contains(&id) {
+        if self.desired_peers.contains(id) {
             self.pending_out_peers
                 .insert(id.clone().into(), DialerPeerState::Connected);
-            self.protocol_updates
-                .push_back(PeerEvent::Connected { peer_id: id });
+            self.protocol_updates.push_back(PeerEvent::Connected {
+                peer_id: id.clone(),
+            });
         }
     }
 
-    fn inject_disconnected(&mut self, id: &PeerId, cp: ConnectedPoint) {
-        debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}, endpoint={}", id, cp.display());
+    fn inject_connection_closed(
+        &mut self,
+        id: &PeerId,
+        _: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
+        debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}, endpoint={}", id, endpoint.display());
         self.connected_peers.remove(id);
         self.pending_out_peers.remove(&id.clone().into());
         self.pending_in_peers.remove(&id.clone().into());
@@ -339,13 +353,17 @@ impl NetworkBehaviour for Gatekeeper {
                 peer_id: id.clone(),
             },
         ));
-        if let ConnectedPoint::Dialer { address } = cp {
-            if self.desired_peers.contains(id) || self.desired_addesses.contains(&address) {
-                debug!(target: "stegos_network::gatekeeper", "re-connecting to peer/addr: peer_id={}, addr={}", id, address);
-                self.events
-                    .push_back(NetworkBehaviourAction::DialAddress { address });
-            }
+    }
+
+    fn inject_disconnected(&mut self, id: &PeerId) {
+        if self.desired_peers.contains(id) {
+            debug!(target: "stegos_network::gatekeeper", "re-connecting to peer: peer_id={}", id);
+            self.events.push_back(NetworkBehaviourAction::DialPeer {
+                peer_id: id.clone(),
+                condition: DialPeerCondition::NotDialing,
+            });
         }
+        self.desired_peers.contains(id);
     }
 
     /// Indicates to the behaviour that we tried to reach an address, but failed.

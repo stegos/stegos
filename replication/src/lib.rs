@@ -155,13 +155,23 @@ impl Replication {
                     ReplicationEvent::Registered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Registered: multiaddr={}", peer_id, multiaddr);
-                        let peer = Peer::registered(peer_id.clone(), multiaddr);
-                        let prev = self.peers.insert(peer_id, peer);
-                        assert!(prev.is_none(), "peer is new");
+                        let peer = Peer::registered(peer_id.clone(), None);
+                        let prev = self
+                            .peers
+                            .entry(peer_id)
+                            .or_insert(peer)
+                            .add_addr(multiaddr);
+                        // assert!(prev.is_none(), "peer is new");
                     }
                     ReplicationEvent::Unregistered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Unregistered: multiaddr={}", peer_id, multiaddr);
+                        let peer = self.peers.get_mut(&peer_id).expect("peer is known");
+                        peer.remove_addr(multiaddr);
+                    }
+                    ReplicationEvent::Disconnected { peer_id } => {
+                        assert_ne!(peer_id, self.peer_id);
+                        debug!("[{}] Disconnected.", peer_id);
                         let _peer = self.peers.remove(&peer_id).expect("peer is known");
                     }
                     ReplicationEvent::Connected { peer_id, rx, tx } => {

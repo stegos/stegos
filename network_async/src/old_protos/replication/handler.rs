@@ -287,8 +287,6 @@ impl ProtocolsHandler for ReplicationHandler {
             Self::Error,
         >,
     > {
-        trace!("Poll");
-
         if let SubstreamState::InjectConnecting = &self.upstream {
             // Create a new substream.
             self.upstream = SubstreamState::Connecting;

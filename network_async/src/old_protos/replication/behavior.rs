@@ -45,6 +45,9 @@ pub enum ReplicationEvent {
         peer_id: PeerId,
         multiaddr: Multiaddr,
     },
+    Disconnected {
+        peer_id: PeerId,
+    },
     Connected {
         peer_id: PeerId,
         tx: mpsc::Sender<Vec<u8>>,
@@ -108,26 +111,51 @@ impl NetworkBehaviour for Replication {
         Vec::new()
     }
 
-    fn inject_connected(&mut self, peer_id: PeerId, point: ConnectedPoint) {
-        let multiaddr = match point {
+    fn inject_connected(&mut self, _: &PeerId) {}
+
+    fn inject_connection_established(
+        &mut self,
+        peer_id: &PeerId,
+        conn: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
+        let multiaddr = match endpoint {
             ConnectedPoint::Dialer { address } => address,
             ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-        };
+        }
+        .clone();
         debug!("[{}] Connected: multiaddr={}", peer_id, multiaddr);
-        let event = ReplicationEvent::Registered { peer_id, multiaddr };
+        let event = ReplicationEvent::Registered {
+            peer_id: peer_id.clone(),
+            multiaddr,
+        };
         let event = NetworkBehaviourAction::GenerateEvent(event);
         self.events.push_back(event);
     }
 
-    fn inject_disconnected(&mut self, peer_id: &PeerId, addr: ConnectedPoint) {
-        let multiaddr = match addr {
+    fn inject_connection_closed(
+        &mut self,
+        peer_id: &PeerId,
+        conn: &ConnectionId,
+        endpoint: &ConnectedPoint,
+    ) {
+        let multiaddr = match endpoint {
             ConnectedPoint::Dialer { address } => address,
             ConnectedPoint::Listener { send_back_addr, .. } => send_back_addr,
-        };
+        }
+        .clone();
         debug!("[{}] Disconnected: multiaddr={}", peer_id, multiaddr);
         let event = ReplicationEvent::Unregistered {
             peer_id: peer_id.clone(),
             multiaddr,
+        };
+        let event = NetworkBehaviourAction::GenerateEvent(event);
+        self.events.push_back(event);
+    }
+
+    fn inject_disconnected(&mut self, peer_id: &PeerId) {
+        let event = ReplicationEvent::Disconnected {
+            peer_id: peer_id.clone(),
         };
         let event = NetworkBehaviourAction::GenerateEvent(event);
         self.events.push_back(event);
@@ -158,8 +186,6 @@ impl NetworkBehaviour for Replication {
             Self::OutEvent,
         >,
     > {
-        trace!("Poll");
-
         if let Some(event) = self.events.pop_front() {
             trace!("Generated event: {:?}", event);
             return Poll::Ready(event);

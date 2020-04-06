@@ -33,31 +33,31 @@ pub enum PeerInfo {
     },
     Discovered {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Connecting {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Connected {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Accepted {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Receiving {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         epoch: u64,
@@ -67,7 +67,7 @@ pub enum PeerInfo {
     },
     Sending {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         epoch: u64,
@@ -77,7 +77,7 @@ pub enum PeerInfo {
     },
     Failed {
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         error: String,

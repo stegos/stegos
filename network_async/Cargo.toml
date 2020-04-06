@@ -26,17 +26,17 @@ failure = "0.1"
 fnv = "1.0"
 futures = "0.3.4"
 lazy_static = "1.4"
-libp2p = { version = "0.16"}
+libp2p = { version = "0.17"}
 # libp2p = { path = "stubs/libp2p", package ="libp2p_derive_stub_16"}
-libp2p-core = { version = "0.16", default-features = false}
-libp2p-core-derive = "0.16"
-libp2p-tcp = "0.16"
-libp2p-dns = "0.16"
-libp2p-secio = "0.16"
-libp2p-mplex = "0.16"
-libp2p-yamux = "0.16"
+libp2p-core = { version = "0.17", default-features = false}
+libp2p-core-derive = "0.17"
+libp2p-tcp = "0.17"
+libp2p-dns = "0.17"
+libp2p-secio = "0.17"
+libp2p-mplex = "0.17"
+libp2p-yamux = "0.17"
 yamux = "0.4.5"
-libp2p-swarm = "0.16"
+libp2p-swarm = "0.17"
 trust-dns-resolver = "0.19.3"
 log = "0.4"
 smallvec = "0.6"

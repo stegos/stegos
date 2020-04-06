@@ -27,10 +27,10 @@ pub use super::protocol::{DeliveryMessage, Unicast};
 use crate::utils::ExpiringQueue;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::{connection::ConnectionId, ConnectedPoint, Multiaddr, PeerId};
+use libp2p_core::{connection::ConnectionId, Multiaddr, PeerId};
 use libp2p_swarm::{
-    NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters, ProtocolsHandler,
+    DialPeerCondition, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
+    ProtocolsHandler,
 };
 use log::{debug, error};
 use smallvec::SmallVec;
@@ -90,6 +90,7 @@ impl Delivery {
             self.dial_queue.insert(next_hop.clone(), ());
             self.events.push_back(NetworkBehaviourAction::DialPeer {
                 peer_id: next_hop.clone(),
+                condition: DialPeerCondition::NotDialing,
             });
         }
         self.send_queue
@@ -111,12 +112,12 @@ impl NetworkBehaviour for Delivery {
         Vec::new()
     }
 
-    fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
+    fn inject_connected(&mut self, id: &PeerId) {
         debug!(target: "stegos_network::delivery", "peer connected: peer_id={}", id);
         self.connected_peers.insert(id.clone());
         if self.dial_queue.contains_key(&id) {
             self.dial_queue.remove(&id);
-            if let Some(queue) = self.send_queue.get_mut(&id) {
+            if let Some(queue) = self.send_queue.get_mut(id) {
                 debug!(target: "stegos_network::delivery", "delivering queued messages: peer_id={}, queue_len={}", id, queue.len());
                 for m in queue.drain() {
                     self.events
@@ -127,11 +128,11 @@ impl NetworkBehaviour for Delivery {
                         });
                 }
             }
-            self.send_queue.remove(&id);
+            self.send_queue.remove(id);
         }
     }
 
-    fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
+    fn inject_disconnected(&mut self, id: &PeerId) {
         let was_in = self.connected_peers.remove(id);
         debug_assert!(was_in);
     }

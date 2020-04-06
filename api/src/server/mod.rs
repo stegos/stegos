@@ -33,6 +33,8 @@ use futures::SinkExt;
 use log::*;
 use stegos_network::{Network, NetworkResponse as NetworkServiceResponse, UnicastMessage};
 use stegos_node::{ChainNotification, Node, NodeResponse, StatusNotification};
+use futures::select;
+use futures::pin_mut;
 // use stegos_wallet::api::{WalletControlResponse, WalletNotification, WalletResponse};
 // use stegos_wallet::Wallet;
 
@@ -46,6 +48,7 @@ use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
 };
+use api::clone_apis;
 
 use tokio::net::{TcpListener, TcpStream};
 use tungstenite::protocol::Message;
@@ -121,31 +124,15 @@ impl WebSocketHandler {
         api_token: ApiToken,
         sink: WsSink,
         stream: WsStream,
-        network: Network,
-        // wallet: Option<Wallet>,
-        node: Option<Node>,
+        apis: Vec<Box<dyn ApiHandler>>,
         version: String,
         chain_name: String,
     ) -> Self {
         let sink_buf = None;
-        // let mut network_unicast = HashMap::new();
-        // let rx = network.subscribe_unicast(CONSOLE_TOPIC).unwrap();
-        // network_unicast.insert(CONSOLE_TOPIC.to_string(), rx);
-        // let mut network_broadcast = HashMap::new();
-        // let rx = network.subscribe(CONSOLE_TOPIC).unwrap();
-        // network_broadcast.insert(CONSOLE_TOPIC.to_string(), rx);
-        // let network_responses = Vec::new();
-        // let wallet_notifications = if let Some(wallet) = &wallet {
-        //     Some(wallet.subscribe())
-        // } else {
-        //     None
-        // };
-        // let wallet_responses = Vec::new();
-        // let node_responses = Vec::new();
-        // let status_notifications = None;
-        // let chain_notifications = None;
         let mut register = Register::new();
-        register.add_api(node);
+        for api in apis {
+            register.add_api(api);
+        }
 
         WebSocketHandler {
             peer,
@@ -154,57 +141,46 @@ impl WebSocketHandler {
             sink_buf,
             stream,
             register,
-            // network,
-            // network_unicast,
-            // network_broadcast,
-            // network_responses,
-            // wallet,
-            // wallet_notifications,
-            // wallet_responses,
-            // node,
-            // node_responses,
-            // status_notifications,
-            // chain_notifications,
             version,
             chain_name,
         }
     }
 
-    async fn send(&mut self, msg: Response) -> Result<(), Error> {
-        let msg = encode(&self.api_token, &msg);
+    async fn send(sink: &mut WsSink, api_token: &ApiToken, msg: Response) -> Result<(), Error> {
+        let msg = encode(api_token, &msg);
         let msg = Message::Text(msg);
-        self.send_raw(msg).await
+        Self::send_raw(sink, msg).await
     }
 
-    async fn send_raw(&mut self, msg: Message) -> Result<(), Error> {
-        SinkExt::send(&mut self.sink, msg).await.map_err(From::from)
+    async fn send_raw(sink: &mut WsSink, msg: Message) -> Result<(), Error> {
+        SinkExt::send(sink, msg).await.map_err(From::from)
     }
-
-    async fn receive(&mut self) -> Result<Request, Error> {
+    
+    async fn receive(stream: &mut WsStream, sink: &mut WsSink, api_token: ApiToken, peer: SocketAddr) -> Result<Request, Error> {
         loop {
-            let result = self.stream.next().await;
+            let result = stream.next().await;
             match result {
                 Some(Ok(Message::Text(msg))) => {
-                    return decode(&self.api_token, &msg);
+                    return decode(&api_token, &msg);
                 }
                 Some(Ok(Message::Ping(msg))) => {
-                    trace!("[{}] => Ping(len={})", self.peer, msg.len());
-                    self.sink.send(Message::Pong(msg));
+                    trace!("[{}] => Ping(len={})", peer, msg.len());
+                    sink.send(Message::Pong(msg));
                 }
                 Some(Ok(Message::Pong(msg))) => {
-                    trace!("[{}] => Pong(len={})", self.peer, msg.len());
+                    trace!("[{}] => Pong(len={})", peer, msg.len());
                 }
                 Some(Ok(Message::Binary(msg))) => {
-                    bail!("[{}] => Binary(len={})", self.peer, msg.len());
+                    bail!("[{}] => Binary(len={})", peer, msg.len());
                 }
                 Some(Ok(Message::Close(data))) => {
-                    bail!("[{}] => Close(has_data={})", self.peer, data.is_some());
+                    bail!("[{}] => Close(has_data={})", peer, data.is_some());
                 }
                 Some(Err(e)) => {
-                    bail!("[{}] => Error({})", self.peer, e);
+                    bail!("[{}] => Error({})", peer, e);
                 }
                 None => {
-                    bail!("[{}] => EOF", self.peer);
+                    bail!("[{}] => EOF", peer);
                 }
             }
         }
@@ -212,24 +188,49 @@ impl WebSocketHandler {
 
     async fn spawn(mut self) {
         loop {
-            let req = match self.receive().await {
-                Ok(res) => res,
-                Err(e) => {
-                    trace!("{}", e);
-                    return ();
+            let api_token = self.api_token;
+            let peer = self.peer;
+            let mut receive_orig = Self::receive(&mut self.stream, &mut self.sink, api_token, peer);
+            let mut receive = unsafe{ Pin::new_unchecked(&mut receive_orig) };
+            let mut receive = receive.fuse();
+            select!{
+                notification = self.register.notifications.next() => {
+                    drop(receive);
+                    drop(receive_orig);
+
+                    let notifiocation = if let Some(notification) = notification {
+                        trace!("Forwarding notification = {:?}", notification);
+                        let kind = notification.0;
+                        let response = Response { kind, id:0 };
+                        Self::send(&mut self.sink, &self.api_token, response).await;
+                    } else {
+                        trace!("Notifications stream ended."); 
+                    };
+                }
+                req = receive => {
+                    drop(receive);
+                    drop(receive_orig);
+                    let req = match req {
+                        Ok(res) => res,
+                        Err(e) => {
+                            trace!("{}", e);
+                            return ();
+                        }
+                    };
+                    let id = req.id;
+                    let req = RawRequest(req);
+                    trace!("Request = {:?}", req);
+                    let block = async {
+                        let kind = self.register.try_process("nothing", req).await?.0;
+                        let response = Response { kind, id };
+                        Self::send(&mut self.sink, &self.api_token, response).await
+                    };
+                    if let Err(e) = block.await {
+                        warn!("Error during processing of request, error={}", e);
+                    };
+                    
                 }
             };
-            let id = req.id;
-            let req = RawRequest(req);
-
-            let block = async {
-                let kind = self.register.try_process("nothing", req).await?.0;
-                let response = Response { kind, id };
-                self.send(response).await
-            };
-            if let Err(e) = block.await {
-                warn!("Error during processing of request, error={}", e);
-            }
 
             // let mut sink = Pin::new(&mut self.sink_buf);
             // let mut stream = Pin::new(&mut self.stream);
@@ -585,9 +586,7 @@ impl WebSocketHandler {
 pub async fn spawn_server(
     endpoint: String,
     api_token: ApiToken,
-    network: Network,
-    // wallet: Option<Wallet>,
-    node: Option<Node>,
+    apis: Vec<Box<dyn ApiHandler>>,
     version: String,
     chain_name: String,
 ) -> Result<(), Error> {
@@ -601,9 +600,7 @@ pub async fn spawn_server(
                 stream,
                 addr,
                 api_token.clone(),
-                network.clone(),
-                // wallet.clone(),
-                node.clone(),
+                clone_apis(&apis),
                 version.clone(),
                 chain_name.clone(),
             ));
@@ -616,9 +613,7 @@ async fn handle_connection(
     raw_stream: TcpStream,
     peer: SocketAddr,
     api_token: ApiToken,
-    network: Network,
-    // wallet: Option<Wallet>,
-    node: Option<Node>,
+    apis: Vec<Box<dyn ApiHandler>>,
     version: String,
     chain_name: String,
 ) {
@@ -632,8 +627,7 @@ async fn handle_connection(
     let stream: WsStream = Box::new(stream.map_err(From::from));
     info!("[{}] Connected", peer);
     WebSocketHandler::new(
-        peer, api_token, sink, stream, network, // wallet,
-        node, version, chain_name,
+        peer, api_token, sink, stream, apis, version, chain_name,
     )
     .spawn()
     .await

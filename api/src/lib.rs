@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![recursion_limit="1024"] // used for futures::select in server/mod.rs
 // #![deny(warnings)]
 
 mod client;

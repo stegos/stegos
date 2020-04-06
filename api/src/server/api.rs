@@ -27,12 +27,26 @@ use async_trait::async_trait;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
 use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, StatusNotification};
-
+use futures::Stream;
 use crate::{Request, RequestKind, ResponseKind};
 use std::convert::{TryFrom, TryInto};
+use futures::stream::StreamExt;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RawRequest(pub Request);
+
+impl RawRequest {
+    pub(super) fn is_subscribe(&self) -> bool {
+        match &self.0.kind {
+           RequestKind::NodeRequest(r) => {
+               match r {
+                   NodeRequest::SubscribeStatus{..} | NodeRequest::SubscribeChain{..} => true,
+                   _ => false
+               }
+            }
+        }
+    }
+}
 
 impl TryFrom<RawRequest> for NodeRequest {
     type Error = Error;
@@ -44,7 +58,27 @@ impl TryFrom<RawRequest> for NodeRequest {
     }
 }
 
+#[derive(Debug)]
 pub struct RawResponse(pub ResponseKind);
+
+impl RawResponse {
+    pub(super) fn subscribe_to_stream(&mut self) -> Result<Box<dyn Stream<Item=RawResponse> + Unpin + Send>, Error>{
+        match &mut self.0 {
+            ResponseKind::NodeResponse(r) => {
+                match &mut *r {
+                    NodeResponse::SubscribedStatus{rx,..} => Ok(Box::new(rx.take().expect("Stream exist").map(ResponseKind::StatusNotification).map(RawResponse))),
+                    NodeResponse::SubscribedChain{rx,..} => Ok(Box::new(rx.take().expect("Stream exist").map(ResponseKind::ChainNotification).map(RawResponse))),
+                    // e @ NodeResponse::Error => // TODO support error in response
+                    response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
+                }
+            }
+            ResponseKind::ChainNotification (_) |ResponseKind::StatusNotification(_)  => {
+                bail!("Got notification message, expected response.")
+            }
+        }
+    }
+}
+
 
 impl From<NodeResponse> for RawResponse {
     fn from(response: NodeResponse) -> RawResponse {
@@ -59,11 +93,13 @@ pub trait ApiHandler: Sync + Send {
         std::any::type_name::<Self>().to_owned()
     }
 
+    fn cloned(&self) -> Box<dyn ApiHandler>;
+
     async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error>;
 }
 
 #[async_trait]
-impl<T: ApiHandler + Sync> ApiHandler for Option<T> {
+impl<T: ApiHandler + Sync + Clone + 'static> ApiHandler for Option<T> {
     fn name(&self) -> String {
         let val = if self.is_some() { "" } else { "::None" };
         format!("Option<{}>{}", std::any::type_name::<T>(), val)
@@ -76,6 +112,11 @@ impl<T: ApiHandler + Sync> ApiHandler for Option<T> {
             bail!("Api not inited.")
         }
     }
+    
+    fn cloned(&self) -> Box<dyn ApiHandler>
+    {
+        Box::new(self.clone())
+    }
 }
 
 // Our api implementors.
@@ -87,4 +128,14 @@ impl ApiHandler for Node {
         let response = self.request(request).await?;
         Ok(response.into())
     }
+
+    fn cloned(&self) -> Box<dyn ApiHandler>
+    {
+        Box::new(self.clone())
+    }
 }
+
+pub(super) fn clone_apis(apis:&[Box<dyn ApiHandler>]) -> Vec<Box<dyn ApiHandler>> {
+    apis.iter().map(|h|h.cloned()).collect()
+}
+

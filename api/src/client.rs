@@ -104,8 +104,7 @@ impl WebSocketClient {
             None => bail!("Stream gone on receive."),
         };
         let result = result.into_text()?;
-        let response = serde_json::from_str(&result)?;
-        Ok(response)
+        decode(&self.api_token, &result)
     }
 }
 

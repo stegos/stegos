@@ -27,6 +27,7 @@ stegos_node = { version = "1.0.0", path = "../node" }
 stegos_wallet = { version = "1.0.0", path = "../wallet" }
 tokio = { version = "0.2.11", default-features = false, features = []}
 async-trait="0.1.2"
+futures-retry="0.5.0"
 
 tokio-tungstenite="0.10.1"
 tungstenite="0.10"

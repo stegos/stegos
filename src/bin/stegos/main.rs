@@ -29,7 +29,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::runtime::Runtime;
 
 #[tokio::main]
 async fn main() {
@@ -170,5 +169,7 @@ async fn main() {
         history_file,
         formatter,
         raw,
-    ).await;
+    )
+    .await
+    .unwrap();
 }

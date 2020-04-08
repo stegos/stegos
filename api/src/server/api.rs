@@ -24,12 +24,15 @@ use failure::{bail, Error};
 
 use async_trait::async_trait;
 
+use crate::network_api::*;
 use crate::{Request, RequestKind, ResponseKind};
+use futures::channel::mpsc;
 use futures::stream::StreamExt;
 use futures::Stream;
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json;
 use std::convert::{TryFrom, TryInto};
+use stegos_network::UnicastMessage;
 use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, StatusNotification};
 use stegos_wallet::{
     api::{WalletRequest, WalletResponse},
@@ -46,7 +49,13 @@ impl RawRequest {
                 NodeRequest::SubscribeStatus { .. } | NodeRequest::SubscribeChain { .. } => true,
                 _ => false,
             },
+            RequestKind::NetworkRequest(r) => match r {
+                NetworkRequest::SubscribeBroadcast { .. }
+                | NetworkRequest::SubscribeUnicast { .. } => true,
+                _ => false,
+            },
             RequestKind::WalletsRequest(r) => false,
+            RequestKind::Raw(_) => false,
         }
     }
 }
@@ -87,11 +96,47 @@ impl RawResponse {
                     response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
                 }
             }
+            ResponseKind::NetworkResponse(r) => {
+                match &mut *r {
+                    NetworkResponse::SubscribedUnicast {
+                            rx,topic
+                    } => {
+                        let topic = topic.clone();
+                        let rx = rx.take().expect("Stream exist").map(
+                            move |m| {
+                                NetworkNotification::UnicastMessage {
+                                    topic: topic.clone(),
+                                    from: m.from,
+                                    data: m.data,
+                                }
+                            });
+                        Ok(Box::new(rx.map(ResponseKind::NetworkNotification).map(RawResponse)))
+                    }
+                    NetworkResponse::SubscribedBroadcast {
+                        rx,
+                        topic
+                    } => {
+                        let topic = topic.clone();
+                        let rx = rx.take().expect("Stream exist").map(
+                            move |data| {
+                                NetworkNotification::BroadcastMessage {
+                                    topic: topic.clone(),
+                                    data,
+                                }
+                            });
+                        Ok(Box::new(rx.map(ResponseKind::NetworkNotification).map(RawResponse)))
+                    }
+                    response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
+                }
+            }
+            ResponseKind::NetworkNotification(_) | ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) => {
+                bail!("Got notification message, expected response.")
+            }
             ResponseKind::WalletResponse(_) | ResponseKind::WalletNotification(_) => {
                 bail!("Wallets notification didn't support.")
             }
-            ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) => {
-                bail!("Got notification message, expected response.")
+            ResponseKind::Raw(_) => {
+                bail!("Api didn't support subscribtion.")
             }
         }
     }

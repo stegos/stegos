@@ -32,13 +32,22 @@ use futures::task::{Context, Poll};
 use futures::SinkExt;
 use log::*;
 use std::pin::Pin;
-use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
 
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+use futures_retry::{FutureRetry, RetryPolicy};
 use std::collections::VecDeque;
+use std::io;
+use std::time::Duration;
+
+fn handle_connection_error(e: WsError) -> RetryPolicy<WsError> {
+    // This is kinda unrealistical error handling, don't use it as it is!
+    debug!("Error on reconnect");
+    RetryPolicy::WaitRetry(RECONNECT_TIMEOUT)
+}
 
 pub struct WebSocketClient {
     /// Remote endpoint.
@@ -66,13 +75,13 @@ impl WebSocketClient {
         trace!("[{}] <= {:?}", self.endpoint, msg);
         let msg = encode(&self.api_token, &msg);
         let msg = Message::Text(msg);
-        self.send_raw(msg).await;
+        self.send_raw(msg).await?;
         loop {
             let response = self.receive().await?;
             match response.kind {
-                // response @ ResponseKind::NetworkResponse(_) |
-                // response @ ResponseKind::WalletResponse(_) |
-                ResponseKind::NodeResponse(_) => {
+                ResponseKind::NetworkResponse(_)
+                | ResponseKind::WalletResponse(_)
+                | ResponseKind::NodeResponse(_) => {
                     return Ok(response);
                 }
                 _ => {
@@ -92,16 +101,52 @@ impl WebSocketClient {
     }
 
     async fn send_raw(&mut self, msg: Message) -> Result<(), Error> {
-        SinkExt::send(&mut self.connection, msg)
+        if let Err(e) = SinkExt::send(&mut self.connection, msg.clone()).await {
+            info!("Error on sending message to websocket, reconnecting");
+            debug!("Websocket::send_raw error = {:?}", e);
+            if let Ok(connection) = FutureRetry::new(
+                || tokio_tungstenite::connect_async(&self.endpoint),
+                handle_connection_error,
+            )
             .await
-            .map_err(From::from)
+            {
+                self.connection = (connection.0).0;
+                info!("Reconnected to websocket, trying to resend last request.");
+                SinkExt::send(&mut self.connection, msg).await?
+            } else {
+                return Err(e.into());
+            }
+        }
+        Ok(())
     }
-
-    async fn receive(&mut self) -> Result<Response, Error> {
+    async fn receive_raw(&mut self) -> Result<Message, Error> {
         let result = self.connection.next().await;
         let result = match result {
             Some(result) => result?,
-            None => bail!("Stream gone on receive."),
+            None => bail!("Stream gone on receive, check if api.token is correct."),
+        };
+        Ok(result)
+    }
+
+    async fn receive(&mut self) -> Result<Response, Error> {
+        let result = match self.receive_raw().await {
+            Err(e) => {
+                info!("Error on sending message to websocket, reconnecting");
+                debug!("Websocket::send_raw error = {:?}", e);
+                if let Ok(connection) = FutureRetry::new(
+                    || tokio_tungstenite::connect_async(&self.endpoint),
+                    handle_connection_error,
+                )
+                .await
+                {
+                    self.connection = (connection.0).0;
+                    info!("Reconnected to websocket, trying to resend last request.");
+                    self.receive_raw().await?
+                } else {
+                    return Err(e.into());
+                }
+            }
+            Ok(result) => result,
         };
         let result = result.into_text()?;
         decode(&self.api_token, &result)

@@ -44,7 +44,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
-// use stegos_api::{load_or_create_api_token, WebSocketServer};
+use stegos_api::{load_or_create_api_token, server::spawn_server};
 use stegos_blockchain::{
     chain_to_prefix, initialize_chain, Blockchain, ConsistencyCheck, Timestamp,
 };
@@ -52,7 +52,7 @@ use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
 use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
-// use stegos_wallet::WalletService;
+use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
 use tokio::time::Instant;
 
@@ -562,8 +562,7 @@ async fn run() -> Result<(), Error> {
         cfg.general.chain,
         Hash::digest(&genesis)
     );
-    let (node, wallet): (_, Option<()>) = {
-        //if !args.is_present("light")
+    let (node, wallet): (_, Option<_>) = if !args.is_present("light") {
         info!("Starting the full node");
         let timestamp = Timestamp::now();
         let chain = Blockchain::new(
@@ -604,40 +603,38 @@ async fn run() -> Result<(), Error> {
         tokio::spawn(network_ready_future);
 
         (Some(node), None)
+    } else {
+        info!("Starting the light node");
+        let (wallet_service, wallet) = WalletService::new(
+            &accounts_dir,
+            network_skey,
+            network_pkey,
+            network.clone(),
+            peer_id,
+            replication_rx,
+            Hash::digest(&genesis),
+            chain_cfg,
+            cfg.node.max_inputs_in_tx,
+        )?;
+        tokio::spawn(wallet_service.start());
+        (None, Some(wallet))
     };
-    // else {
-    //     info!("Starting the light node");
-    //     let (wallet_service, wallet) = WalletService::new(
-    //         &accounts_dir,
-    //         network_skey,
-    //         network_pkey,
-    //         network.clone(),
-    //         peer_id,
-    //         replication_rx,
-    //         rt.executor(),
-    //         Hash::digest(&genesis),
-    //         chain_cfg,
-    //         cfg.node.max_inputs_in_tx,
-    //     )?;
-    //     rt.spawn(wallet_service);
-    //     (None, Some(wallet))
-    // };
 
-    // // Start WebSocket API server.
-    // if cfg.general.api_endpoint != "" {
-    //     let token_file = root_dir.join("api.token");
-    //     let api_token = load_or_create_api_token(&token_file)?;
-    //     WebSocketServer::spawn(
-    //         cfg.general.api_endpoint,
-    //         api_token,
-    //         rt.executor(),
-    //         network.clone(),
-    //         wallet,
-    //         node,
-    //         version,
-    //         cfg.general.chain,
-    //     )?;
-    // }
+    // Start WebSocket API server.
+    if cfg.general.api_endpoint != "" {
+        let token_file = root_dir.join("api.token");
+        let api_token = load_or_create_api_token(&token_file)?;
+        spawn_server(
+            cfg.general.api_endpoint,
+            api_token,
+            // wallet,
+            vec![Box::new(node), Box::new(wallet)],
+            network.clone(),
+            version,
+            cfg.general.chain,
+        )
+        .await?;
+    }
 
     // Start main event loop
     network_service.await;

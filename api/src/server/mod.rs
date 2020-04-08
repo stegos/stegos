@@ -22,37 +22,26 @@
 // SOFTWARE.
 
 use crate::crypto::ApiToken;
-use crate::{
-    decode, encode, NetworkNotification, Request, RequestId, RequestKind, Response, ResponseKind,
-};
+use crate::network_api::NetworkApi;
+use crate::{decode, encode, Request, Response};
 use failure::{bail, Error};
-use futures::channel::{mpsc, oneshot};
-use futures::pin_mut;
 use futures::prelude::*;
 use futures::select;
-use futures::task::{Context, Poll};
 use futures::SinkExt;
 use log::*;
-use stegos_network::{Network, NetworkResponse as NetworkServiceResponse, UnicastMessage};
-use stegos_node::{ChainNotification, Node, NodeResponse, StatusNotification};
+use stegos_network::Network;
 // use stegos_wallet::api::{WalletControlResponse, WalletNotification, WalletResponse};
 // use stegos_wallet::Wallet;
 
-use serde::{de::DeserializeOwned, Serialize};
 use std::pin::Pin;
 
 use api::clone_apis;
-use std::{
-    collections::HashMap,
-    env,
-    io::Error as IoError,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::net::SocketAddr;
 
 use tokio::net::{TcpListener, TcpStream};
 use tungstenite::protocol::Message;
 
+use tokio::task::JoinHandle;
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 10;
 /// Topic used for debugging.
@@ -76,47 +65,11 @@ struct WebSocketHandler {
     api_token: ApiToken,
     /// Outgoing stream.
     sink: WsSink,
-    /// Output buffer.
-    sink_buf: Option<Message>,
     /// Incoming stream.
     stream: WsStream,
 
     register: Register,
-
-    // /// Network API.
-    // network: Network,
-    // /// Network unicast subscribtions.
-    // network_unicast: HashMap<String, mpsc::UnboundedReceiver<UnicastMessage>>,
-    // /// Network broadcast subscribtions.
-    // network_broadcast: HashMap<String, mpsc::UnboundedReceiver<Vec<u8>>>,
-    // /// Responses from the network subsystem
-    // network_responses: Vec<(RequestId, oneshot::Receiver<NetworkServiceResponse>)>,
-
-    // /// Wallet API.
-    // wallet: Option<Wallet>,
-    // /// Wallet events.
-    // wallet_notifications: Option<mpsc::UnboundedReceiver<WalletNotification>>,
-    // /// Wallet RPC responses.
-    // wallet_responses: Vec<(RequestId, oneshot::Receiver<WalletResponse>)>,
-
-    // /// Node API.
-    // node: Option<Node>,
-    // /// Node RPC responses.
-    // node_responses: Vec<(RequestId, oneshot::Receiver<NodeResponse>)>,
-    // /// Subscription to status notifications.
-    // status_notifications: Option<mpsc::Receiver<StatusNotification>>,
-    // /// Subscription to blockchain notifications.
-    // chain_notifications: Option<mpsc::Receiver<ChainNotification>>,
-    /// Server version.
-    version: String,
-    /// Chain name.
-    chain_name: String,
 }
-
-// enum NetworkResult {
-//     Immediate(NetworkResponse),
-//     Async(oneshot::Receiver<NetworkServiceResponse>),
-// }
 
 impl WebSocketHandler {
     fn new(
@@ -125,24 +78,23 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         apis: Vec<Box<dyn ApiHandler>>,
+        network: Network,
         version: String,
         chain_name: String,
     ) -> Self {
-        let sink_buf = None;
         let mut register = Register::new();
+        let network_api = NetworkApi::new(network, version, chain_name);
         for api in apis {
             register.add_api(api);
         }
+        register.add_api(Box::new(network_api));
 
         WebSocketHandler {
             peer,
             api_token,
             sink,
-            sink_buf,
             stream,
             register,
-            version,
-            chain_name,
         }
     }
 
@@ -235,14 +187,6 @@ impl WebSocketHandler {
 
                 }
             };
-
-            // let mut sink = Pin::new(&mut self.sink_buf);
-            // let mut stream = Pin::new(&mut self.stream);
-            // select!{
-            //     msg =
-            // };
-
-            // assert!(self.sink_buf.is_none());
         }
 
         //     // Process incoming messages.
@@ -521,96 +465,33 @@ impl WebSocketHandler {
         //     Ok(Async::NotReady)
         // }
     }
-
-    // fn handle_network_request(
-    //     &mut self,
-    //     network_request: NetworkRequest,
-    // ) -> Result<NetworkResult, Error> {
-    //     match network_request {
-    //         NetworkRequest::VersionInfo {} => {
-    //             let version = self.version.clone();
-    //             Ok(NetworkResult::Immediate(NetworkResponse::VersionInfo {
-    //                 version,
-    //             }))
-    //         }
-    //         NetworkRequest::ChainName {} => {
-    //             let name = self.chain_name.clone();
-    //             Ok(NetworkResult::Immediate(NetworkResponse::ChainName {
-    //                 name,
-    //             }))
-    //         }
-    //         NetworkRequest::SubscribeUnicast { topic } => {
-    //             if !self.network_unicast.contains_key(&topic) {
-    //                 let rx = self.network.subscribe_unicast(&topic)?;
-    //                 self.network_unicast.insert(topic, rx);
-    //                 task::current().notify();
-    //             }
-    //             Ok(NetworkResult::Immediate(NetworkResponse::SubscribedUnicast))
-    //         }
-    //         NetworkRequest::SubscribeBroadcast { topic } => {
-    //             if !self.network_broadcast.contains_key(&topic) {
-    //                 let rx = self.network.subscribe(&topic)?;
-    //                 self.network_broadcast.insert(topic, rx);
-    //                 task::current().notify();
-    //             }
-    //             Ok(NetworkResult::Immediate(
-    //                 NetworkResponse::SubscribedBroadcast,
-    //             ))
-    //         }
-    //         NetworkRequest::UnsubscribeUnicast { topic } => {
-    //             self.network_unicast.remove(&topic);
-    //             Ok(NetworkResult::Immediate(
-    //                 NetworkResponse::UnsubscribedUnicast,
-    //             ))
-    //         }
-    //         NetworkRequest::UnsubscribeBroadcast { topic } => {
-    //             self.network_broadcast.remove(&topic);
-    //             Ok(NetworkResult::Immediate(
-    //                 NetworkResponse::UnsubscribedBroadcast,
-    //             ))
-    //         }
-    //         NetworkRequest::SendUnicast { topic, to, data } => {
-    //             self.network.send(to, &topic, data)?;
-    //             Ok(NetworkResult::Immediate(NetworkResponse::SentUnicast))
-    //         }
-    //         NetworkRequest::PublishBroadcast { topic, data } => {
-    //             self.network.publish(&topic, data)?;
-    //             Ok(NetworkResult::Immediate(
-    //                 NetworkResponse::PublishedBroadcast,
-    //             ))
-    //         }
-    //         NetworkRequest::ConnectedNodesRequest {} => {
-    //             let rx = self.network.list_connected_nodes()?;
-    //             Ok(NetworkResult::Async(rx))
-    //         }
-    //     }
-    // }
 }
 
 pub async fn spawn_server(
     endpoint: String,
     api_token: ApiToken,
     apis: Vec<Box<dyn ApiHandler>>,
+    network: Network,
     version: String,
     chain_name: String,
-) -> Result<(), Error> {
+) -> Result<JoinHandle<()>, Error> {
     let addr: SocketAddr = endpoint.parse()?;
     info!(target: "stegos_api", "Starting API Server on {}", &addr);
     let mut listener = TcpListener::bind(&addr).await?;
 
-    tokio::spawn(async move {
+    Ok(tokio::spawn(async move {
         while let Ok((stream, addr)) = listener.accept().await {
             tokio::spawn(handle_connection(
                 stream,
                 addr,
                 api_token.clone(),
                 clone_apis(&apis),
+                network.clone(),
                 version.clone(),
                 chain_name.clone(),
             ));
         }
-    });
-    Ok(())
+    }))
 }
 
 async fn handle_connection(
@@ -618,6 +499,7 @@ async fn handle_connection(
     peer: SocketAddr,
     api_token: ApiToken,
     apis: Vec<Box<dyn ApiHandler>>,
+    network: Network,
     version: String,
     chain_name: String,
 ) {
@@ -630,7 +512,9 @@ async fn handle_connection(
     let sink: WsSink = Box::new(sink.sink_map_err(From::from));
     let stream: WsStream = Box::new(stream.map_err(From::from));
     info!("[{}] Connected", peer);
-    WebSocketHandler::new(peer, api_token, sink, stream, apis, version, chain_name)
-        .spawn()
-        .await
+    WebSocketHandler::new(
+        peer, api_token, sink, stream, apis, network, version, chain_name,
+    )
+    .spawn()
+    .await
 }

@@ -143,7 +143,7 @@ pub struct UnsealedAccountService {
 
 impl UnsealedAccountService {
     /// Create a new account.
-    pub(super) fn new(
+    pub fn new(
         database_dir: PathBuf,
         account_dir: PathBuf,
         account_skey: scc::SecretKey,
@@ -944,7 +944,7 @@ impl UnsealedAccountService {
     }
 
     // Event loop.
-    pub(super) async fn process(&mut self) -> UnsealedAccountResult {
+    pub async fn process(&mut self) -> UnsealedAccountResult {
         loop {
             let mut pending_tx = Box::pin(self.resend_tx.tick()).fuse();
             let mut expire_locked_inputs = Box::pin(self.expire_locked_inputs.tick()).fuse();

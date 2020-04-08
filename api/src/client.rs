@@ -131,8 +131,8 @@ impl WebSocketClient {
     async fn receive(&mut self) -> Result<Response, Error> {
         let result = match self.receive_raw().await {
             Err(e) => {
-                info!("Error on sending message to websocket, reconnecting");
-                debug!("Websocket::send_raw error = {:?}", e);
+                info!("Error on receiving message to websocket, reconnecting");
+                debug!("Websocket::receive error = {:?}", e);
                 if let Ok(connection) = FutureRetry::new(
                     || tokio_tungstenite::connect_async(&self.endpoint),
                     handle_connection_error,
@@ -140,7 +140,7 @@ impl WebSocketClient {
                 .await
                 {
                     self.connection = (connection.0).0;
-                    info!("Reconnected to websocket, trying to resend last request.");
+                    info!("Reconnected to websocket, trying to receive again.");
                     self.receive_raw().await?
                 } else {
                     return Err(e.into());

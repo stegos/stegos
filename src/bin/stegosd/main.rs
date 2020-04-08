@@ -629,7 +629,7 @@ async fn run() -> Result<(), Error> {
             api_token,
             // wallet,
             vec![Box::new(node), Box::new(wallet)],
-            network.clone(),
+            network.clone().into(),
             version,
             cfg.general.chain,
         )

@@ -78,16 +78,18 @@ impl WebSocketHandler {
         sink: WsSink,
         stream: WsStream,
         apis: Vec<Box<dyn ApiHandler>>,
-        network: Network,
+        network: Option<Network>,
         version: String,
         chain_name: String,
     ) -> Self {
         let mut register = Register::new();
-        let network_api = NetworkApi::new(network, version, chain_name);
+        if let Some(network) = network {
+            let network_api = NetworkApi::new(network, version, chain_name);
+            register.add_api(Box::new(network_api));
+        }
         for api in apis {
             register.add_api(api);
         }
-        register.add_api(Box::new(network_api));
 
         WebSocketHandler {
             peer,
@@ -188,282 +190,6 @@ impl WebSocketHandler {
                 }
             };
         }
-
-        //     // Process incoming messages.
-        //     loop {
-        //         match self.stream.poll()? {
-        //             Async::Ready(Some(Message::Text(msg))) => {
-        //                 trace!("[{}] => Text({})", self.peer, &msg);
-        //                 let request: Request = decode(&self.api_token, &msg)?;
-        //                 trace!("[{}] => {:?}", self.peer, request);
-        //                 match request.kind {
-        //                     RequestKind::NetworkRequest(network_request) => {
-        //                         match self.handle_network_request(network_request) {
-        //                             Ok(NetworkResult::Immediate(r)) => {
-        //                                 let response = Response {
-        //                                     kind: ResponseKind::NetworkResponse(r),
-        //                                     id: request.id,
-        //                                 };
-        //                                 try_send!(self, response);
-        //                             }
-        //                             Ok(NetworkResult::Async(rx)) => {
-        //                                 self.network_responses.push((request.id, rx));
-        //                             }
-        //                             Err(e) => {
-        //                                 let r = NetworkResponse::Error {
-        //                                     error: format!("{}", e),
-        //                                 };
-        //                                 let response = Response {
-        //                                     kind: ResponseKind::NetworkResponse(r),
-        //                                     id: request.id,
-        //                                 };
-        //                                 try_send!(self, response);
-        //                             }
-        //                         };
-        //                     }
-        //                     RequestKind::WalletsRequest(wallet_request) => {
-        //                         if let Some(wallet) = &self.wallet {
-        //                             self.wallet_responses
-        //                                 .push((request.id, wallet.request(wallet_request)));
-        //                         } else {
-        //                             let r = WalletControlResponse::Error {
-        //                                 error: format!("Wallet API is not supported on the full node"),
-        //                             };
-        //                             let r = WalletResponse::WalletControlResponse(r);
-        //                             let r = Response {
-        //                                 kind: ResponseKind::WalletResponse(r),
-        //                                 id: request.id,
-        //                             };
-        //                             try_send!(self, r);
-        //                         }
-        //                     }
-        //                     RequestKind::NodeRequest(node_request) => {
-        //                         if let Some(node) = &self.node {
-        //                             self.node_responses
-        //                                 .push((request.id, node.request(node_request)));
-        //                         } else {
-        //                             let r = NodeResponse::Error {
-        //                                 error: format!("Node API is not supported on the light node"),
-        //                             };
-        //                             let r = Response {
-        //                                 kind: ResponseKind::NodeResponse(r),
-        //                                 id: request.id,
-        //                             };
-        //                             try_send!(self, r);
-        //                         }
-        //                     }
-        //                 }
-        //             }
-        //             Async::Ready(Some(OwnedMessage::Binary(msg))) => {
-        //                 trace!("[{}] => Binary(len={})", self.peer, msg.len());
-        //                 return Err(WebSocketError::RequestError("BinaryIsNotSupported"));
-        //             }
-        //             Async::Ready(Some(OwnedMessage::Ping(msg))) => {
-        //                 trace!("[{}] => Ping(len={})", self.peer, msg.len());
-        //                 try_send_raw!(self, OwnedMessage::Pong(msg));
-        //             }
-        //             Async::Ready(Some(OwnedMessage::Pong(msg))) => {
-        //                 trace!("[{}] => Pong(len={})", self.peer, msg.len());
-        //             }
-        //             Async::Ready(Some(OwnedMessage::Close(data))) => {
-        //                 trace!("[{}] => Close(has_data={})", self.peer, data.is_some());
-        //                 return Ok(Async::Ready(()));
-        //             }
-        //             Async::Ready(None) => {
-        //                 trace!("[{}] => EOF", self.peer);
-        //                 return Ok(Async::Ready(()));
-        //             }
-        //             Async::NotReady => break,
-        //         }
-        //     }
-
-        //     // Network unicast messages.
-        //     for (topic, rx) in self.network_unicast.iter_mut() {
-        //         loop {
-        //             match rx.poll().unwrap() {
-        //                 Async::Ready(Some(msg)) => {
-        //                     let msg = NetworkNotification::UnicastMessage {
-        //                         topic: topic.clone(),
-        //                         from: msg.from,
-        //                         data: msg.data,
-        //                     };
-        //                     let msg = Response {
-        //                         kind: ResponseKind::NetworkNotification(msg),
-        //                         id: 0,
-        //                     };
-        //                     try_send!(self, msg);
-        //                 }
-        //                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-        //                 Async::NotReady => break,
-        //             }
-        //         }
-        //     }
-
-        //     // Network broadcast messages.
-        //     for (topic, rx) in self.network_broadcast.iter_mut() {
-        //         loop {
-        //             match rx.poll().unwrap() {
-        //                 Async::Ready(Some(data)) => {
-        //                     let msg = NetworkNotification::BroadcastMessage {
-        //                         topic: topic.clone(),
-        //                         data,
-        //                     };
-        //                     let msg = Response {
-        //                         kind: ResponseKind::NetworkNotification(msg),
-        //                         id: 0,
-        //                     };
-        //                     try_send!(self, msg);
-        //                 }
-        //                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-        //                 Async::NotReady => break,
-        //             }
-        //         }
-        //     }
-
-        //     // Network responses
-        //     let mut i = 0;
-        //     while i < self.network_responses.len() {
-        //         match self.network_responses[i].1.poll() {
-        //             Ok(Async::Ready(response)) => {
-        //                 let (id, _) = self.network_responses.swap_remove(i);
-        //                 let resp = match response {
-        //                     NetworkServiceResponse::ConnectedNodes { nodes } => Response {
-        //                         kind: ResponseKind::NetworkResponse(NetworkResponse::ConnectedNodes {
-        //                             total: nodes.len(),
-        //                             nodes,
-        //                         }),
-        //                         id,
-        //                     },
-        //                 };
-        //                 try_send!(self, resp);
-        //                 continue;
-        //             }
-        //             Ok(Async::NotReady) => {}
-        //             Err(oneshot::Canceled) => panic!("missing response for WalletRequest"),
-        //         }
-        //         i += 1;
-        //     }
-
-        //     // Wallet notifications.
-        //     while let Some(wallet_notifications) = &mut self.wallet_notifications {
-        //         match wallet_notifications.poll().unwrap() {
-        //             Async::Ready(Some(notification)) => {
-        //                 let response = Response {
-        //                     kind: ResponseKind::WalletNotification(notification),
-        //                     id: 0,
-        //                 };
-        //                 try_send!(self, response);
-        //             }
-        //             Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-        //             Async::NotReady => break,                          // fall through
-        //         }
-        //     }
-
-        //     // Wallet responses.
-        //     let mut i = 0;
-        //     while i < self.wallet_responses.len() {
-        //         match self.wallet_responses[i].1.poll() {
-        //             Ok(Async::Ready(response)) => {
-        //                 let (id, _) = self.wallet_responses.swap_remove(i);
-        //                 let response = Response {
-        //                     kind: ResponseKind::WalletResponse(response),
-        //                     id,
-        //                 };
-        //                 try_send!(self, response);
-        //                 continue;
-        //             }
-        //             Ok(Async::NotReady) => {}
-        //             Err(oneshot::Canceled) => panic!("missing response for WalletRequest"),
-        //         }
-        //         i += 1;
-        //     }
-
-        //     // Node responses.
-        //     let mut i = 0;
-        //     while i < self.node_responses.len() {
-        //         match self.node_responses[i].1.poll() {
-        //             Ok(Async::Ready(mut response)) => {
-        //                 match &mut response {
-        //                     NodeResponse::SubscribedStatus { rx, .. } => {
-        //                         self.status_notifications = rx.take();
-        //                     }
-        //                     NodeResponse::SubscribedChain { rx, .. } => {
-        //                         self.chain_notifications = rx.take();
-        //                     }
-        //                     _ => {}
-        //                 };
-        //                 let (id, _) = self.node_responses.swap_remove(i);
-        //                 let response = Response {
-        //                     kind: ResponseKind::NodeResponse(response),
-        //                     id,
-        //                 };
-        //                 try_send!(self, response);
-        //                 continue;
-        //             }
-        //             Ok(Async::NotReady) => {}
-        //             Err(oneshot::Canceled) => panic!("missing response for NodeRequest"),
-        //         }
-        //         i += 1;
-        //     }
-
-        //     // Status notifications.
-        //     if let Some(status_notifications) = &mut self.status_notifications {
-        //         loop {
-        //             match status_notifications.poll().unwrap() {
-        //                 Async::Ready(Some(msg)) => {
-        //                     let msg = Response {
-        //                         kind: ResponseKind::StatusNotification(msg),
-        //                         id: 0,
-        //                     };
-        //                     try_send!(self, msg);
-        //                 }
-        //                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-        //                 Async::NotReady => break,                          // fall through
-        //             }
-        //         }
-        //     }
-
-        //     // Chain notifications.
-        //     if let Some(chain_notifications) = &mut self.chain_notifications {
-        //         loop {
-        //             match chain_notifications.poll().unwrap() {
-        //                 Async::Ready(Some(msg)) => {
-        //                     match &msg {
-        //                         ChainNotification::MicroBlockPrepared(block) => {
-        //                             trace!(
-        //                                 "Prepared Micro Block: epoch={}, offset={}",
-        //                                 block.header.epoch,
-        //                                 block.header.offset
-        //                             );
-        //                         }
-        //                         ChainNotification::MicroBlockReverted(block) => {
-        //                             trace!(
-        //                                 "Reverted Micro Block: epoch={}, offset={}",
-        //                                 block.block.header.epoch,
-        //                                 block.block.header.offset
-        //                             );
-        //                         }
-        //                         ChainNotification::MacroBlockCommitted(block) => {
-        //                             trace!("Comitted Macro Block: epoch={}", block.block.header.epoch);
-        //                         }
-        //                     }
-        //                     let msg = Response {
-        //                         kind: ResponseKind::ChainNotification(msg),
-        //                         id: 0,
-        //                     };
-        //                     try_send!(self, msg);
-        //                 }
-        //                 Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-        //                 Async::NotReady => break,
-        //             }
-        //         }
-        //     }
-
-        //     // Flush sink.
-        //     trace!("[{}] Flush", self.peer);
-        //     self.sink.poll_complete()?;
-        //     Ok(Async::NotReady)
-        // }
     }
 }
 
@@ -471,7 +197,7 @@ pub async fn spawn_server(
     endpoint: String,
     api_token: ApiToken,
     apis: Vec<Box<dyn ApiHandler>>,
-    network: Network,
+    network: Option<Network>,
     version: String,
     chain_name: String,
 ) -> Result<JoinHandle<()>, Error> {
@@ -499,7 +225,7 @@ async fn handle_connection(
     peer: SocketAddr,
     api_token: ApiToken,
     apis: Vec<Box<dyn ApiHandler>>,
-    network: Network,
+    network: Option<Network>,
     version: String,
     chain_name: String,
 ) {

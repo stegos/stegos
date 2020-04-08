@@ -306,8 +306,6 @@ impl ConsoleService {
                         assert!(tx.is_closed()); // this channel is never full
                         break;
                     }
-                    // Block until line is processed by ConsoleService.
-                    thread::park();
                 }
                 Err(e) => {
                     eprintln!("CLI I/O Error: {}", e);
@@ -514,6 +512,18 @@ impl ConsoleService {
         Ok(())
     }
 
+    async fn send_raw_request(&mut self, request: serde_json::Value) -> Result<(), Error> {
+        trace!("Received raw request ={:?}", request);
+        self.print(&request);
+        let request = Request {
+            kind: RequestKind::Raw(request),
+            id: 0,
+        };
+        let response = self.client.request(request).await?;
+        self.on_response(response);
+        Ok(())
+    }
+
     async fn send_node_request(&mut self, request: NodeRequest) -> Result<(), Error> {
         self.print(&request);
         let request = Request {
@@ -545,7 +555,7 @@ impl ConsoleService {
                     self.send_wallet_control_request(request).await?
                 }
                 RequestKind::NodeRequest(request) => self.send_node_request(request).await?,
-                RequestKind::Raw(r) => trace!("Received raw request ={:?}", r),
+                RequestKind::Raw(request) => self.send_raw_request(request).await?,
             }
             return Ok(false); // keep stdin parked until response received.
         }

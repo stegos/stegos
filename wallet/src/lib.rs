@@ -33,7 +33,7 @@ mod recovery;
 mod storage;
 //#[cfg(test)]
 //mod test;
-mod accounts;
+pub mod accounts;
 mod transaction;
 use self::accounts::*;
 
@@ -83,7 +83,7 @@ pub const TX_TOPIC: &'static str = "tx";
 /// Events.
 ///
 #[derive(Debug)]
-enum AccountEvent {
+pub enum AccountEvent {
     //
     // Public API.
     //
@@ -115,13 +115,13 @@ impl From<Vec<LogEntryInfo>> for AccountResponse {
 }
 
 #[derive(Debug, Clone)]
-struct Account {
-    outbox: mpsc::UnboundedSender<AccountEvent>,
+pub struct Account {
+    pub outbox: mpsc::UnboundedSender<AccountEvent>,
 }
 
 impl Account {
     /// Subscribe for changes.
-    fn subscribe(&self) -> mpsc::UnboundedReceiver<AccountNotification> {
+    pub fn subscribe(&self) -> mpsc::UnboundedReceiver<AccountNotification> {
         let (tx, rx) = mpsc::unbounded();
         let msg = AccountEvent::Subscribe { tx };
         self.outbox.unbounded_send(msg).expect("connected");
@@ -129,7 +129,7 @@ impl Account {
     }
 
     /// Execute a request.
-    fn request(&self, request: AccountRequest) -> oneshot::Receiver<AccountResponse> {
+    pub fn request(&self, request: AccountRequest) -> oneshot::Receiver<AccountResponse> {
         let (tx, rx) = oneshot::channel();
         let msg = AccountEvent::Request { request, tx };
         self.outbox.unbounded_send(msg).expect("connected");
@@ -148,17 +148,17 @@ enum WalletEvent {
     },
 }
 
-struct AccountHandle {
+pub struct AccountHandle {
     /// Account public key.
-    account_pkey: scc::PublicKey,
+    pub account_pkey: scc::PublicKey,
     /// Account API.
-    account: Account,
+    pub account: Account,
     /// Current status,
-    status: StatusInfo,
+    pub status: StatusInfo,
     /// True if unsealed.
-    unsealed: bool,
+    pub unsealed: bool,
     /// A channel to send blocks,
-    chain_tx: mpsc::Sender<LightBlock>,
+    pub chain_tx: mpsc::Sender<LightBlock>,
 }
 
 pub struct WalletService {

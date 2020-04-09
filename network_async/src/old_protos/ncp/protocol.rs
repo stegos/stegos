@@ -35,8 +35,8 @@ use stegos_crypto::pbc;
 use futures_codec::{Decoder, Encoder, Framed};
 use futures_io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
-use std::pin::Pin;
 use crate::utils::FutureResult;
+use bytes::buf::ext::BufMutExt;
 
 use super::proto::ncp_proto;
 
@@ -88,12 +88,12 @@ impl<TSocket> OutboundUpgrade<TSocket> for NcpConfig
 where
     TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<Negotiated<TSocket>, NcpCodec>;
+    type Output = Framed<TSocket, NcpCodec>;
     type Error = io::Error;
     type Future = FutureResult<Self::Output, Self::Error>;
 
     #[inline]
-    fn upgrade_outbound(self, socket: Negotiated<TSocket>, _: Self::Info) -> Self::Future {
+    fn upgrade_outbound(self, socket: TSocket, _: Self::Info) -> Self::Future {
         future::ok(Framed::new(
             socket,
             NcpCodec {
@@ -157,7 +157,7 @@ impl Encoder for NcpCodec {
             .inc_by(msg_size as i64);
 
         proto
-            .write_length_delimited_to_writer(&mut dst.by_ref().writer())
+            .write_length_delimited_to_writer(&mut dst.writer())
             .expect(
                 "there is no situation in which the protobuf message can be invalid, and \
                  writing to a BytesMut never fails as we reserved enough space beforehand",

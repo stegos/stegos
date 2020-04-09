@@ -22,12 +22,9 @@
 // SOFTWARE.
 
 use failure::Error;
-use futures::future::FutureExt;
-use futures::prelude::*;
 use futures::task::{Context, Poll};
 use std::collections::{hash_map::Keys as HashMapKeys, HashMap};
 use std::hash::Hash;
-use std::pin::Pin;
 use std::time::Duration;
 use tokio::time::{delay_queue, DelayQueue};
 

@@ -25,7 +25,7 @@ use futures::prelude::*;
 use futures::task::{Context, Poll};
 use libp2p_core::{multiaddr::Protocol, ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;
@@ -34,14 +34,11 @@ use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
     collections::VecDeque,
-    marker::PhantomData,
     net::Ipv4Addr,
-    time::{Duration, Instant},
 };
 use libp2p_core::connection::ConnectionId;
 use stegos_crypto::pbc;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_timer::Delay;
+use tokio::time::{self, Instant, Duration, Delay};
 
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
@@ -61,7 +58,7 @@ const LOCALHOST_MULTIADDR: Protocol = Protocol::Ip4(Ipv4Addr::new(127, 0, 0, 1))
 
 /// Network behaviour that automatically identifies nodes periodically, and returns information
 /// about them.
-pub struct Ncp<TSubstream> {
+pub struct Ncp {
     /// Out network key
     node_id: pbc::PublicKey,
     /// Advertised Multiaddr.
@@ -84,8 +81,6 @@ pub struct Ncp<TSubstream> {
     delay_between_monitor_events: Duration,
     /// Seed nodes (we keep them in case we were too long offline and need to restart the net)
     seed_nodes: Vec<Multiaddr>,
-    /// Marker to pin the generics.
-    marker: PhantomData<TSubstream>,
 }
 
 /// Node Info struct for passing to API
@@ -99,7 +94,7 @@ pub struct NodeInfo {
     addresses: Vec<Multiaddr>,
 }
 
-impl<TSubstream> Ncp<TSubstream> {
+impl Ncp {
     /// Creates a NetworkBehaviour for NCP.
     pub fn new(config: &NetworkConfig, network_pkey: pbc::PublicKey) -> Self {
         let mut seed_nodes: Vec<Multiaddr> = config
@@ -137,14 +132,11 @@ impl<TSubstream> Ncp<TSubstream> {
                 ),
             max_connections: config.max_connections,
             min_connections: config.min_connections,
-            monitor_delay: Delay::new(
-                Instant::now()
-                    + Duration::from_secs(config.monitoring_interval)
+            monitor_delay: time::delay_for(Duration::from_secs(config.monitoring_interval)
                     + Duration::from_secs(thread_rng().gen_range(0, 30)),
             ),
             delay_between_monitor_events: Duration::from_secs(config.monitoring_interval),
             seed_nodes,
-            marker: PhantomData,
         }
     }
 
@@ -178,11 +170,9 @@ impl<TSubstream> Ncp<TSubstream> {
     }
 }
 
-impl<TSubstream> NetworkBehaviour for Ncp<TSubstream>
-where
-    TSubstream: AsyncRead + AsyncWrite,
+impl NetworkBehaviour for Ncp
 {
-    type ProtocolsHandler = NcpHandler<TSubstream>;
+    type ProtocolsHandler = NcpHandler;
     type OutEvent = NcpOutEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
@@ -198,8 +188,7 @@ where
         let addresses: Vec<Multiaddr> = small.iter().map(|v| v.clone()).collect();
         addresses
     }
-
-    fn inject_connected(&mut self, id: PeerId, _: ConnectedPoint) {
+    fn inject_connected(&mut self, id: &PeerId) {
         debug!(target: "stegos_network::ncp", "peer connected: peer_id={}", id.to_base58());
         self.events.push_back(NcpEvent::RequestPeers {
             peer_id: id.clone(),
@@ -207,10 +196,10 @@ where
         self.out_events.push_back(NcpOutEvent::Connected {
             peer_id: id.clone(),
         });
-        self.connected_peers.insert(id, Instant::now());
+        self.connected_peers.insert(id.clone(), Instant::now());
     }
 
-    fn inject_disconnected(&mut self, id: &PeerId, _: ConnectedPoint) {
+    fn inject_disconnected(&mut self, id: &PeerId) {
         debug!(target: "stegos_network::ncp", "peer disconnected: peer_id={}", id.to_base58());
         self.connected_peers.remove(id);
         self.known_peers.remove(id.as_bytes());
@@ -250,8 +239,9 @@ where
 
     fn poll(
         &mut self,
+        cx: &mut Context,
         poll_parameters: &mut impl PollParameters,
-    ) -> Async<
+    ) -> Poll<
         NetworkBehaviourAction<
             <Self::ProtocolsHandler as ProtocolsHandler>::InEvent,
             Self::OutEvent,
@@ -259,13 +249,13 @@ where
     > {
         // Send out accumulated events
         if let Some(event) = self.out_events.pop_front() {
-            return Async::Ready(NetworkBehaviourAction::GenerateEvent(event));
+            return Poll::Ready(NetworkBehaviourAction::GenerateEvent(event));
         }
 
         // Check established connections and request more, if needed.
         loop {
-            match self.monitor_delay.poll() {
-                Ok(Async::Ready(_)) => {
+            match self.monitor_delay.poll_unpin(cx) {
+               Poll::Ready(_) => {
                     debug!(
                         target: "stegos_network::ncp",
                         "monitoring event: connected_peers={}, known_peers={}",
@@ -312,18 +302,14 @@ where
                         }
                     };
                 }
-                Ok(Async::NotReady) => break,
-                Err(e) => {
-                    error!(target: "stegos_network::ncp", "Interval timer error: {}", e);
-                    break;
-                }
+                Poll::Pending => break,
             }
         }
 
         // Check for expired idle connections
         loop {
-            match self.connected_peers.poll() {
-                Ok(Async::Ready((peer, last_seen))) => {
+            match self.connected_peers.poll(cx) {
+                Poll::Ready(Ok((peer, last_seen))) => {
                     match last_seen {
                         Some(instant) => {
                             debug!(target: "stegos_network::ncp", "peer was inactive for {}.{:.3}s, terminating: peer_id={}", instant.elapsed().as_secs(), instant.elapsed().subsec_millis(), peer.to_base58());
@@ -334,11 +320,11 @@ where
                     }
                     self.events.push_back(NcpEvent::Terminate { peer_id: peer });
                 }
-                Ok(Async::NotReady) => break,
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     error!(target: "stegos_network::ncp", "connected peers timer error: {}", e);
                     break;
                 }
+                Poll::Pending => break,
             }
         }
 
@@ -418,7 +404,7 @@ where
                         peer_info.addresses.push(advertised_endpoint.clone());
                     }
                     response.peers.push(peer_info);
-                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
                         handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::GetPeersResponse { response }),
@@ -426,7 +412,7 @@ where
                 }
                 NcpEvent::RequestPeers { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending peers request: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
                         handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::GetPeersRequest),
@@ -434,7 +420,7 @@ where
                 }
                 NcpEvent::SendPing { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending ping request: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
                         handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::Ping),
@@ -442,7 +428,7 @@ where
                 }
                 NcpEvent::SendPong { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending pong reply: to_peer={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
                         handler: NotifyHandler::Any,
                         event: NcpSendEvent::Send(NcpMessage::Pong),
@@ -450,7 +436,7 @@ where
                 }
                 NcpEvent::Terminate { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending terminate to handler: peer_id={}", peer_id.to_base58());
-                    return Async::Ready(NetworkBehaviourAction::NotifyHandler {
+                    return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
                         peer_id,
                         handler: NotifyHandler::Any,
                         event: NcpSendEvent::Terminate,
@@ -458,7 +444,7 @@ where
                 }
             }
         }
-        Async::NotReady
+        Poll::Pending
     }
 }
 

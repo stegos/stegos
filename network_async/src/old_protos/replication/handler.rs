@@ -22,13 +22,9 @@
 use super::protocol::{ReplicationCodec, ReplicationConfig};
 
 use futures::prelude::*;
-//use libp2p_core::nodes::Substream;
-use futures::future;
-use futures::sink;
 use futures::sink::SinkExt;
-use futures::stream;
 use futures::task::{Context, Poll};
-use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
+use libp2p_core::upgrade::{InboundUpgrade, OutboundUpgrade};
 use libp2p_swarm::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };

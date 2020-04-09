@@ -23,7 +23,6 @@
 use android_logger;
 use failure::{format_err, Error};
 use futures::future::Either;
-use futures::future::Future;
 use jni::objects::{JClass, JString};
 use jni::sys::jint;
 use jni::JNIEnv;
@@ -39,7 +38,7 @@ use log4rs::Handle as LogHandle;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use stegos_api::{ApiToken, WebSocketServer};
+use stegos_api::{ApiToken, server::spawn_server};
 use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
@@ -47,7 +46,7 @@ use stegos_network::{Libp2pNetwork, NetworkConfig};
 use stegos_node::NodeConfig;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
-use tokio::sync::oneshot::Sender;
+use futures::channel::oneshot::Sender;
 
 #[cfg(target_os = "android")]
 fn load_logger_configuration() -> () {
@@ -83,7 +82,7 @@ fn load_logger_configuration() -> LogHandle {
 use lazy_static::lazy_static;
 lazy_static! {
     // Mutex is used to allow access from different threads
-    static ref SENDER: Mutex<Option<Sender<ExternalSignals>>> = { Mutex::new(None) };
+    static ref SENDER: Mutex<Option<Sender<ExternalSignals>>> =  Mutex::new(None) ;
 }
 #[derive(Debug)]
 pub enum ExternalSignals {
@@ -120,7 +119,7 @@ fn set_panic_hooks() {
 #[cfg(target_os = "android")]
 fn set_panic_hooks() {}
 
-fn init(
+async fn init(
     chain_name: String,
     data_dir: String,
     api_token: String,
@@ -177,9 +176,8 @@ fn init(
             network_config.seed_pool =
                 format!("_stegos._tcp.{}.stegos.com", &chain_name).to_string();
         }
-        let mut rt = Runtime::new()?;
         let (network, network_service, peer_id, replication_rx) =
-            Libp2pNetwork::new(network_config, network_skey.clone(), network_pkey.clone())?;
+            Libp2pNetwork::new(network_config, network_skey.clone(), network_pkey.clone()).await?;
 
         // Initialize Wallet.
         let (genesis, chain_cfg) = initialize_chain(&chain_name)?;
@@ -196,46 +194,40 @@ fn init(
             network.clone(),
             peer_id,
             replication_rx,
-            rt.executor(),
             Hash::digest(&genesis),
             chain_cfg,
             node_cfg.max_inputs_in_tx,
         )?;
-        rt.spawn(wallet_service);
+        tokio::spawn(wallet_service.start());
 
         // Start WebSocket API server.
         let api_token = ApiToken::from_base64(&api_token)?;
-        WebSocketServer::spawn(
+        spawn_server(
             api_endpoint.clone(),
             api_token,
-            rt.executor(),
-            network.clone(),
-            Some(wallet.clone()),
-            None,
+            vec![Box::new(wallet.clone())],
+            network.clone().into(),
             version,
             chain_name.clone(),
-        )?;
+        ).await?;
 
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = futures::channel::oneshot::channel();
         *SENDER.lock().unwrap() = Some(tx);
-        let main_future = network_service.select2(rx.map_err(|_| ()));
+        let main_future = futures::future::select(network_service, rx );
         // Start main event loop
-        let result = rt.block_on(main_future);
+        let result = main_future.await;
 
         let event = match result {
             // Network future ends.
-            Ok(Either::A((_, _channel_future))) => {
+            Either::Left((_, _channel_future)) => {
                 info!("Network is shutting down, stopping stegos lib.");
                 ExternalSignals::Shutdown
             }
             // Channel received item.
-            Ok(Either::B((item, _a))) => item,
-            Err(_) => panic!("Error processing main future"),
-        };
+            Either::Right((Ok(item), _a)) => item,
 
-        rt.shutdown_now()
-            .wait()
-            .expect("Runtime are possible to shutdown.");
+            Either::Right((Err(_), _a)) => panic!("Error processing main future"),
+        };
 
         if let ExternalSignals::Shutdown = event {
             info!("Shutdowning stegos lib.");
@@ -246,6 +238,20 @@ fn init(
     Ok(())
 }
 
+
+fn init_sync(
+    chain_name: String,
+    data_dir: String,
+    api_token: String,
+    api_endpoint: String,
+) -> Result<(), Error> {
+    let mut runtime = Runtime::new()?;
+    runtime.block_on(async move {
+        init(chain_name, data_dir, api_token, api_endpoint).await
+    })?;
+    Ok(())
+
+}
 #[no_mangle]
 pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     env: JNIEnv,
@@ -261,7 +267,7 @@ pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     let api_token: String = env.get_string(api_token).unwrap().into();
     let api_endpoint: String = env.get_string(api_endpoint).unwrap().into();
 
-    if let Err(e) = init(chain, data_dir, api_token, api_endpoint) {
+    if let Err(e) = init_sync(chain, data_dir, api_token, api_endpoint) {
         error!("{}", e);
         return 1;
     }

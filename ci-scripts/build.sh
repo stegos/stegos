@@ -353,7 +353,7 @@ do_release() {
     cargo build --bins --lib --release --target $target
     ls -lah target/$target/release
     mkdir -p release
-    for bin in stegos stegosd bootstrap; do
+    for bin in stegos stegosd stegos-vault bootstrap; do
         mv target/$target/release/$bin$extension release/$bin-$1.debug$extension
         $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension
         zip $bin-$1 release/$bin-$1$extension
@@ -366,7 +366,7 @@ do_release() {
             cp /mingw64/bin/lib$lib.dll ./release/
         done
 
-        for bin in stegos stegosd; do
+        for bin in stegos-vault stegos stegosd; do
             pushd release
             zip $bin-$1 $bin-$1$extension
             for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do

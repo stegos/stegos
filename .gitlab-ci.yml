@@ -1,50 +1,50 @@
 stages:
-  - fast_checks
-  - test
+  # - fast_checks
+  # - test
   - release
 
 # Running fast-checks to notice an author that his pull-request fails our standards.
 # This checks should not produce any artifacts
-fast_checks:
-  stage: fast_checks
-  allow_failure: true
-  before_script:
-    - ./ci-scripts/build.sh builddep
-  script:
-    - cargo audit
-    - cargo fmt --all -- --check
-  tags:
-    - linux
-  image: quay.io/stegos/rust:nightly-2019-11-25
+# fast_checks:
+#   stage: fast_checks
+#   allow_failure: true
+#   before_script:
+#     - ./ci-scripts/build.sh builddep
+#   script:
+#     - cargo audit
+#     - cargo fmt --all -- --check
+#   tags:
+#     - linux
+#   image: quay.io/stegos/rust:nightly-2019-11-25
 
-.test:
-  stage: test
-  script: ./ci-scripts/build.sh test
+# .test:
+#   stage: test
+#   script: ./ci-scripts/build.sh test
 
-test:linux_x64:
-  extends: .test
-  image: quay.io/stegos/rust:nightly-2019-11-25
-  tags:
-    - linux
+# test:linux_x64:
+#   extends: .test
+#   image: quay.io/stegos/rust:nightly-2019-11-25
+#   tags:
+#     - linux
 
-test:macos_x64:
-  extends: .test
-  tags:
-    - macos
+# test:macos_x64:
+#   extends: .test
+#   tags:
+#     - macos
 
-# Temporary only build on windows, without running tests
-test:windows_x64:
-  extends: .test
-  tags:
-    - win2019
+# # Temporary only build on windows, without running tests
+# test:windows_x64:
+#   extends: .test
+#   tags:
+#     - win2019
 
-code_coverage:
-  stage: test
-  image: quay.io/stegos/rust:nightly-2019-11-25
-  script: ./ci-scripts/build.sh coverage_push
-  tags:
-    - linux
-  allow_failure: true
+# code_coverage:
+#   stage: test
+#   image: quay.io/stegos/rust:nightly-2019-11-25
+#   script: ./ci-scripts/build.sh coverage_push
+#   tags:
+#     - linux
+#   allow_failure: true
 
 .release:
   stage: release

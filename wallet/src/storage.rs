@@ -644,30 +644,33 @@ impl LightDatabase {
             );
         }
 
-        // Check previous hash.
-        if self.last_macro_block_hash != header.previous {
-            return Err(BlockError::InvalidMacroBlockPreviousHash(
-                header.epoch,
-                block_hash,
-                header.previous,
-                self.last_macro_block_hash,
-            )
-            .into());
-        }
 
-        //
-        // Validate multi-signature.
-        //
-        if header.epoch > 0 {
-            check_multi_signature(
-                &block_hash,
-                multisig,
-                &multisigmap,
-                &self.validators,
-                self.cfg.max_slot_count,
-            )
-            .map_err(|e| BlockError::InvalidBlockSignature(e, header.epoch, block_hash))?;
-        }
+        //TODO uncomment signature checking:
+        // 
+        // // Check previous hash.
+        // if self.last_macro_block_hash != header.previous {
+        //     return Err(BlockError::InvalidMacroBlockPreviousHash(
+        //         header.epoch,
+        //         block_hash,
+        //         header.previous,
+        //         self.last_macro_block_hash,
+        //     )
+        //     .into());
+        // }
+
+        // //
+        // // Validate multi-signature.
+        // //
+        // if header.epoch > 0 {
+        //     check_multi_signature(
+        //         &block_hash,
+        //         multisig,
+        //         &multisigmap,
+        //         &self.validators,
+        //         self.cfg.max_slot_count,
+        //     )
+        //     .map_err(|e| BlockError::InvalidBlockSignature(e, header.epoch, block_hash))?;
+        // }
 
         // Check VRF.
         let seed = mix(self.last_macro_block_random.clone(), header.view_change);

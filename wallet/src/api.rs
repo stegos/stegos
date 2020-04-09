@@ -61,6 +61,16 @@ pub enum OutputInfo {
     Staked(StakeInfo),
 }
 
+impl OutputInfo {
+    pub fn output_hash(&self) -> Hash {
+        match self {
+            OutputInfo::Payment(p) => p.output_hash,
+            OutputInfo::PublicPayment(p) => p.output_hash,
+            OutputInfo::Staked(p) => p.output_hash,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct PaymentInfo {
     pub output_hash: Hash,

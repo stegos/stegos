@@ -11,18 +11,24 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use futures::select;
+use futures::stream::SelectAll;
 use stegos_api::load_api_token;
 use stegos_api::WebSocketClient;
+use stegos_api::{Request, RequestKind, Response, ResponseKind};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::{api::StatusInfo, LightBlock};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain::keyfile::{
-    load_account_pkey, load_account_skey, load_network_keypair, write_account_pkey,
-    write_account_skey,
+    load_account_pkey, load_account_skey, write_account_pkey, write_account_skey,
 };
+use stegos_node::api::ChainNotification;
+use stegos_node::{NodeRequest, NodeResponse};
 use stegos_wallet::{
-    accounts::UnsealedAccountService, api::AccountNotification, Account, AccountEvent,
+    accounts::UnsealedAccountService,
+    api::{AccountNotification, AccountRequest, AccountResponse},
+    Account, AccountEvent,
 };
 
 type AsyncRequest = (oneshot::Sender<VaultResponse>, VaultRequest);
@@ -55,7 +61,6 @@ impl Vault {
 
 use std::convert::{TryFrom, TryInto};
 use stegos_api::server::api::*;
-use stegos_api::{RequestKind, ResponseKind};
 
 impl TryFrom<RawRequest> for VaultRequest {
     type Error = Error;
@@ -75,11 +80,28 @@ impl TryFrom<VaultResponse> for RawResponse {
     }
 }
 
+type Subscribtion = Box<dyn Stream<Item = RawResponse> + Unpin + Send>;
+
 #[async_trait]
 impl ApiHandler for Vault {
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         let request: VaultRequest = req.try_into()?;
         let response = self.request(request).await?;
+        Ok(response.try_into()?)
+    }
+
+    async fn try_process(
+        &self,
+        req: RawRequest,
+        notifications: &mut SelectAll<Subscribtion>,
+        is_notification: bool,
+    ) -> Result<RawResponse, Error> {
+        let request: VaultRequest = req.try_into()?;
+        let mut response = self.request(request).await?;
+        if is_notification {
+            let notification = response.subscribe_to_stream()?;
+            notifications.push(notification);
+        }
         Ok(response.try_into()?)
     }
 
@@ -91,7 +113,8 @@ impl ApiHandler for Vault {
 pub(crate) type AccountId = String;
 
 struct AccountHandle {
-    account_pkey: scc::PublicKey,
+    public_key: scc::PublicKey,
+    secret_key: scc::SecretKey,
     account: Account,
     status: StatusInfo,
     chain_tx: mpsc::Sender<LightBlock>,
@@ -107,14 +130,14 @@ struct VaultService {
     cfg: VaultConfig,
     genesis_hash: Hash,
     password: String,
-    public_key: scc::PublicKey,
-    secret_key: scc::SecretKey,
 
     handle: AccountHandle,
     account_subscribtion: mpsc::UnboundedReceiver<AccountNotification>,
 
     created_accounts: HashMap<AccountId, scc::PublicKey>,
     users_list: HashMap<scc::PublicKey, scc::SecretKey>,
+
+    sender: Option<mpsc::Sender<VaultNotification>>,
 }
 
 impl VaultService {
@@ -129,28 +152,39 @@ impl VaultService {
         let api_token = load_api_token(&cfg.node_token_path).map_err(Error::from)?;
         let client = WebSocketClient::new(uri, api_token).await?;
 
-        let (resp, password) = match server
-            .next()
-            .await
-            .expect("First request should be unseal.")
-        {
-            (resp, VaultRequest::Unseal { password }) => (resp, password),
-            (resp, req) => {
-                let error = VaultError::UnexpectedRequest(req, format!("expected Unseal request"));
-                resp.send(From::from(&error)).ok();
-                return Err(error.into());
+        let (resp, password, handle, account_subscribtion, created) = loop {
+            match server
+                .next()
+                .await
+                .expect("First request should be unseal.")
+            {
+                (resp, VaultRequest::Unseal { password }) => {
+                    match Self::open_main_account(
+                        &cfg.general.data_dir,
+                        genesis_hash,
+                        &cfg,
+                        100,
+                        password.clone(),
+                    )
+                    .await
+                    {
+                        Ok((handle, account_subscribtion, created)) => {
+                            break (resp, password, handle, account_subscribtion, created)
+                        }
+                        Err(e) => {
+                            error!("Cannot open main account = {}", e);
+                            resp.send(From::from(&VaultError::Basic(e))).ok();
+                        }
+                    }
+                }
+                (resp, req) => {
+                    let error =
+                        VaultError::UnexpectedRequest(req, format!("expected Unseal request"));
+                    resp.send(From::from(&error)).ok();
+                }
             }
         };
-
-        let (public_key, secret_key, handle, account_subscribtion, created) =
-            Self::open_main_account(
-                &cfg.general.data_dir,
-                genesis_hash,
-                &cfg,
-                100,
-                password.clone(),
-            )
-            .await?;
+        resp.send(VaultResponse::Unsealed { created }).ok();
         trace!("Opened main account");
         let mut vault_service = VaultService {
             server,
@@ -158,50 +192,193 @@ impl VaultService {
             genesis_hash,
             client,
             password,
-            public_key,
-            secret_key,
             handle,
             users_list,
             created_accounts,
             account_subscribtion,
+            sender: None,
         };
         vault_service.load_users()?;
-        resp.send(VaultResponse::Unsealed { created }).ok();
         Ok(vault_service)
     }
 
     async fn run(mut self) {
+        let epoch = self.handle.status.epoch;
+        info!(
+            "Requesting history from online node since epoch = {}",
+            epoch
+        );
+        let request_kind =
+            RequestKind::NodeRequest(NodeRequest::SubscribeChain { epoch, offset: 0 });
+        let request = Request {
+            kind: request_kind,
+            id: 0,
+        };
+        let response = self.client.request(request).await.unwrap();
+        match response.kind {
+            ResponseKind::NodeResponse(NodeResponse::SubscribedChain { .. }) => {
+                info!("successfully subscribed to oonline node chain notifications");
+            }
+            _ => {
+                trace!(
+                    "Received wrong response for notification request = {:?}",
+                    response
+                );
+            }
+        }
         loop {
-            let (sender, request) = self.server.next().await.expect("Server stream closed.");
-            let response = match request {
-                VaultRequest::Unseal { .. } => {
-                    let req = VaultRequest::Unseal {
-                        password: "****".to_string(),
+            let notifications = self.client.notification();
+            select! {
+                res = self.server.next() => {
+                    let (sender, request) = res.unwrap();
+                    let response = self.handle_server(request).await;
+                    let response = match response {
+                        Ok(resp) => resp,
+                        Err(err) => From::from(&err),
                     };
-                    Err(VaultError::UnexpectedRequest(
-                        req,
-                        format!("account already unsealed"),
-                    ))
+                    sender.send(response).unwrap();
+                },
+                node_notification = notifications.fuse() => {
+                    self.handle_client(node_notification.unwrap()).await;
                 }
-                VaultRequest::CreateUser { account_id } => self.create_account(account_id),
-                VaultRequest::GetUser { account_id } => self.get_user(account_id),
-
-                VaultRequest::GetUsers { .. } => self.get_users(),
-
-                VaultRequest::RemoveUser { account_id, burn } => {
-                    Err(VaultError::Basic(format_err!("unimplemented")))
+                account_notification = self.account_subscribtion.next() => {
+                    let account_notification = account_notification.expect("Online node should never gone.");
+                    self.handle_account_notification(account_notification).await;
                 }
+            }
+        }
+    }
 
-                VaultRequest::Withdraw { public_key, amount } => {
-                    Err(VaultError::Basic(format_err!("unimplemented")))
+    async fn handle_account_notification(&mut self, account_notification: AccountNotification) {
+        debug!("Received account notification = {:?}", account_notification);
+
+        match account_notification {
+            AccountNotification::BalanceChanged(b) => {
+                let amount = b.total.available;
+                let notification = VaultNotification::ColdBalanceUpdated { amount };
+            }
+            _ => {} // ignore rest notifications
+        }
+    }
+
+    async fn handle_server(&mut self, request: VaultRequest) -> Result<VaultResponse, VaultError> {
+        match request {
+            VaultRequest::Unseal { .. } => {
+                let req = VaultRequest::Unseal {
+                    password: "****".to_string(),
+                };
+                Err(VaultError::UnexpectedRequest(
+                    req,
+                    format!("account already unsealed"),
+                ))
+            }
+            VaultRequest::CreateUser { account_id } => self.create_account(account_id),
+            VaultRequest::GetUser { account_id } => self.get_user(account_id),
+            VaultRequest::GetUsers { .. } => self.get_users(),
+            VaultRequest::RemoveUser { account_id, burn } => self.remove_user(account_id),
+            VaultRequest::Withdraw {
+                public_key,
+                amount,
+                payment_fee,
+                public,
+            } => {
+                self.request_withdraw(public_key, amount, payment_fee, public)
+                    .await
+            }
+            VaultRequest::Subscribe {} => self.subscribe(),
+        }
+    }
+
+    async fn handle_client(&mut self, response: Response) {
+        trace!("Received new notification = {:?}", response);
+        match response.kind {
+            ResponseKind::ChainNotification(node_chain) => {
+                if let ChainNotification::MacroBlockCommitted(block) = node_chain {
+                    info!(
+                        "Received new macro_block epoch={}, processing",
+                        block.block.header.epoch
+                    );
+                    let validators = block
+                        .old_epoch_info
+                        .unwrap_or(block.epoch_info)
+                        .into_stakers_group();
+                    let light_block = block.block.into_light_macro_block(validators);
+                    self.handle.chain_tx.send(light_block.into()).await.unwrap()
                 }
-            };
-            let response = match response {
-                Ok(resp) => resp,
-                Err(err) => From::from(&err),
-            };
+            }
+            _ => {}
+        }
+    }
 
-            sender.send(response).unwrap();
+    async fn request_withdraw(
+        &mut self,
+        recipient: scc::PublicKey,
+        amount: i64,
+        payment_fee: i64,
+        public: bool,
+    ) -> Result<VaultResponse, VaultError> {
+        let account_request = if public {
+            AccountRequest::PublicPayment {
+                recipient,
+                amount,
+                payment_fee,
+            }
+        } else {
+            AccountRequest::Payment {
+                recipient,
+                amount,
+                payment_fee,
+                comment: "Withdraw".to_string(),
+                with_certificate: true,
+            }
+        };
+        let response = self.handle.account.request(account_request);
+        let response = if let Ok(response) = response.await {
+            response
+        } else {
+            return Err(VaultError::WithdrawRequestCanceled);
+        };
+        match response {
+            AccountResponse::TransactionCreated(tx) => {
+                let outputs_hashes: Vec<_> = tx.outputs.iter().map(|o| o.output_hash()).collect();
+                Ok(VaultResponse::WithdrawCreated { outputs_hashes })
+            }
+            response => return Err(VaultError::UnexpectedResponse(format!("{:?}", response))),
+        }
+    }
+
+    fn subscribe(&mut self) -> Result<VaultResponse, VaultError> {
+        let (tx, rx) = mpsc::channel(100);
+        self.sender = Some(tx);
+        Ok(VaultResponse::Subscribed { rx: rx.into() })
+    }
+
+    fn remove_user(&mut self, account_id: AccountId) -> Result<VaultResponse, VaultError> {
+        let account_dir = self.accounts_dir().join(&account_id);
+
+        if !account_dir.exists() {
+            return Err(VaultError::AccountNotFound(account_id));
+        }
+        if let Some(public_key) = self.created_accounts.remove(&account_id) {
+            self.users_list.remove(&public_key);
+            let suffix = Timestamp::now()
+                .duration_since(Timestamp::UNIX_EPOCH)
+                .as_secs();
+
+            let trash_dir = self.cfg.general.data_dir.join(".trash");
+
+            if !trash_dir.exists() {
+                fs::create_dir_all(&trash_dir).map_err(Error::from)?;
+            }
+            let account_dir_bkp = trash_dir.join(format!("{}-{}", &account_id, suffix));
+            warn!("Renaming {:?} to {:?}", account_dir, account_dir_bkp);
+            fs::rename(account_dir, account_dir_bkp).map_err(Error::from)?;
+            return Ok(VaultResponse::RemovedUser {
+                account_id,
+                public_key,
+            });
+        } else {
+            return Err(VaultError::AccountNotFound(account_id));
         }
     }
 
@@ -210,7 +387,7 @@ impl VaultService {
             return Err(VaultError::AlreadyExist(account_id));
         }
 
-        let (account_skey, account_pkey) = generate_keypair(&self.secret_key, &account_id);
+        let (account_skey, account_pkey) = generate_keypair(&self.handle.secret_key, &account_id);
         create_keypair(
             &self.accounts_dir(),
             account_skey,
@@ -233,7 +410,7 @@ impl VaultService {
     }
 
     fn get_users(&mut self) -> Result<VaultResponse, VaultError> {
-        let main = self.public_key;
+        let main = self.handle.public_key;
         let list = self
             .created_accounts
             .iter()
@@ -362,8 +539,6 @@ impl VaultService {
         password: String,
     ) -> Result<
         (
-            scc::PublicKey,
-            scc::SecretKey,
             AccountHandle,
             mpsc::UnboundedReceiver<AccountNotification>,
             bool,
@@ -425,16 +600,18 @@ impl VaultService {
             events,
             chain_notifications,
         );
+        let epoch = unsealed.last_epoch();
 
         let account = Account { outbox };
         let account_notifications = account.subscribe();
 
         let handle = AccountHandle {
-            account_pkey,
+            public_key: account_pkey,
+            secret_key: account_skey,
             account,
             status: StatusInfo {
                 is_synchronized: false,
-                epoch: 0,
+                epoch,
                 offset: 0,
                 view_change: 0,
                 last_block_hash: Hash::zero(),
@@ -449,13 +626,7 @@ impl VaultService {
             error!("Account closed.");
             std::process::abort();
         });
-        Ok((
-            account_pkey,
-            account_skey,
-            handle,
-            account_notifications,
-            new,
-        ))
+        Ok((handle, account_notifications, new))
     }
 }
 

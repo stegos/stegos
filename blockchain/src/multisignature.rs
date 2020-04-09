@@ -37,7 +37,7 @@ pub fn check_supermajority(got_votes: i64, total_votes: i64) -> bool {
     assert!(got_votes >= 0);
     assert!(total_votes > 0);
     let need_votes = (total_votes * 2 + 3) / 3;
-    (got_votes >= need_votes)
+    got_votes >= need_votes
 }
 
 ///

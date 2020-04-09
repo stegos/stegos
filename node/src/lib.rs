@@ -952,7 +952,22 @@ impl NodeState {
             .epoch_info(epoch)?
             .expect("Expect epoch info for last macroblock.")
             .clone();
-        let notification = ExtendedMacroBlock { block, epoch_info };
+
+        let old_epoch_info = if epoch > 0 {
+            Some(
+                self.chain
+                    .epoch_info(epoch - 1)?
+                    .expect("Expect epoch info for last macroblock.")
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        let notification = ExtendedMacroBlock {
+            block,
+            epoch_info,
+            old_epoch_info,
+        };
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
         self.on_block_added(block_timestamp, notification.into(), was_synchronized);
@@ -1919,7 +1934,16 @@ impl NodeState {
 
         let block = self.chain.macro_block(epoch)?.into_owned();
         let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
-        let msg = ExtendedMacroBlock { block, epoch_info };
+        let old_epoch_info = if epoch > 0 {
+            Some(self.chain.epoch_info(epoch - 1)?.unwrap().clone())
+        } else {
+            None
+        };
+        let msg = ExtendedMacroBlock {
+            block,
+            epoch_info,
+            old_epoch_info,
+        };
         Ok(msg)
     }
 

@@ -32,8 +32,6 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::result::Result;
 use stegos_blockchain::{ChainConfig, ConsistencyCheck};
-use stegos_network::NetworkConfig;
-use stegos_node::NodeConfig;
 use toml;
 
 ///

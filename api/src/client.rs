@@ -81,7 +81,8 @@ impl WebSocketClient {
             match response.kind {
                 ResponseKind::NetworkResponse(_)
                 | ResponseKind::WalletResponse(_)
-                | ResponseKind::NodeResponse(_) => {
+                | ResponseKind::NodeResponse(_)
+                | ResponseKind::Raw(_) => {
                     return Ok(response);
                 }
                 _ => {
@@ -92,20 +93,25 @@ impl WebSocketClient {
         }
     }
 
-    pub async fn notification(&mut self) -> Result<Response, Error> {
+    pub fn notification<'a>(
+        &'a mut self,
+    ) -> Pin<Box<dyn Future<Output = Result<Response, Error>> + Send + 'a>> {
         if let Some(item) = self.pending_notifications.pop_front() {
-            return Ok(item);
+            return Box::pin(futures::future::ok(item));
         }
+
         assert!(self.pending_notifications.is_empty());
-        self.receive().await
+        Box::pin(self.receive())
     }
 
     async fn send_raw(&mut self, msg: Message) -> Result<(), Error> {
         if let Err(e) = SinkExt::send(&mut self.connection, msg.clone()).await {
             info!("Error on sending message to websocket, reconnecting");
             debug!("Websocket::send_raw error = {:?}", e);
+
+            let endpoit = self.endpoint.clone();
             if let Ok(connection) = FutureRetry::new(
-                || tokio_tungstenite::connect_async(&self.endpoint),
+                || tokio_tungstenite::connect_async(&endpoit),
                 handle_connection_error,
             )
             .await
@@ -133,8 +139,9 @@ impl WebSocketClient {
             Err(e) => {
                 info!("Error on receiving message to websocket, reconnecting");
                 debug!("Websocket::receive error = {:?}", e);
+                let endpoit = self.endpoint.clone();
                 if let Ok(connection) = FutureRetry::new(
-                    || tokio_tungstenite::connect_async(&self.endpoint),
+                    || tokio_tungstenite::connect_async(&endpoit),
                     handle_connection_error,
                 )
                 .await

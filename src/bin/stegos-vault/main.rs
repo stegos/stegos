@@ -24,9 +24,7 @@ mod config;
 use clap;
 use clap::ArgMatches;
 use clap::{App, Arg};
-use config::VaultConfig;
 use failure::Error;
-use futures::prelude::*;
 use log::*;
 use std::fs;
 use std::net::SocketAddr;
@@ -36,7 +34,6 @@ use stegos_api::load_or_create_api_token;
 use stegos_api::server::spawn_server;
 use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
-use stegos_crypto::scc;
 pub mod api;
 pub mod error;
 pub mod vault;
@@ -97,7 +94,6 @@ async fn run() -> Result<(), Error> {
         .unwrap_or(PathBuf::from(r"data"))
         .to_string_lossy()
         .to_string();
-    let default_endpoint = "127.0.0.1:3145";
 
     let args = App::new(&name)
         .version(&version[..])
@@ -203,16 +199,12 @@ async fn run() -> Result<(), Error> {
     };
 
     let mut cfg = load_or_create_configuration_file(&args)?;
+    if let Some(chain) = chain {
+        info!("Overriding chain from cli chain={}", chain);
+        cfg.general.chain = chain;
+    }
     stegos_crypto::set_network_prefix(chain_to_prefix(&cfg.general.chain))
         .expect("Network prefix not initialised.");
-
-    let api_token = match stegos_api::load_api_token(&api_token_file) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to load API Token from {:?}: {}", api_token_file, e);
-            std::process::exit(1);
-        }
-    };
 
     let remote_api_token_file = if let Some(api_token_file) = args.value_of("remote-api-token-file")
     {
@@ -230,6 +222,7 @@ async fn run() -> Result<(), Error> {
         );
         api_token_file.clone()
     };
+
     if let Some(api_endpoint) = args.value_of("api-endpoint") {
         info!(
             "Overriding remote node endpoint from cli api-endpoint={}",

@@ -1,5 +1,9 @@
 use crate::error::Error as VaultError;
+use failure::{bail, Error};
+use futures::channel::mpsc;
+use futures::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use stegos_api::{server::api::RawResponse, ResponseKind};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::scc;
 
@@ -37,10 +41,12 @@ pub enum VaultRequest {
         #[serde(default)]
         burn: bool,
     },
-
+    Subscribe {},
     Withdraw {
         public_key: scc::PublicKey,
         amount: i64,
+        payment_fee: i64,
+        public: bool,
     },
 }
 #[derive(Debug, Serialize, Deserialize)]
@@ -71,10 +77,35 @@ pub enum VaultResponse {
         public_key: scc::PublicKey,
         //secret_key: scc::SecretKey,
     },
+    WithdrawCreated {
+        outputs_hashes: Vec<Hash>,
+    },
+    Subscribed {
+        #[serde(skip)]
+        rx: Option<mpsc::Receiver<VaultNotification>>, // Option is needed for serde.
+    },
     Error {
         code: u64,
         error: String,
     },
+}
+
+impl VaultResponse {
+    pub(super) fn subscribe_to_stream(
+        &mut self,
+    ) -> Result<Box<dyn Stream<Item = RawResponse> + Unpin + Send>, Error> {
+        match self {
+            VaultResponse::Subscribed { ref mut rx } => {
+                return Ok(Box::new(
+                    rx.take()
+                        .expect("Stream exist")
+                        .map(|i| ResponseKind::Raw(serde_json::to_value(i).unwrap()))
+                        .map(RawResponse),
+                ))
+            }
+            resp => bail!("Response didn't support notifications: resp={:?}", resp),
+        }
+    }
 }
 
 impl<'a> From<&'a VaultError> for VaultResponse {
@@ -101,11 +132,11 @@ pub enum VaultNotification {
         public_key: scc::PublicKey,
         id: String,
         amount: i64,
-        utxos: Vec<UtxoInfo>,
+        // utxos: Vec<UtxoInfo>,
     },
 
     ColdBalanceUpdated {
         amount: i64,
-        spent: Vec<UtxoInfo>,
+        // spent: Vec<UtxoInfo>,
     },
 }

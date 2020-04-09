@@ -21,9 +21,7 @@
 
 use super::handler::{HandlerInEvent, HandlerOutEvent, ReplicationHandler};
 use futures::channel::mpsc;
-use futures::prelude::*;
 use futures::task::{Context, Poll};
-use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
@@ -32,7 +30,6 @@ use libp2p_swarm::{
 };
 use log::*;
 use std::collections::VecDeque;
-use std::marker::PhantomData;
 
 /// Replication event.
 #[derive(Debug)]

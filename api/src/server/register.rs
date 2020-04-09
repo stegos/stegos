@@ -25,9 +25,11 @@ use failure::{bail, Error};
 use futures::stream::SelectAll;
 use futures::Stream;
 use log::{debug, trace};
+use std::collections::HashSet;
 
 pub struct Register {
     methods: Vec<Box<dyn ApiHandler>>,
+    registred_notifications: HashSet<String>,
     pub notifications: SelectAll<Box<dyn Stream<Item = RawResponse> + Unpin + Send>>,
 }
 
@@ -35,11 +37,15 @@ impl Register {
     pub fn new() -> Self {
         Register {
             methods: Vec::new(),
+            registred_notifications: HashSet::new(),
             notifications: SelectAll::new(),
         }
     }
 
     pub fn add_api(&mut self, handler: Box<dyn ApiHandler>) {
+        for notification in handler.register_notification() {
+            let _ignore_dublicates = self.registred_notifications.insert(notification);
+        }
         self.methods.push(handler);
     }
 
@@ -48,17 +54,16 @@ impl Register {
         _method_type: &str,
         req: RawRequest,
     ) -> Result<RawResponse, Error> {
-        let notification = req.is_subscribe();
+        let notification = req.is_subscribe(&self.registred_notifications);
 
         for api in &self.methods {
             debug!("Trying to parse api request: api_name={}", api.name());
 
-            match api.try_process(req.clone()).await {
+            match api
+                .try_process(req.clone(), &mut self.notifications, notification)
+                .await
+            {
                 Ok(mut response) => {
-                    if notification {
-                        let notification = response.subscribe_to_stream()?;
-                        self.notifications.push(notification);
-                    }
                     return Ok(response);
                 }
                 Err(e) => trace!("Error when parsing request: error={}", e),

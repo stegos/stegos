@@ -209,6 +209,9 @@ pub struct ExtendedMacroBlock {
     /// Collected information about epoch.
     #[serde(flatten)]
     pub epoch_info: EpochInfo,
+
+    #[serde(skip)]
+    pub old_epoch_info: Option<EpochInfo>,
 }
 
 impl ExtendedMacroBlock {

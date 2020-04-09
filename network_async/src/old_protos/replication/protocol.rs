@@ -24,13 +24,11 @@ use crate::metrics;
 use crate::utils::FutureResult;
 use bytes::BytesMut;
 use futures::future;
-use futures::Future;
 use futures_codec::{Decoder, Encoder, Framed};
 use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use std::io;
 use std::iter;
-use std::pin::Pin;
 use unsigned_varint::codec;
 
 // Protocol label for metrics

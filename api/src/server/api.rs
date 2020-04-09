@@ -26,14 +26,12 @@ use async_trait::async_trait;
 
 use crate::network_api::*;
 use crate::{Request, RequestKind, ResponseKind};
-use futures::channel::mpsc;
+use futures::stream::SelectAll;
 use futures::stream::StreamExt;
 use futures::Stream;
-use serde::{de::DeserializeOwned, Serialize};
-use serde_json;
+use std::collections::HashSet;
 use std::convert::{TryFrom, TryInto};
-use stegos_network::UnicastMessage;
-use stegos_node::{ChainNotification, Node, NodeRequest, NodeResponse, StatusNotification};
+use stegos_node::{Node, NodeRequest, NodeResponse};
 use stegos_wallet::{
     api::{WalletRequest, WalletResponse},
     Wallet,
@@ -43,7 +41,7 @@ use stegos_wallet::{
 pub struct RawRequest(pub Request);
 
 impl RawRequest {
-    pub(super) fn is_subscribe(&self) -> bool {
+    pub(super) fn is_subscribe(&self, raw_notifications: &HashSet<String>) -> bool {
         match &self.0.kind {
             RequestKind::NodeRequest(r) => match r {
                 NodeRequest::SubscribeStatus { .. } | NodeRequest::SubscribeChain { .. } => true,
@@ -55,7 +53,17 @@ impl RawRequest {
                 _ => false,
             },
             RequestKind::WalletsRequest(r) => false,
-            RequestKind::Raw(_) => false,
+            RequestKind::Raw(r) => {
+                if let Some(notification_type) = r
+                    .as_object()
+                    .and_then(|obj| obj.get("type"))
+                    .and_then(|obj| obj.as_str())
+                {
+                    raw_notifications.contains(notification_type)
+                } else {
+                    false
+                }
+            }
         }
     }
 }
@@ -153,7 +161,7 @@ impl From<WalletResponse> for RawResponse {
         RawResponse(ResponseKind::WalletResponse(response))
     }
 }
-
+type Subscribtion = Box<dyn Stream<Item = RawResponse> + Unpin + Send>;
 // Todo: Later replace our requests with json-rpc core, and remove register/apihandler.
 #[async_trait]
 pub trait ApiHandler: Sync + Send {
@@ -163,7 +171,25 @@ pub trait ApiHandler: Sync + Send {
 
     fn cloned(&self) -> Box<dyn ApiHandler>;
 
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error>;
+    fn register_notification(&self) -> Vec<String> {
+        vec![]
+    }
+
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error>;
+
+    async fn try_process(
+        &self,
+        req: RawRequest,
+        notifications: &mut SelectAll<Subscribtion>,
+        is_notification: bool,
+    ) -> Result<RawResponse, Error> {
+        let mut response = self.process_request(req.clone()).await?;
+        if is_notification {
+            let notification = response.subscribe_to_stream()?;
+            notifications.push(notification);
+        }
+        Ok(response)
+    }
 }
 
 #[async_trait]
@@ -173,9 +199,9 @@ impl<T: ApiHandler + Sync + Clone + 'static> ApiHandler for Option<T> {
         format!("Option<{}>{}", std::any::type_name::<T>(), val)
     }
 
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         if let Some(val) = self {
-            val.try_process(req).await
+            val.process_request(req).await
         } else {
             bail!("Api not inited.")
         }
@@ -190,7 +216,7 @@ impl<T: ApiHandler + Sync + Clone + 'static> ApiHandler for Option<T> {
 
 #[async_trait]
 impl ApiHandler for Node {
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         let request: NodeRequest = req.try_into()?;
         let response = self.request(request).await?;
         Ok(response.into())
@@ -203,7 +229,7 @@ impl ApiHandler for Node {
 
 #[async_trait]
 impl ApiHandler for Wallet {
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         let request: WalletRequest = req.try_into()?;
         let response = self.request(request).await?;
         Ok(response.into())

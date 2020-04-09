@@ -39,6 +39,7 @@ use api::clone_apis;
 use std::net::SocketAddr;
 
 use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::WebSocketStream;
 use tungstenite::protocol::Message;
 
 use tokio::task::JoinHandle;
@@ -47,10 +48,8 @@ const OUTPUT_BUFFER_SIZE: usize = 10;
 /// Topic used for debugging.
 const CONSOLE_TOPIC: &'static str = "console";
 
-/// A type definition for sink.
-type WsSink = Box<dyn Sink<Message, Error = Error> + Send + Unpin>;
 /// A type definition for stream.
-type WsStream = Box<dyn Stream<Item = Result<Message, Error>> + Send + Unpin>;
+type WsStream = sink::Buffer<WebSocketStream<TcpStream>, Message>;
 
 pub mod api;
 pub mod register;
@@ -63,10 +62,8 @@ struct WebSocketHandler {
     peer: SocketAddr,
     /// API Token.
     api_token: ApiToken,
-    /// Outgoing stream.
-    sink: WsSink,
     /// Incoming stream.
-    stream: WsStream,
+    connection: WsStream,
 
     register: Register,
 }
@@ -75,8 +72,7 @@ impl WebSocketHandler {
     fn new(
         peer: SocketAddr,
         api_token: ApiToken,
-        sink: WsSink,
-        stream: WsStream,
+        connection: WsStream,
         apis: Vec<Box<dyn ApiHandler>>,
         network: Option<Network>,
         version: String,
@@ -94,37 +90,35 @@ impl WebSocketHandler {
         WebSocketHandler {
             peer,
             api_token,
-            sink,
-            stream,
+            connection,
             register,
         }
     }
 
-    async fn send(sink: &mut WsSink, api_token: &ApiToken, msg: Response) -> Result<(), Error> {
+    async fn send(sink: &mut WsStream, api_token: &ApiToken, msg: Response) -> Result<(), Error> {
         let msg = encode(api_token, &msg);
         let msg = Message::Text(msg);
         Self::send_raw(sink, msg).await
     }
 
-    async fn send_raw(sink: &mut WsSink, msg: Message) -> Result<(), Error> {
+    async fn send_raw(sink: &mut WsStream, msg: Message) -> Result<(), Error> {
         SinkExt::send(sink, msg).await.map_err(From::from)
     }
 
     async fn receive(
-        stream: &mut WsStream,
-        sink: &mut WsSink,
+        connection: &mut WsStream,
         api_token: ApiToken,
         peer: SocketAddr,
     ) -> Result<Request, Error> {
         loop {
-            let result = stream.next().await;
+            let result = connection.next().await;
             match result {
                 Some(Ok(Message::Text(msg))) => {
                     return decode(&api_token, &msg);
                 }
                 Some(Ok(Message::Ping(msg))) => {
                     trace!("[{}] => Ping(len={})", peer, msg.len());
-                    sink.send(Message::Pong(msg));
+                    connection.send(Message::Pong(msg));
                 }
                 Some(Ok(Message::Pong(msg))) => {
                     trace!("[{}] => Pong(len={})", peer, msg.len());
@@ -149,7 +143,7 @@ impl WebSocketHandler {
         loop {
             let api_token = self.api_token;
             let peer = self.peer;
-            let mut receive_orig = Self::receive(&mut self.stream, &mut self.sink, api_token, peer);
+            let mut receive_orig = Self::receive(&mut self.connection, api_token, peer);
             let mut receive = unsafe { Pin::new_unchecked(&mut receive_orig) };
             let mut receive = receive.fuse();
             select! {
@@ -160,7 +154,7 @@ impl WebSocketHandler {
                         trace!("Forwarding notification = {:?}", notification);
                         let kind = notification.0;
                         let response = Response { kind, id:0 };
-                        Self::send(&mut self.sink, &self.api_token, response).await;
+                        Self::send(&mut self.connection, &self.api_token, response).await;
                     } else {
                         trace!("Notifications stream ended.");
                     };
@@ -181,7 +175,7 @@ impl WebSocketHandler {
                     let block = async {
                         let kind = self.register.try_process("nothing", req).await?.0;
                         let response = Response { kind, id };
-                        Self::send(&mut self.sink, &self.api_token, response).await
+                        Self::send(&mut self.connection, &self.api_token, response).await
                     };
                     if let Err(e) = block.await {
                         warn!("Error during processing of request, error={}", e);
@@ -233,14 +227,9 @@ async fn handle_connection(
         .await
         .expect("Error during the websocket handshake occurred");
     debug!("[{}] Accepted", peer);
-    let (sink, stream) = ws_stream.split();
-    let sink = sink.buffer(OUTPUT_BUFFER_SIZE);
-    let sink: WsSink = Box::new(sink.sink_map_err(From::from));
-    let stream: WsStream = Box::new(stream.map_err(From::from));
+    let stream = ws_stream.buffer(OUTPUT_BUFFER_SIZE);
     info!("[{}] Connected", peer);
-    WebSocketHandler::new(
-        peer, api_token, sink, stream, apis, network, version, chain_name,
-    )
-    .spawn()
-    .await
+    WebSocketHandler::new(peer, api_token, stream, apis, network, version, chain_name)
+        .spawn()
+        .await
 }

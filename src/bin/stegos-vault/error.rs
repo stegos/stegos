@@ -3,14 +3,18 @@ use super::vault::AccountId;
 use failure::{Error as FError, Fail};
 #[derive(Fail, Debug)]
 pub enum Error {
-    #[fail(display = "Default error={:?}", _0)]
+    #[fail(display = "Default error={}", _0)]
     Basic(FError),
     #[fail(display = "Unexpected request, {}={:?}", _1, _0)]
     UnexpectedRequest(VaultRequest, String),
+    #[fail(display = "Unexpected request, {}", _0)]
+    UnexpectedResponse(String),
     #[fail(display = "Account already exist: {}", _0)]
     AlreadyExist(AccountId),
     #[fail(display = "Account Not found: {}", _0)]
     AccountNotFound(AccountId),
+    #[fail(display = "Withdraw request was canceled by account")]
+    WithdrawRequestCanceled,
 }
 
 impl Error {
@@ -20,6 +24,8 @@ impl Error {
             Error::UnexpectedRequest(..) => 2,
             Error::AlreadyExist(..) => 3,
             Error::AccountNotFound(..) => 4,
+            Error::WithdrawRequestCanceled => 5,
+            Error::UnexpectedResponse(..) => 6,
         }
     }
 }

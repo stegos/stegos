@@ -196,6 +196,10 @@ impl UnsealedAccountService {
         service
     }
 
+    pub fn last_epoch(&self) -> u64 {
+        self.database.epoch()
+    }
+
     /// Send money.
     fn payment(
         &mut self,

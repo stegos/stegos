@@ -190,7 +190,7 @@ impl From<NetworkResponse> for RawResponse {
 }
 #[async_trait]
 impl ApiHandler for NetworkApi {
-    async fn try_process(&self, req: RawRequest) -> Result<RawResponse, Error> {
+    async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         let request: NetworkRequest = req.try_into()?;
         match self.handle_network_request(request)? {
             NetworkResult::Immediate(response) => Ok(response.into()),

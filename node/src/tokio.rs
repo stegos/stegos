@@ -110,8 +110,24 @@ impl ChainReader {
                         .unwrap()
                         .unwrap()
                         .clone();
+                    let epoch = block.header.epoch;
+                    let old_epoch_info = if epoch > 0 {
+                        Some(
+                            chain
+                                .epoch_info(epoch - 1)
+                                .unwrap()
+                                .expect("Expect epoch info for last macroblock.")
+                                .clone(),
+                        )
+                    } else {
+                        None
+                    };
                     let next_epoch = block.header.epoch + 1;
-                    let msg = ExtendedMacroBlock { block, epoch_info };
+                    let msg = ExtendedMacroBlock {
+                        block,
+                        epoch_info,
+                        old_epoch_info,
+                    };
                     let msg = ChainNotification::MacroBlockCommitted(msg);
                     (msg, next_epoch, 0)
                 }
@@ -310,8 +326,6 @@ impl NodeService {
         let (tx, rx) = mpsc::channel(buffer);
         let subscriber = ChainReader { tx, epoch, offset };
         chain_readers.push(subscriber);
-        unimplemented!();
-        // task::current().notify();
         Ok(rx)
     }
 
@@ -374,7 +388,6 @@ impl NodeService {
     }
 
     fn handle_response_blocks(
-        network: &mut Network,
         state: &mut NodeState,
         pkey: pbc::PublicKey,
         response: ResponseBlocks,
@@ -441,9 +454,7 @@ impl NodeService {
     ) -> Result<(), Error> {
         match msg {
             ChainLoaderMessage::Request(r) => Self::handle_request_blocks(network, state, pkey, r),
-            ChainLoaderMessage::Response(r) => {
-                Self::handle_response_blocks(network, state, pkey, r)
-            }
+            ChainLoaderMessage::Response(r) => Self::handle_response_blocks(state, pkey, r),
         }
     }
 

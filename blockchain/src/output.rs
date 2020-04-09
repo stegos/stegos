@@ -845,7 +845,7 @@ impl PaymentCanary {
             };
         assert_eq!(canary.len(), PAYMENT_PAYLOAD_CANARY_LEN);
         let canary_check = &pkey.to_bytes()[0..PAYMENT_PAYLOAD_CANARY_LEN];
-        (canary == canary_check)
+        canary == canary_check
     }
 }
 

@@ -36,7 +36,7 @@ use log::*;
 use peer::Peer;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
 use stegos_network::{Network, PeerId, ReplicationEvent};
@@ -53,6 +53,9 @@ pub struct Replication {
 
     /// A map of connected peers.
     peers: HashMap<PeerId, Peer>,
+
+    /// A list of banned peers.
+    banned_peers: HashSet<PeerId>,
 
     /// A timer to handle periodic events.
     periodic_delay: Delay,
@@ -84,6 +87,7 @@ impl Replication {
         Self {
             peer_id,
             peers,
+            banned_peers: HashSet::new(),
             periodic_delay,
             light,
             events,
@@ -94,11 +98,14 @@ impl Replication {
     //
     // Change the current upstream (if any).
     //
-    pub fn change_upstream(&mut self) {
+    pub fn change_upstream(&mut self, error: bool) {
         for (peer_id, peer) in self.peers.iter_mut() {
             if peer.is_upstream() {
                 info!("[{}] Disconnect by the user", peer_id);
                 peer.disconnected();
+                if error {
+                    self.banned_peers.insert(peer_id.clone());
+                }
             }
         }
         // A new upstream will be selected on the next poll().
@@ -124,8 +131,8 @@ impl Replication {
     ///
     pub fn info(&self) -> ReplicationInfo {
         let mut peers = Vec::with_capacity(self.peers.len());
-        for (_peer_id, peer) in self.peers.iter() {
-            peers.push(peer.info());
+        for (peer_id, peer) in self.peers.iter() {
+            peers.push(peer.info(self.banned_peers.contains(peer_id)));
         }
         let my_info = PeerInfo::Localhost {
             peer_id: self.peer_id.to_base58(),
@@ -231,14 +238,32 @@ impl Replication {
             // Choose a new upstream.
             //
             let new_upstream = {
-                let potential_upstreams: Vec<&PeerId> = self
+                let mut potential_upstreams: Vec<&PeerId> = self
                     .peers
                     .iter()
                     .filter_map(|(peer_id, peer)| match &peer {
                         Peer::Registered { .. } => Some(peer_id),
                         _ => None,
                     })
+                    .filter(|peer_id| !self.banned_peers.contains(*peer_id))
                     .collect();
+
+                if potential_upstreams.is_empty() && !self.banned_peers.is_empty() {
+                    debug!(
+                        "No unbanned potential upstreams left, give banned peers one more chance."
+                    );
+                    // give banned peers one more chance to replicate
+                    self.banned_peers.clear();
+                    potential_upstreams = self
+                        .peers
+                        .iter()
+                        .filter_map(|(peer_id, peer)| match &peer {
+                            Peer::Registered { .. } => Some(peer_id),
+                            _ => None,
+                        })
+                        .collect();
+                }
+
                 let mut rng = thread_rng();
                 potential_upstreams
                     .as_slice()

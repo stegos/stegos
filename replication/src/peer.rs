@@ -393,7 +393,7 @@ impl Peer {
     ///
     /// Returns information about this peer.
     ///
-    pub(super) fn info(&self) -> PeerInfo {
+    pub(super) fn info(&self, banned: bool) -> PeerInfo {
         match self {
             Peer::Registered {
                 peer_id,
@@ -404,6 +404,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
             },
             Peer::Connecting {
                 peer_id,
@@ -414,6 +415,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
             },
             Peer::Connected {
                 peer_id,
@@ -424,6 +426,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
             },
             Peer::Receiving {
                 peer_id,
@@ -438,6 +441,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
                 epoch: *epoch,
                 offset: *offset,
                 bytes_received: *bytes_received,
@@ -452,6 +456,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
             },
             Peer::Sending {
                 peer_id,
@@ -466,6 +471,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
                 epoch: *epoch,
                 offset: *offset,
                 bytes_sent: *bytes_sent,
@@ -481,6 +487,7 @@ impl Peer {
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
                 error: format!("{}", error),
             },
         }

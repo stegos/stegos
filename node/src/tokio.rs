@@ -519,7 +519,7 @@ impl NodeService {
                         NodeIncomingEvent::Request { request, tx } => {
                             match request {
                                 NodeRequest::ChangeUpstream {} => {
-                                    replication.change_upstream();
+                                    replication.change_upstream(false);
                                     let response = NodeResponse::UpstreamChanged;
                                     tx.send(response).ok(); // ignore errors.
                                     continue;
@@ -621,6 +621,10 @@ impl NodeService {
                             info!("Facilitator is {}", facilitator);
                             txpool_service = OptionFuture::from(None);
                         }
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::ChangeUpstream {} => {
+                        replication.change_upstream(true);
                         Ok(())
                     }
                     NodeOutgoingEvent::Publish { topic, data } => {

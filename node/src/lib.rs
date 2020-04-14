@@ -139,6 +139,7 @@ pub enum NodeOutgoingEvent {
         topic: String,
         data: Vec<u8>,
     },
+    ChangeUpstream {},
     Send {
         dest: pbc::PublicKey,
         topic: String,
@@ -2232,7 +2233,14 @@ impl NodeState {
             NodeIncomingEvent::Block(msg) => {
                 Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
             }
-            NodeIncomingEvent::DecodedBlock(msg) => self.handle_block(msg),
+            NodeIncomingEvent::DecodedBlock(msg) => {
+                let result = self.handle_block(msg);
+                if let Err(error) = &result {
+                    sinfo!(self, "Error during processing block from replication, changing upstream: error = {}", error);
+                    self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
+                }
+                result
+            }
             NodeIncomingEvent::CheckSyncTimer => {
                 if !self.chain.is_synchronized() {
                     self.on_status_changed();

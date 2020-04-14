@@ -113,7 +113,7 @@ impl NetworkBehaviour for Replication {
     fn inject_connection_established(
         &mut self,
         peer_id: &PeerId,
-        conn: &ConnectionId,
+        _conn: &ConnectionId,
         endpoint: &ConnectedPoint,
     ) {
         let multiaddr = match endpoint {
@@ -133,7 +133,7 @@ impl NetworkBehaviour for Replication {
     fn inject_connection_closed(
         &mut self,
         peer_id: &PeerId,
-        conn: &ConnectionId,
+        _conn: &ConnectionId,
         endpoint: &ConnectedPoint,
     ) {
         let multiaddr = match endpoint {
@@ -175,7 +175,7 @@ impl NetworkBehaviour for Replication {
 
     fn poll(
         &mut self,
-        cx: &mut Context,
+        _cx: &mut Context,
         _: &mut impl PollParameters,
     ) -> Poll<
         NetworkBehaviourAction<

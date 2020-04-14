@@ -31,7 +31,6 @@
 use crate::utils::IntoMultihash;
 use arrayvec::ArrayVec;
 use bigint::U512;
-use libp2p_core::PeerId;
 use parity_multihash::Multihash;
 use std::slice::IterMut as SliceIterMut;
 use std::time::{Duration, Instant};

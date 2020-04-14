@@ -25,7 +25,6 @@ use super::handler::{DeliveryHandler, DeliveryRecvEvent, DeliverySendEvent};
 pub use super::protocol::{DeliveryMessage, Unicast};
 
 use crate::utils::ExpiringQueue;
-use futures::prelude::*;
 use futures::task::{Context, Poll};
 use libp2p_core::{connection::ConnectionId, Multiaddr, PeerId};
 use libp2p_swarm::{
@@ -36,7 +35,6 @@ use log::{debug, error};
 use smallvec::SmallVec;
 use std::{
     collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
-    marker::PhantomData,
     time::Duration,
 };
 use stegos_crypto::utils::u8v_to_hexstr;

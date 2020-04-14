@@ -1,11 +1,12 @@
-use serde::{Deserialize, Serialize};
-use stegos_crypto::pbc;
-use stegos_network::{Network, NetworkResponse as NetworkServiceResponse, UnicastMessage};
-// use stegos_node::NodesInfo;
 use crate::server::api::*;
 use async_trait::async_trait;
 use failure::{bail, Error};
 use futures::channel::{mpsc, oneshot};
+use serde::{Deserialize, Serialize};
+use stegos_crypto::pbc;
+use stegos_network::{
+    Network, NetworkResponse as NetworkServiceResponse, NodeInfo, UnicastMessage,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -64,7 +65,8 @@ pub enum NetworkResponse {
     PublishedBroadcast,
     ConnectedNodesRequested,
     ConnectedNodes {
-        total: usize, /*nodes: Vec<NodeInfo>*/
+        total: usize,
+        nodes: Vec<NodeInfo>,
     },
     Error {
         error: String,
@@ -195,7 +197,16 @@ impl ApiHandler for NetworkApi {
         match self.handle_network_request(request)? {
             NetworkResult::Immediate(response) => Ok(response.into()),
             NetworkResult::Async(response) => {
-                unimplemented!();
+                let resp = response.await?;
+                let result = match resp {
+                    NetworkServiceResponse::ConnectedNodes { nodes } => {
+                        NetworkResponse::ConnectedNodes {
+                            total: nodes.len(),
+                            nodes,
+                        }
+                    }
+                };
+                Ok(result.into())
             }
         }
     }

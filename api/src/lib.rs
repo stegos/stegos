@@ -40,8 +40,6 @@ pub use network_api::*;
 use serde::de::DeserializeOwned;
 use serde::ser::Serialize;
 use serde_derive::{Deserialize, Serialize};
-use stegos_crypto::pbc;
-// pub use stegos_network::NodeInfo;
 pub use stegos_node::{ChainNotification, NodeRequest, NodeResponse, StatusNotification};
 pub use stegos_wallet::api::*;
 

@@ -28,7 +28,6 @@ use super::query::{QueryConfig, QueryState, QueryStatePollOut, QueryTarget};
 use fnv::{FnvHashMap, FnvHashSet};
 use futures::task::{Context, Poll};
 use futures::{prelude::*, stream};
-use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::connection::ConnectionId;
 use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
@@ -41,7 +40,7 @@ use parity_multihash::Multihash;
 use rand;
 use smallvec::SmallVec;
 use std::vec::IntoIter as VecIntoIter;
-use std::{cmp::Ordering, error, marker::PhantomData, time::Duration, time::Instant};
+use std::{cmp::Ordering, error, time::Duration, time::Instant};
 use stegos_crypto::pbc;
 use stegos_crypto::utils::u8v_to_hexstr;
 use tokio::time::Interval;

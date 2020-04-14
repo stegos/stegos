@@ -63,7 +63,7 @@ impl Register {
                 .try_process(req.clone(), &mut self.notifications, notification)
                 .await
             {
-                Ok(mut response) => {
+                Ok(response) => {
                     return Ok(response);
                 }
                 Err(e) => trace!("Error when parsing request: error={}", e),

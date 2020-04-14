@@ -30,7 +30,7 @@ pub use self::peer::MAX_BLOCKS_PER_BATCH;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
-    Future, FutureExt, Stream, StreamExt,
+    FutureExt, StreamExt,
 };
 use log::*;
 use peer::Peer;
@@ -168,7 +168,6 @@ impl Replication {
                             .entry(peer_id)
                             .or_insert(peer)
                             .add_addr(multiaddr);
-                        // assert!(prev.is_none(), "peer is new");
                     }
                     ReplicationEvent::Unregistered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);

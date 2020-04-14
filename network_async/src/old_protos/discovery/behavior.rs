@@ -26,7 +26,6 @@ use crate::kad::{kbucket::KBucketsPeerId, Kademlia, KademliaOut, NodeInfo};
 use crate::utils::LruBimap;
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::connection::ConnectionId;
 use libp2p_core::ConnectedPoint;
 use libp2p_core::{Multiaddr, PeerId};

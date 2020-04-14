@@ -32,13 +32,9 @@ use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
 use futures::{
     future::{self, Fuse, OptionFuture},
-    stream::{self, futures_unordered::FuturesUnordered},
+    stream,
 };
-use futures::{
-    select,
-    task::{self, Context, Poll},
-    Future, FutureExt, Sink, Stream, StreamExt,
-};
+use futures::{select, task::Poll, FutureExt, Stream, StreamExt};
 use log::*;
 use pin_utils::pin_mut;
 use std::pin::Pin;
@@ -51,7 +47,7 @@ use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 use stegos_txpool::TransactionPoolService;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Instant, Interval};
+use tokio::time::{self, Interval};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -471,8 +467,8 @@ impl NodeService {
         );
 
         // let mut chain_readers = future::select_all(self.chain_readers.into_iter().map(Box::pin)).fuse();
-        /// Subscribers for chain events which are fed from the disk.
-        /// Automatically promoted to chain_subscribers after synchronization.
+        // Subscribers for chain events which are fed from the disk.
+        // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
         let mut status_subscribers = self.status_subscribers;
         let mut chain_subscribers = self.chain_subscribers.clone();

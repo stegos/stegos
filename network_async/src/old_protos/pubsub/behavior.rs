@@ -26,9 +26,8 @@ use super::protocol::{
 
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::connection::ConnectionId;
-use libp2p_core::{ConnectedPoint, Multiaddr, PeerId};
+use libp2p_core::{Multiaddr, PeerId};
 use libp2p_swarm::{
     protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
     PollParameters,
@@ -36,11 +35,7 @@ use libp2p_swarm::{
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use smallvec::SmallVec;
-use std::pin::Pin;
-use std::{
-    collections::{hash_map::HashMap, hash_set::HashSet, VecDeque},
-    marker::PhantomData,
-};
+use std::collections::{hash_map::HashMap, hash_set::HashSet, VecDeque};
 use tokio::time::{Delay, Duration, Instant};
 use update_rate::{RateCounter, RollingRateCounter};
 
@@ -54,9 +49,6 @@ const LRU_EXPIRE_TIME: Duration = Duration::from_secs(60); // 1 minute to allow 
 pub struct Floodsub {
     /// Events that need to be yielded to the outside when polling.
     events: VecDeque<NetworkBehaviourAction<FloodsubSendEvent, FloodsubEvent>>,
-
-    /// Peer id of the local node. Used for the source of the messages that we publish.
-    local_peer_id: PeerId,
 
     /// List of peers the network is connected to, and the topics that they're subscribed to.
     connected_peers: HashSet<PeerId>,
@@ -87,10 +79,9 @@ pub struct Floodsub {
 
 impl Floodsub {
     /// Creates a `Floodsub`.
-    pub fn new(local_peer_id: PeerId, relaying: bool) -> Self {
+    pub fn new(relaying: bool) -> Self {
         Floodsub {
             events: VecDeque::new(),
-            local_peer_id,
             connected_peers: HashSet::new(),
             unlocked_remotes: HashMap::new(),
             allowed_remotes: HashSet::new(),

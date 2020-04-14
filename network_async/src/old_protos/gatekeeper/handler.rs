@@ -26,8 +26,7 @@ use super::protocol::{GatekeeperCodec, GatekeeperConfig, GatekeeperMessage};
 use futures::prelude::*;
 use futures::task::{Context, Poll};
 use futures_codec::Framed;
-use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::upgrade::{InboundUpgrade, Negotiated, OutboundUpgrade};
+use libp2p_core::upgrade::{InboundUpgrade, OutboundUpgrade};
 use libp2p_swarm::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };

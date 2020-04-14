@@ -33,13 +33,11 @@ pub use self::peer_id_key::PeerIdKey;
 
 use super::proto::unicast_proto;
 use failure::{format_err, Error};
-use futures::future::Future;
 use libp2p::identity::ed25519;
 use libp2p::Multiaddr;
 use log::*;
 use protobuf::Message;
 use std::net::{SocketAddr, SocketAddrV4};
-use std::pin::Pin;
 use std::str::FromStr;
 use stegos_crypto::hash::{Hashable, Hasher};
 use stegos_crypto::pbc;

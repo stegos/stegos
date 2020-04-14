@@ -25,15 +25,12 @@ use super::protocol::{
 };
 use futures::prelude::*;
 use futures::task::{Context, Poll};
-use libp2p_core::{
-    either::EitherOutput, upgrade, upgrade::Negotiated, InboundUpgrade, OutboundUpgrade,
-};
+use libp2p_core::{either::EitherOutput, upgrade, InboundUpgrade, OutboundUpgrade};
 use libp2p_swarm::protocols_handler::{
     KeepAlive, ProtocolsHandler, ProtocolsHandlerEvent, ProtocolsHandlerUpgrErr, SubstreamProtocol,
 };
 use std::pin::Pin;
 
-use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_swarm::NegotiatedSubstream;
 use parity_multihash::Multihash;
 use std::{error, fmt, io, time::Instant};

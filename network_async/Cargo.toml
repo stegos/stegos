@@ -54,5 +54,8 @@ unsigned-varint = { version = "0.3.2", features = ["futures-codec"]}
 update_rate = "2.0"
 void = "1.0"
 
+[dev-dependencies]
+async-std = "1.5"
+
 [build-dependencies]
 stegos_serialization = { version = "1.0.0", path = "../serialization" }

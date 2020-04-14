@@ -26,8 +26,8 @@ use super::protos::{ReplicationRequest, ReplicationResponse};
 use crate::ReplicationRow;
 use futures::channel::mpsc;
 use futures::{
-    task::{self, Context, Poll},
-    Sink, Stream, StreamExt,
+    task::{Context, Poll},
+    StreamExt,
 };
 use log::*;
 use std::collections::HashMap;
@@ -218,18 +218,6 @@ impl Peer {
         if multiaddr.get_mut(&addr).map(|addr| *addr = false).is_none() {
             error!("Removed peer that didn't exist.");
         }
-    }
-    pub(super) fn is_empty(&self) -> bool {
-        let multiaddr = match self {
-            Peer::Registered { multiaddr, .. }
-            | Peer::Connecting { multiaddr, .. }
-            | Peer::Connected { multiaddr, .. }
-            | Peer::Receiving { multiaddr, .. }
-            | Peer::Accepted { multiaddr, .. }
-            | Peer::Sending { multiaddr, .. }
-            | Peer::Failed { multiaddr, .. } => multiaddr,
-        };
-        multiaddr.is_empty()
     }
     ///
     /// Create a new peer in Registered state.

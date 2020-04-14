@@ -30,8 +30,6 @@ use futures::select;
 use futures::SinkExt;
 use log::*;
 use stegos_network::Network;
-// use stegos_wallet::api::{WalletControlResponse, WalletNotification, WalletResponse};
-// use stegos_wallet::Wallet;
 
 use std::pin::Pin;
 
@@ -144,7 +142,7 @@ impl WebSocketHandler {
             let api_token = self.api_token;
             let peer = self.peer;
             let mut receive_orig = Self::receive(&mut self.connection, api_token, peer);
-            let mut receive = unsafe { Pin::new_unchecked(&mut receive_orig) };
+            let receive = unsafe { Pin::new_unchecked(&mut receive_orig) };
             let mut receive = receive.fuse();
             select! {
                 notification = self.register.notifications.next() => {

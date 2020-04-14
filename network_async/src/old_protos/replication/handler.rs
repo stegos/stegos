@@ -37,8 +37,7 @@ use std::io::ErrorKind;
 use std::pin::Pin;
 
 use futures::channel::mpsc;
-use futures_codec::{Decoder, Encoder, Framed};
-use futures_io::{AsyncRead, AsyncWrite};
+use futures_codec::Framed;
 
 const INPUT_BUFFER_SIZE: usize = 10;
 const OUTPUT_BUFFER_SIZE: usize = 10;
@@ -66,8 +65,6 @@ pub enum HandlerOutEvent {
         rx: mpsc::Receiver<Vec<u8>>,
     },
 }
-
-type Message = Vec<u8>;
 
 /// State of an active substream, opened either by us or by the remote.
 /// Sic: this structure is `pub` because it doesn't compile otherwise.
@@ -97,10 +94,6 @@ enum SubstreamState {
     },
 }
 
-fn to_io_error<E>(_e: E) -> io::Error {
-    io::Error::new(io::ErrorKind::ConnectionReset, "channel")
-}
-
 impl SubstreamState {
     fn poll_unpin(
         &mut self,
@@ -121,7 +114,7 @@ impl SubstreamState {
                 let (node_tx, rx) = mpsc::channel::<Vec<u8>>(INPUT_BUFFER_SIZE);
                 let (tx, node_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER_SIZE);
                 let node_tx =
-                    node_tx.sink_map_err(|e| io::Error::new(ErrorKind::Other, "forward error"));
+                    node_tx.sink_map_err(|_e| io::Error::new(ErrorKind::Other, "forward error"));
                 let node_rx = node_rx.map(|e| Ok(e));
                 let rx_forward = Box::pin(net_rx.forward(node_tx));
                 let tx_forward = Box::pin(node_rx.forward(net_tx));

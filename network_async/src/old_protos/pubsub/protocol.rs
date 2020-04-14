@@ -24,15 +24,14 @@ use crate::pubsub::proto::pubsub_proto as rpc_proto;
 
 use crate::utils::FutureResult;
 use bytes::buf::ext::BufMutExt;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use futures::future;
 use futures_codec::{Decoder, Encoder, Framed};
 use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::pin::Pin;
 use std::{io, iter};
 use unsigned_varint::codec;
 

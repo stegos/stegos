@@ -32,8 +32,7 @@ use libp2p_swarm::protocols_handler::{
 };
 
 use futures_codec::Framed;
-use futures_io::{AsyncRead, AsyncWrite};
-use log::{debug, trace, warn};
+use log::{debug, trace};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::pin::Pin;

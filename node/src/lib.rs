@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-                             // #![deny(warnings)]
+#![deny(warnings)]
 
 pub mod api;
 mod config;

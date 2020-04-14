@@ -27,8 +27,6 @@ use crate::{decode, encode, Request, Response};
 use failure::bail;
 use failure::Error;
 use futures::prelude::*;
-use futures::ready;
-use futures::task::{Context, Poll};
 use futures::SinkExt;
 use log::*;
 use std::pin::Pin;
@@ -40,10 +38,9 @@ use tokio_tungstenite::WebSocketStream;
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 use futures_retry::{FutureRetry, RetryPolicy};
 use std::collections::VecDeque;
-use std::io;
 use std::time::Duration;
 
-fn handle_connection_error(e: WsError) -> RetryPolicy<WsError> {
+fn handle_connection_error(_e: WsError) -> RetryPolicy<WsError> {
     // This is kinda unrealistical error handling, don't use it as it is!
     debug!("Error on reconnect");
     RetryPolicy::WaitRetry(RECONNECT_TIMEOUT)
@@ -159,43 +156,3 @@ impl WebSocketClient {
         decode(&self.api_token, &result)
     }
 }
-
-// impl Stream for WebSocketClient
-// {
-//     type Item = Result<Response, Error>;
-
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-//         if let Some(i) = buffer.pop_front() {
-//             return Poll::Ready(Some(Ok(i)))
-//         }
-//         let x = ready!(Stream::poll_next(Pin::new(&mut self.connection), cx));
-//         match
-//         Poll::Ready(x.map(|x|x.map_err(Into::into)))
-//     }
-// }
-
-// impl Sink<Message> for WebSocketClient
-// {
-//     type Error = Error;
-
-//     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-//         let x = ready!(Sink::poll_ready(Pin::new(&mut self.connection), cx));
-//         Poll::Ready(x.map_err(Into::into))
-//     }
-
-//     fn start_send(mut self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-//         let x = Sink::start_send(Pin::new(&mut self.connection), item);
-//         x.map_err(Into::into)
-
-//     }
-
-//     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-//         let x = ready!(Sink::poll_flush(Pin::new(&mut self.connection), cx));
-//         Poll::Ready(x.map_err(Into::into))
-//     }
-
-//     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-//         let x = ready!(Sink::poll_close(Pin::new(&mut self.connection), cx));
-//         Poll::Ready(x.map_err(Into::into))
-//     }
-// }

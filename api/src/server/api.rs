@@ -52,7 +52,7 @@ impl RawRequest {
                 | NetworkRequest::SubscribeUnicast { .. } => true,
                 _ => false,
             },
-            RequestKind::WalletsRequest(r) => false,
+            RequestKind::WalletsRequest(_r) => false,
             RequestKind::Raw(r) => {
                 if let Some(notification_type) = r
                     .as_object()

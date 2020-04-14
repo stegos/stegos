@@ -25,15 +25,14 @@ use crate::metrics;
 
 use crate::utils::FutureResult;
 use bytes::buf::ext::BufMutExt;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use futures::future;
 use futures_codec::{Decoder, Encoder, Framed};
 use futures_io::{AsyncRead, AsyncWrite};
-use libp2p_core::{upgrade::Negotiated, InboundUpgrade, OutboundUpgrade, UpgradeInfo};
+use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::pin::Pin;
 use std::{io, iter};
 use stegos_crypto::pbc;
 use unsigned_varint::codec;
@@ -261,11 +260,12 @@ impl Broadcast {
 #[cfg(test)]
 mod tests {
     use super::{Broadcast, DeliveryCodec, DeliveryMessage, Unicast};
-    use futures::{future, Future, Sink, Stream};
+    use async_std::net::{TcpListener, TcpStream};
+    use futures::future;
+    use futures::prelude::*;
+    use futures_codec::Framed;
     use rand;
     use stegos_crypto::pbc;
-    use tokio::codec::Framed;
-    use tokio::net::{TcpListener, TcpStream};
 
     #[test]
     fn correct_transfer() {
@@ -300,48 +300,35 @@ mod tests {
     fn test_one(msg: DeliveryMessage) {
         let msg_server = msg.clone();
         let msg_client = msg.clone();
+        let listener_addr: std::net::SocketAddr = "127.0.0.1:12643".parse().unwrap();
 
-        let listener = TcpListener::bind(&"127.0.0.1:0".parse().unwrap()).unwrap();
-        let listener_addr = listener.local_addr().unwrap();
+        let server = Box::pin(async {
+            let listener = TcpListener::bind(&listener_addr).await.unwrap();
+            let (client, addr) = listener.accept().await.unwrap();
+            let mut client = Framed::new(
+                client,
+                DeliveryCodec {
+                    length_prefix: Default::default(),
+                },
+            );
+            let msg = client.next().await.unwrap().unwrap();
+            let msg = msg.clone();
+            assert_eq!(msg, msg_server);
+        });
 
-        let server = listener
-            .incoming()
-            .into_future()
-            .map_err(|(e, _)| e)
-            .and_then(|(c, _)| {
-                future::ok(Framed::new(
-                    c.unwrap(),
-                    DeliveryCodec {
-                        length_prefix: Default::default(),
-                    },
-                ))
-            })
-            .and_then({
-                let msg_server = msg_server.clone();
-                move |s| {
-                    s.into_future().map_err(|(err, _)| err).map(move |(v, _)| {
-                        assert_eq!(v.unwrap(), msg_server);
-                        ()
-                    })
-                }
-            });
-
-        let client = TcpStream::connect(&listener_addr)
-            .and_then(|c| {
-                future::ok(Framed::new(
-                    c,
-                    DeliveryCodec {
-                        length_prefix: Default::default(),
-                    },
-                ))
-            })
-            .and_then(|s| s.send(msg_client))
-            .map(|_| ());
+        let client_future = Box::pin(async {
+            let client = TcpStream::connect(&listener_addr).await.unwrap();
+            let mut s = Framed::new(
+                client,
+                DeliveryCodec {
+                    length_prefix: Default::default(),
+                },
+            );
+            s.send(msg_client).await;
+        });
 
         let mut runtime = tokio::runtime::Runtime::new().unwrap();
-        runtime
-            .block_on(server.select(client).map_err(|_| panic!()).map(drop))
-            .unwrap();
+        runtime.block_on(futures::future::join(server, client_future));
     }
 
     fn random_vec(len: usize) -> Vec<u8> {

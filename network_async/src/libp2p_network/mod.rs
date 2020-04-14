@@ -24,15 +24,15 @@
 use crate::utils;
 use std::time::Duration;
 
-use failure::{format_err, Error};
+use failure::Error;
 use futures::channel::{mpsc, oneshot};
 use futures::future;
-use futures::future::TryFutureExt;
 use futures::stream::StreamExt;
 
 use libp2p;
 pub use libp2p::gossipsub::Topic;
-use libp2p::gossipsub::{self, Gossipsub, GossipsubEvent, GossipsubMessage, MessageId, TopicHash};
+use libp2p::gossipsub::{GossipsubEvent, TopicHash};
+// use libp2p::gossipsub::{self, GossipsubMessage, MessageId, Gossipsub};
 pub use libp2p_core::multiaddr::Multiaddr;
 pub use libp2p_core::PeerId;
 use libp2p_core::{identity, transport::TransportError, Transport};
@@ -74,9 +74,6 @@ use std::str::FromStr;
 pub struct Libp2pNetwork {
     control_tx: mpsc::UnboundedSender<ControlMessage>,
 }
-
-// Allow connection to terminate after that much idle time
-pub const NETWORK_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
 // Max number of topic for one floodsub message.
@@ -320,22 +317,22 @@ impl Libp2pBehaviour {
             true
         };
 
-        // To content-address message, we can take the hash of message and use it as an ID.
-        let message_id_fn = |message: &GossipsubMessage| {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut s = DefaultHasher::new();
-            message.data.hash(&mut s);
-            MessageId(s.finish().to_string())
-        };
+        // // To content-address message, we can take the hash of message and use it as an ID.
+        // let message_id_fn = |message: &GossipsubMessage| {
+        //     use std::collections::hash_map::DefaultHasher;
+        //     use std::hash::{Hash, Hasher};
+        //     let mut s = DefaultHasher::new();
+        //     message.data.hash(&mut s);
+        //     MessageId(s.finish().to_string())
+        // };
 
-        // set custom gossipsub
-        let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
-            .heartbeat_interval(Duration::from_secs(10))
-            .message_id_fn(message_id_fn) // content-address messages. No two messages of the
-            .max_transmit_size(2048 * 1024) // 2MB;
-            //same content will be propagated.
-            .build();
+        // // set custom gossipsub
+        // let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
+        //     .heartbeat_interval(Duration::from_secs(10))
+        //     .message_id_fn(message_id_fn) // content-address messages. No two messages of the
+        //     .max_transmit_size(2048 * 1024) // 2MB;
+        //     //same content will be propagated.
+        //     .build();
 
         // let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
         let behaviour = Libp2pBehaviour {
@@ -346,7 +343,7 @@ impl Libp2pBehaviour {
             connected_peers: HashSet::new(),
 
             ncp: Ncp::new(config, network_pkey.clone()),
-            floodsub: Floodsub::new(peer_id.clone(), relaying),
+            floodsub: Floodsub::new(relaying),
             floodsub_consumers: HashMap::new(),
             gatekeeper: Gatekeeper::new(config),
             delivery: Delivery::new(),
@@ -358,16 +355,14 @@ impl Libp2pBehaviour {
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
     }
-    fn is_network_ready(&self) -> bool {
-        true
-        // unimplemeted!()
-        // if self.gatekeeper.is_network_ready() {
-        //     // Err shouldn't happen, since channel is just subscribed
-        //     if let Err(e) = handler.clone().unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
-        //         debug!(target: "stegos_network::gatekeeper", "Error sending Network::Ready event: error={}", e);
-        //     }
-        // }
-    }
+    // fn is_network_ready(&self) -> bool {
+    //     if self.gatekeeper.is_network_ready() {
+    //         // Err shouldn't happen, since channel is just subscribed
+    //         if let Err(e) = handler.clone().unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
+    //             debug!(target: "stegos_network::gatekeeper", "Error sending Network::Ready event: error={}", e);
+    //         }
+    //     }
+    // }
 
     fn process_event(&mut self, msg: ControlMessage) {
         trace!("Control event: {:#?}", msg);
@@ -398,13 +393,15 @@ impl Libp2pBehaviour {
                     topic,
                     data.len(),
                 );
-                let gossipsub_topic = Topic::new(topic.clone());
+                // let gossipsub_topic = Topic::new(topic.clone());
                 // self.gossipsub.publish(&gossipsub_topic, data.clone());
                 self.floodsub.publish(topic, data);
             }
             ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {
                 debug!(target: "stegos_network::libp2p_network","changing network key: from={}, to={}", self.my_pkey, new_pkey);
                 error!("Not implemented");
+                let _new_pkey = new_pkey;
+                let _new_skey = new_skey;
                 // unimplemented!();
                 // self.ncp.change_network_key(new_pkey.clone());
                 // self.discovery.change_network_key(new_pkey.clone());
@@ -470,7 +467,6 @@ impl Libp2pBehaviour {
                 self.replication.disconnect(peer_id);
             }
             ControlMessage::ConnectedNodesRequest { tx } => {
-                // error!("Unimplemented ConnectedNodesRequest")
                 let nodes = self.ncp.get_connected_nodes();
                 if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes }) {
                     warn!(target: "stegos_network", "Failed send API response for connected nodes");
@@ -479,9 +475,9 @@ impl Libp2pBehaviour {
         }
     }
 
-    fn shutdown(&mut self, peer_id: &PeerId) {
-        self.ncp.terminate(peer_id.clone());
-    }
+    // fn shutdown(&mut self, peer_id: &PeerId) {
+    //     self.ncp.terminate(peer_id.clone());
+    // }
 }
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for Libp2pBehaviour {
@@ -848,39 +844,40 @@ impl Transport for CommonTransport {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::UnicastPayload;
-//     use stegos_crypto::pbc;
+#[cfg(test)]
+mod tests {
+    use super::UnicastPayload;
+    use stegos_crypto::pbc;
 
-//     #[test]
-//     fn encode_decode() {
-//         let (from_skey, from) = pbc::make_random_keys();
-//         let (to_skey, to) = pbc::make_random_keys();
-//         let protocol_id = "the quick brown fox".to_string();
-//         let data = random_vec(1024);
+    #[test]
+    fn encode_decode() {
+        let (from_skey, from) = pbc::make_random_keys();
+        let (to_skey, to) = pbc::make_random_keys();
+        let protocol_id = "the quick brown fox".to_string();
+        let data = random_vec(1024);
 
-//         let payload = UnicastPayload {
-//             from,
-//             to,
-//             protocol_id,
-//             data,
-//         };
+        let payload = UnicastPayload {
+            from,
+            to,
+            protocol_id,
+            data,
+        };
 
-//         let encoded = super::encode_unicast(payload.clone(), &from_skey);
-//         let (enc_payload, signature, rval) = super::decode_unicast(encoded).unwrap();
-//         let enc_data = enc_payload.data.clone();
-//         let payload_2 = super::decrypt_message(&to_skey, enc_payload, signature, rval).unwrap();
+        let encoded = super::encode_unicast(payload.clone(), &from_skey);
+        let (enc_payload, signature, rval) = crate::utils::decode_unicast(encoded).unwrap();
+        let enc_data = enc_payload.data.clone();
+        let payload_2 =
+            crate::utils::decrypt_message(&to_skey, enc_payload, signature, rval).unwrap();
 
-//         assert_eq!(payload.from, payload_2.from);
-//         assert_eq!(payload.to, payload_2.to);
-//         assert_eq!(payload.protocol_id, payload_2.protocol_id);
-//         assert_eq!(payload.data, payload_2.data);
-//         assert_ne!(payload.data, enc_data);
-//     }
+        assert_eq!(payload.from, payload_2.from);
+        assert_eq!(payload.to, payload_2.to);
+        assert_eq!(payload.protocol_id, payload_2.protocol_id);
+        assert_eq!(payload.data, payload_2.data);
+        assert_ne!(payload.data, enc_data);
+    }
 
-//     fn random_vec(len: usize) -> Vec<u8> {
-//         let key = (0..len).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
-//         key
-//     }
-// }
+    fn random_vec(len: usize) -> Vec<u8> {
+        let key = (0..len).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
+        key
+    }
+}

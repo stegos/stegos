@@ -22,6 +22,7 @@
 #[cfg(target_os = "android")]
 use android_logger;
 use failure::{format_err, Error};
+use futures::channel::oneshot::Sender;
 use futures::future::Either;
 use jni::objects::{JClass, JString};
 use jni::sys::jint;
@@ -38,7 +39,7 @@ use log4rs::Handle as LogHandle;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use stegos_api::{ApiToken, server::spawn_server};
+use stegos_api::{server::spawn_server, ApiToken};
 use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
@@ -46,7 +47,6 @@ use stegos_network::{Libp2pNetwork, NetworkConfig};
 use stegos_node::NodeConfig;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
-use futures::channel::oneshot::Sender;
 
 #[cfg(target_os = "android")]
 fn load_logger_configuration() -> () {
@@ -209,11 +209,12 @@ async fn init(
             network.clone().into(),
             version,
             chain_name.clone(),
-        ).await?;
+        )
+        .await?;
 
         let (tx, rx) = futures::channel::oneshot::channel();
         *SENDER.lock().unwrap() = Some(tx);
-        let main_future = futures::future::select(network_service, rx );
+        let main_future = futures::future::select(network_service, rx);
         // Start main event loop
         let result = main_future.await;
 
@@ -238,7 +239,6 @@ async fn init(
     Ok(())
 }
 
-
 fn init_sync(
     chain_name: String,
     data_dir: String,
@@ -246,11 +246,8 @@ fn init_sync(
     api_endpoint: String,
 ) -> Result<(), Error> {
     let mut runtime = Runtime::new()?;
-    runtime.block_on(async move {
-        init(chain_name, data_dir, api_token, api_endpoint).await
-    })?;
+    runtime.block_on(async move { init(chain_name, data_dir, api_token, api_endpoint).await })?;
     Ok(())
-
 }
 #[no_mangle]
 pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(

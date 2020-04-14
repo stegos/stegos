@@ -31,8 +31,10 @@ use stegos_wallet::{
     Account, AccountEvent,
 };
 
+use stegos_blockchain::{
+    Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, Transaction,
+};
 use stegos_crypto::scc::Fr;
-use stegos_blockchain::{Transaction, PaymentOutput, PaymentTransaction, PaymentPayloadData, Output, PublicPaymentOutput};
 
 type AsyncRequest = (oneshot::Sender<VaultResponse>, VaultRequest);
 use crate::error::Error as VaultError;
@@ -293,15 +295,18 @@ impl VaultService {
     }
 
     async fn process_deposit(&mut self, outputs: Vec<Output>) -> Result<(), Error> {
-        const MIN_PAYMENT_FEE:i64 = 1000;
+        const MIN_PAYMENT_FEE: i64 = 1000;
         let mut txins: HashMap<scc::PublicKey, Vec<PublicPaymentOutput>> = HashMap::new();
         for output in outputs {
             match output {
                 Output::PublicPaymentOutput(p) => {
                     trace!("Found public payment output = {:?}", p);
                     if self.users_list.get(&p.recipient).is_some() {
-                        info!("Found output that belong to user: public_key={}, amount={}", p.recipient, p.amount);
-                        txins.entry(p.recipient).or_default().push( p)
+                        info!(
+                            "Found output that belong to user: public_key={}, amount={}",
+                            p.recipient, p.amount
+                        );
+                        txins.entry(p.recipient).or_default().push(p)
                     }
                 }
                 _ => {}
@@ -309,14 +314,9 @@ impl VaultService {
         }
         for (public_key, txins) in txins {
             let secret_key = self.users_list.get(&public_key).unwrap().clone();
-            let data = handle_create_raw_tx(txins,
-                self.handle.public_key,
-                secret_key,
-                MIN_PAYMENT_FEE,
-            )?;
-            let request = NodeRequest::BroadcastTransaction{
-                data
-            };
+            let data =
+                handle_create_raw_tx(txins, self.handle.public_key, secret_key, MIN_PAYMENT_FEE)?;
+            let request = NodeRequest::BroadcastTransaction { data };
             let raw_request = Request {
                 id: 0,
                 kind: RequestKind::NodeRequest(request),
@@ -325,9 +325,7 @@ impl VaultService {
             info!("Broadcasting transaction trough online node.");
             let response = self.client.request(raw_request).await.unwrap();
             match response.kind {
-                ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction {
-                    hash,..
-                 }) => {
+                ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction { hash, .. }) => {
                     info!("Successfully broadcasted transaction. Added to pending list.");
                     // self.tx_hashes.insert(hash, public_key);
                 }
@@ -355,7 +353,9 @@ impl VaultService {
                         .old_epoch_info
                         .unwrap_or(block.epoch_info)
                         .into_stakers_group();
-                    self.process_deposit(block.block.outputs.clone()).await.unwrap();
+                    self.process_deposit(block.block.outputs.clone())
+                        .await
+                        .unwrap();
                     let light_block = block.block.into_light_macro_block(validators);
 
                     self.handle.chain_tx.send(light_block.into()).await.unwrap();
@@ -728,7 +728,6 @@ fn handle_create_raw_tx(
     account_secret_key: scc::SecretKey,
     fee: i64,
 ) -> Result<Transaction, Error> {
-
     let mut amount = 0;
     let mut inputs = Vec::new();
     for input in txins {

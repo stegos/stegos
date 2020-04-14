@@ -563,7 +563,7 @@ impl WalletService {
                                 AccountNotification::Unsealed => {
                                     debug!("Account unsealed: account_id={}", account_id);
                                     handle.unsealed = true;
-                                    self.replication.change_upstream();
+                                    self.replication.change_upstream(false);
                                 }
 
                                 AccountNotification::Sealed => {
@@ -572,7 +572,7 @@ impl WalletService {
                                 }
                                 AccountNotification::UpstreamError(e) => {
                                     debug!("Upstream error: {}", e);
-                                    self.replication.change_upstream();
+                                    self.replication.change_upstream(false);
                                 }
                                 _ => {}
                             }

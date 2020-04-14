@@ -360,7 +360,7 @@ impl NetworkBehaviour for Gatekeeper {
             debug!(target: "stegos_network::gatekeeper", "re-connecting to peer: peer_id={}", id);
             self.events.push_back(NetworkBehaviourAction::DialPeer {
                 peer_id: id.clone(),
-                condition: DialPeerCondition::NotDialing,
+                condition: DialPeerCondition::Disconnected,
             });
         }
         self.desired_peers.contains(id);

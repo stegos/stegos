@@ -23,8 +23,12 @@
 
 use crate::metrics;
 
+use crate::utils::FutureResult;
+use bytes::buf::ext::BufMutExt;
 use bytes::{BufMut, BytesMut};
 use futures::future;
+use futures_codec::{Decoder, Encoder, Framed};
+use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{
     upgrade::Negotiated, InboundUpgrade, Multiaddr, OutboundUpgrade, PeerId, UpgradeInfo,
 };
@@ -32,11 +36,7 @@ use protobuf::Message;
 use std::convert::TryFrom;
 use std::{io, iter};
 use stegos_crypto::pbc;
-use futures_codec::{Decoder, Encoder, Framed};
-use futures_io::{AsyncRead, AsyncWrite};
 use unsigned_varint::codec;
-use crate::utils::FutureResult;
-use bytes::buf::ext::BufMutExt;
 
 use super::proto::ncp_proto;
 
@@ -257,9 +257,9 @@ impl PeerInfo {
 mod tests {
     use super::{GetPeersResponse, NcpCodec, NcpMessage, PeerInfo};
     use futures::{future, Future, Sink, Stream};
+    use futures_codec::Framed;
     use libp2p_core::PeerId;
     use stegos_crypto::pbc;
-    use futures_codec::Framed;
     use tokio::net::{TcpListener, TcpStream};
 
     #[test]

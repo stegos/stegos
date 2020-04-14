@@ -58,13 +58,12 @@ use std::io;
 
 // use std::time::Duration;
 use stegos_crypto::utils::u8v_to_hexstr;
-// use tokio::io::{AsyncRead, AsyncWrite};
 pub mod proto;
 
 use crate::old_protos::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::old_protos::discovery::{Discovery, DiscoveryOutEvent};
 use crate::old_protos::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
-// use crate::old_protos::ncp::{Ncp, NcpOutEvent};
+use crate::old_protos::ncp::{Ncp, NcpOutEvent};
 use crate::old_protos::pubsub::{Floodsub, FloodsubEvent};
 
 use crate::replication::{Replication, ReplicationEvent};
@@ -285,7 +284,7 @@ pub struct Libp2pBehaviour {
 
     replication: Replication,
     gatekeeper: Gatekeeper, // handshake
-    // ncp: Ncp, // Peer sharing, ping (should be merged with discovery)
+    ncp: Ncp,               // Peer sharing, ping (should be merged with discovery)
     discovery: Discovery,
     delivery: Delivery,
 
@@ -346,7 +345,7 @@ impl Libp2pBehaviour {
             my_skey: network_skey.clone(),
             connected_peers: HashSet::new(),
 
-            // ncp: Ncp::new(config, network_pkey.clone()),
+            ncp: Ncp::new(config, network_pkey.clone()),
             floodsub: Floodsub::new(peer_id.clone(), relaying),
             floodsub_consumers: HashMap::new(),
             gatekeeper: Gatekeeper::new(config),
@@ -471,18 +470,17 @@ impl Libp2pBehaviour {
                 self.replication.disconnect(peer_id);
             }
             ControlMessage::ConnectedNodesRequest { tx } => {
-                error!("Unimplemented ConnectedNodesRequest")
-                // let nodes = self.ncp.get_connected_nodes();
-                // if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes }) {
-                //     warn!(target: "stegos_network", "Failed send API response for connected nodes");
-                // }
+                // error!("Unimplemented ConnectedNodesRequest")
+                let nodes = self.ncp.get_connected_nodes();
+                if let Err(_v) = tx.send(NetworkResponse::ConnectedNodes { nodes }) {
+                    warn!(target: "stegos_network", "Failed send API response for connected nodes");
+                }
             }
         }
     }
 
     fn shutdown(&mut self, peer_id: &PeerId) {
-        unimplemented!();
-        // self.ncp.terminate(peer_id.clone());
+        self.ncp.terminate(peer_id.clone());
     }
 }
 
@@ -639,51 +637,45 @@ pub fn build_tcp_ws_secio_yamux(
         .timeout(Duration::from_secs(20))
 }
 
-// impl NetworkBehaviourEventProcess<NcpOutEvent> for Libp2pBehaviour
-// where
-//     TSubstream: AsyncRead + AsyncWrite,
-// {
-//     fn inject_event(&mut self, event: NcpOutEvent) {
-//         match event {
-//             NcpOutEvent::DialAddress { address } => {
-//                 unimplemented!();
-//                 // self.gatekeeper.dial_address(address);
-//             }
-//             NcpOutEvent::DialPeer { peer_id } => {
-//                 unimplemented!();
-//                 // self.gatekeeper.dial_peer(peer_id);
-//             }
-//             NcpOutEvent::Connected { peer_id } => {
-//                 self.connected_peers.insert(peer_id);
-//             }
-//             NcpOutEvent::Disconnected { peer_id } => {
-//                 self.connected_peers.remove(&peer_id);
-//             }
-//             NcpOutEvent::DiscoveredPeer {
-//                 node_id,
-//                 peer_id,
-//                 addresses,
-//             } => {
-//                 debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id);
-//                 unimplemented!();
-//                 // self.discovery.add_node(node_id.clone(), peer_id.clone());
-//                 // if addresses.len() > 0 {
-//                 //     self.discovery.set_peer_id(&node_id, peer_id.clone());
-//                 //     if self.connected_peers.contains(&peer_id) {
-//                 //         for a in addresses.iter() {
-//                 //             self.discovery.add_connected_address(&node_id, a.clone());
-//                 //         }
-//                 //     } else {
-//                 //         for a in addresses.iter() {
-//                 //             self.discovery
-//                 //                 .add_not_connected_address(&node_id, a.clone());
-//                 //         }
-//                 //     }
-//                 // }
-//             }
-//         }
-//     }
-// }
+impl NetworkBehaviourEventProcess<NcpOutEvent> for Libp2pBehaviour {
+    fn inject_event(&mut self, event: NcpOutEvent) {
+        match event {
+            NcpOutEvent::DialAddress { address } => {
+                self.gatekeeper.dial_address(address);
+            }
+            NcpOutEvent::DialPeer { peer_id } => {
+                self.gatekeeper.dial_peer(peer_id);
+            }
+            NcpOutEvent::Connected { peer_id } => {
+                self.connected_peers.insert(peer_id);
+            }
+            NcpOutEvent::Disconnected { peer_id } => {
+                self.connected_peers.remove(&peer_id);
+            }
+            NcpOutEvent::DiscoveredPeer {
+                node_id,
+                peer_id,
+                addresses,
+            } => {
+                debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id);
+                self.discovery.add_node(node_id.clone(), peer_id.clone());
+                if addresses.len() > 0 {
+                    self.discovery.set_peer_id(&node_id, peer_id.clone());
+                    if self.connected_peers.contains(&peer_id) {
+                        for a in addresses.iter() {
+                            self.discovery.add_connected_address(&node_id, a.clone());
+                        }
+                    } else {
+                        for a in addresses.iter() {
+                            self.discovery
+                                .add_not_connected_address(&node_id, a.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
     fn inject_event(&mut self, event: GatekeeperOutEvent) {

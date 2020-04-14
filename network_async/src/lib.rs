@@ -43,6 +43,7 @@ pub use self::libp2p_network::NETWORK_STATUS_TOPIC;
 
 mod config;
 pub use self::config::*;
+pub use self::old_protos::ncp::NodeInfo;
 use std::time::Duration;
 
 pub const NETWORK_IDLE_TIMEOUT: Duration = Duration::from_secs(15);
@@ -95,10 +96,7 @@ pub struct UnicastMessage {
 
 #[derive(Debug, Clone)]
 pub enum NetworkResponse {
-    ConnectedNodes {
-        nodes: (), /* unimplemented()
-                   Vec<NodeInfo>*/
-    },
+    ConnectedNodes { nodes: Vec<NodeInfo> },
 }
 
 impl Clone for Network {

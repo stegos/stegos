@@ -23,22 +23,20 @@
 
 use futures::prelude::*;
 use futures::task::{Context, Poll};
+use libp2p_core::connection::ConnectionId;
 use libp2p_core::{multiaddr::Protocol, ConnectedPoint, Multiaddr, PeerId};
 use libp2p_swarm::{
-    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler, PollParameters,
+    protocols_handler::ProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, NotifyHandler,
+    PollParameters,
 };
 use log::*;
 use lru_time_cache::LruCache;
 use rand::{thread_rng, Rng};
 use serde_derive::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use std::{
-    collections::VecDeque,
-    net::Ipv4Addr,
-};
-use libp2p_core::connection::ConnectionId;
+use std::{collections::VecDeque, net::Ipv4Addr};
 use stegos_crypto::pbc;
-use tokio::time::{self, Instant, Duration, Delay};
+use tokio::time::{self, Delay, Duration, Instant};
 
 use crate::config::NetworkConfig;
 use crate::ncp::handler::NcpHandler;
@@ -132,7 +130,8 @@ impl Ncp {
                 ),
             max_connections: config.max_connections,
             min_connections: config.min_connections,
-            monitor_delay: time::delay_for(Duration::from_secs(config.monitoring_interval)
+            monitor_delay: time::delay_for(
+                Duration::from_secs(config.monitoring_interval)
                     + Duration::from_secs(thread_rng().gen_range(0, 30)),
             ),
             delay_between_monitor_events: Duration::from_secs(config.monitoring_interval),
@@ -170,8 +169,7 @@ impl Ncp {
     }
 }
 
-impl NetworkBehaviour for Ncp
-{
+impl NetworkBehaviour for Ncp {
     type ProtocolsHandler = NcpHandler;
     type OutEvent = NcpOutEvent;
 
@@ -255,7 +253,7 @@ impl NetworkBehaviour for Ncp
         // Check established connections and request more, if needed.
         loop {
             match self.monitor_delay.poll_unpin(cx) {
-               Poll::Ready(_) => {
+                Poll::Ready(_) => {
                     debug!(
                         target: "stegos_network::ncp",
                         "monitoring event: connected_peers={}, known_peers={}",
@@ -473,6 +471,7 @@ pub enum NcpEvent {
 }
 
 /// Events to send to upper level
+#[derive(Clone, Debug)]
 pub enum NcpOutEvent {
     /// Instructs the swarm to dial the given multiaddress without any expectation of a peer id.
     DialAddress {
@@ -498,6 +497,7 @@ pub enum NcpOutEvent {
 }
 
 /// Event passed to protocol handler
+#[derive(Clone, Debug)]
 pub enum NcpSendEvent {
     Send(NcpMessage),
     Terminate,

@@ -218,5 +218,8 @@ mod tests {
         // check deserialization with millis precision.
         let timestamp: Timestamp = 1560850195_123456789u64.into();
         assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123456789Z")]);
+        let timestamp_str = serde_json::to_string(&timestamp).unwrap();
+        let timestamp_new: Timestamp = serde_json::from_str(&timestamp_str).unwrap();
+        assert_eq!(timestamp, timestamp_new)
     }
 }

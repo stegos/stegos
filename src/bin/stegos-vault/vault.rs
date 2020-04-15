@@ -314,8 +314,18 @@ impl VaultService {
         }
         for (public_key, txins) in txins {
             let secret_key = self.users_list.get(&public_key).unwrap().clone();
-            let data =
-                handle_create_raw_tx(txins, self.handle.public_key, secret_key, MIN_PAYMENT_FEE)?;
+            let data = match handle_create_raw_tx(
+                txins,
+                self.handle.public_key,
+                secret_key,
+                MIN_PAYMENT_FEE,
+            ) {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("{}", e);
+                    continue;
+                }
+            };
             let request = NodeRequest::BroadcastTransaction { data };
             let raw_request = Request {
                 id: 0,
@@ -734,8 +744,10 @@ fn handle_create_raw_tx(
         amount += input.amount;
         inputs.push(input.into());
     }
+    if amount < fee {
+        bail!("Failed to create tx, amount is too small {}.", amount)
+    }
     let value = amount - fee;
-
     let mut outputs_gamma = Fr::zero();
     let mut outputs = Vec::new();
     let (output, gamma, _) = PaymentOutput::with_payload(

@@ -63,7 +63,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
 simple_logger = "1.2"
-tokio =  {version="0.2.13", features =["time", "rt-threaded", "macros"]}
+tokio =  {version="0.2.13", features =["time", "io-std", "rt-threaded", "macros"]}
 toml = "0.5"
 humantime = "1.2.0"
 tempdir = "0.3"

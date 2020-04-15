@@ -20,7 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use failure::{format_err, Error};
-use futures::channel::mpsc::{channel, Receiver, Sender};
 use futures::prelude::*;
 use futures::select;
 use lazy_static::*;
@@ -35,7 +34,6 @@ use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 use stegos_api::*;
 use stegos_blockchain::{chain_to_prefix, Timestamp};
@@ -155,9 +153,7 @@ pub struct ConsoleService {
     /// Current Account Id.
     account_id: Arc<Mutex<AccountId>>,
     /// A channel to receive message from stdin thread.
-    stdin: Receiver<String>,
-    /// A thread used for readline.
-    stdin_th: tokio::task::JoinHandle<()>,
+    reader: Box<dyn Stream<Item = Result<String, Error>> + Unpin>,
     /// Display formatter.
     formatter: Formatter,
     /// Parse stdin line as JSON request.
@@ -176,7 +172,6 @@ impl ConsoleService {
         formatter: Formatter,
         raw: bool,
     ) -> Result<(), Error> {
-        let (tx, rx) = channel::<String>(1);
         let mut client = WebSocketClient::new(uri, api_token).await?;
         let account_id = Arc::new(Mutex::new("1".to_string()));
 
@@ -187,24 +182,22 @@ impl ConsoleService {
         } else {
             Self::try_chain_name_resolve(&mut client).await;
         }
-        let (stdin_th, raw) = if atty::is(atty::Stream::Stdin) {
+        let (reader, raw) = if atty::is(atty::Stream::Stdin) {
             println!("{} {}", name, version);
             println!("Type 'help' to get help");
             println!();
             let th_account_id = account_id.clone();
             (
-                tokio::spawn(Self::interactive_thread_f(tx, history_file, th_account_id)),
+                Self::interactive_thread_f(history_file, th_account_id),
                 false,
             )
         } else {
-            (tokio::spawn(Self::noninteractive_thread_f(tx)), raw)
+            (Self::noninteractive_thread_f(), raw)
         };
-        let stdin = rx;
         let service = ConsoleService {
             client,
             account_id,
-            stdin,
-            stdin_th,
+            reader,
             formatter,
             raw,
         };
@@ -222,13 +215,16 @@ impl ConsoleService {
                     drop(notification_orig);
                     self.on_notification(item.unwrap());
                 },
-                input = self.stdin.next() => {
-
+                input = self.reader.next().fuse() => {
                     drop(notification_orig);
                     match input {
-                        Some(line) => {
+                        Some(Ok(line)) => {
                             self.on_input(&line).await?;
                         },
+                        Some(Err(e)) => {
+                            eprintln!("Error during processing stdin = {}", e);
+                            break;
+                        }
                         None => self.on_exit(),
                     }
                 }
@@ -239,81 +235,75 @@ impl ConsoleService {
 
     // TODO: FIx pormt in async/await
     /// Background thread to read stdin with TTY.
-    async fn interactive_thread_f(
-        mut tx: Sender<String>,
+    fn interactive_thread_f(
         history_file: PathBuf,
         account_id: Arc<Mutex<AccountId>>,
-    ) {
-        let mut tx_clone = tx.clone();
-        tokio::task::spawn_blocking(move || {
-            let config = rl::Config::builder()
-                .history_ignore_space(true)
-                .history_ignore_dups(true)
-                .completion_type(rl::CompletionType::List)
-                .auto_add_history(true)
-                .edit_mode(rl::EditMode::Emacs)
-                .build();
+    ) -> Box<dyn Stream<Item = Result<String, Error>> + Unpin> {
+        use futures::stream::try_unfold;
+        use tokio::task;
 
-            let mut rl = rl::Editor::<()>::with_config(config);
-            rl.load_history(&history_file).ok(); // just ignore errors
-            loop {
-                let prompt = format!("account#{}> ", account_id.lock().unwrap().clone());
-                match rl.readline(&prompt) {
-                    Ok(line) => {
-                        if line.is_empty() {
-                            continue;
-                        }
-                        // Skip history for commands starting with whitespace.
-                        if !line.starts_with(" ") {
-                            rl.add_history_entry(line.clone());
-                        }
-                        if tx.try_send(line).is_err() {
-                            assert!(tx.is_closed()); // this channel is never full
-                            break;
+        let config = rl::Config::builder()
+            .history_ignore_space(true)
+            .history_ignore_dups(true)
+            .completion_type(rl::CompletionType::List)
+            .auto_add_history(true)
+            .edit_mode(rl::EditMode::Emacs)
+            .build();
+
+        let mut rl = rl::Editor::<()>::with_config(config);
+        rl.load_history(&history_file).ok(); // just ignore errors
+
+        let stream = try_unfold(rl, move |mut rl| {
+            let account_id_ref = account_id.clone();
+            let history_file_ref = history_file.clone();
+            async {
+                let handle = task::spawn_blocking(move || -> Result<_, Error> {
+                    let prompt = format!("account#{}> ", account_id_ref.lock().unwrap().clone());
+                    loop {
+                        match rl.readline(&prompt) {
+                            Ok(line) => {
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                // Skip history for commands starting with whitespace.
+                                if !line.starts_with(" ") {
+                                    rl.add_history_entry(line.clone());
+                                }
+
+                                if let Err(e) = rl.save_history(&history_file_ref) {
+                                    eprintln!(
+                                        "Failed to save CLI history to {:?}: {}",
+                                        history_file_ref, e
+                                    );
+                                };
+
+                                return Ok(Some((line, rl)));
+                            }
+                            Err(rl::error::ReadlineError::Interrupted) => {
+                                return Err(rl::error::ReadlineError::Interrupted.into())
+                            }
+                            Err(rl::error::ReadlineError::Eof) => {
+                                return Err(rl::error::ReadlineError::Eof.into())
+                            }
+                            Err(err) => {
+                                eprintln!("CLI I/O Error: {}", err);
+                                return Err(err.into());
+                            }
                         }
                     }
-                    Err(rl::error::ReadlineError::Interrupted)
-                    | Err(rl::error::ReadlineError::Eof) => {
-                        break;
-                    }
-                    Err(e) => {
-                        eprintln!("CLI I/O Error: {}", e);
-                        break;
-                    }
-                }
+                });
+                handle.await?
             }
-            if let Err(e) = rl.save_history(&history_file) {
-                eprintln!("Failed to save CLI history to {:?}: {}", history_file, e);
-            };
         })
-        .await;
-
-        tx_clone.close().await; // ignore errors
+        .map_err(From::from);
+        let stream = Box::pin(stream);
+        Box::new(stream)
     }
 
     /// Background thread to read stdin without TTY.
-    async fn noninteractive_thread_f(mut tx: Sender<String>) {
-        loop {
-            match read_line() {
-                Ok(None) => {
-                    break; // EOF
-                }
-                Ok(Some(line)) => {
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if tx.try_send(line).is_err() {
-                        assert!(tx.is_closed()); // this channel is never full
-                        break;
-                    }
-                }
-                Err(e) => {
-                    eprintln!("CLI I/O Error: {}", e);
-                    break;
-                }
-            }
-        }
-        tx.close().await; // ignore errors
+    fn noninteractive_thread_f() -> Box<dyn Stream<Item = Result<String, Error>> + Unpin> {
+        use tokio::io::{stdin, AsyncBufReadExt, BufReader};
+        Box::new(BufReader::new(stdin()).lines().map_err(From::from))
     }
 
     fn help() {

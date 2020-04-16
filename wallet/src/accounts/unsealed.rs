@@ -208,7 +208,7 @@ impl UnsealedAccountService {
         payment_fee: i64,
         comment: String,
         with_certificate: bool,
-    ) -> Result<TransactionInfo, Error> {
+    ) -> Result<TransactionValue, Error> {
         let payment_balance = self.database.balance().payment;
         if amount > payment_balance.available {
             return Err(WalletError::NoEnoughToPay(
@@ -241,11 +241,11 @@ impl UnsealedAccountService {
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
 
         let tx_value = TransactionValue::new_payment(tx.clone(), extended_outputs);
-        let tx_info = self.send_and_log_transaction(tx_value)?;
+        let _tx_info = self.send_and_log_transaction(tx_value.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-        Ok(tx_info)
+        Ok(tx_value)
     }
 
     /// Send money public.
@@ -254,7 +254,7 @@ impl UnsealedAccountService {
         recipient: &scc::PublicKey,
         amount: i64,
         payment_fee: i64,
-    ) -> Result<TransactionInfo, Error> {
+    ) -> Result<TransactionValue, Error> {
         let payment_balance = self.database.balance().payment;
         if amount > payment_balance.available {
             return Err(WalletError::NoEnoughToPay(
@@ -279,11 +279,11 @@ impl UnsealedAccountService {
         // Transaction TXINs can generally have different keying for each one
         let tx = PaymentTransaction::new(&self.account_skey, &inputs, &outputs, &gamma, fee)?;
         let tx_value = TransactionValue::new_payment(tx.clone(), extended_outputs);
-        let tx_info = self.send_and_log_transaction(tx_value)?;
+        let _tx_info = self.send_and_log_transaction(tx_value.clone())?;
         metrics::WALLET_CREATEAD_PAYMENTS
             .with_label_values(&[&String::from(&self.account_pkey)])
             .inc();
-        Ok(tx_info)
+        Ok(tx_value)
     }
 
     fn get_tx_history(&self, starting_from: Timestamp, limit: u64) -> Vec<LogEntryInfo> {
@@ -758,7 +758,7 @@ impl UnsealedAccountService {
         let data = tx.into_buffer()?;
         let tx_hash = Hash::digest(&tx);
         self.network.publish(&TX_TOPIC, data.clone())?;
-        info!(
+        debug!(
             "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
             &tx_hash,
             tx.txins()
@@ -989,14 +989,44 @@ impl UnsealedAccountService {
                                         payment_fee,
                                         comment,
                                         with_certificate,
-                                    } => self
-                                        .payment(&recipient, amount, payment_fee, comment, with_certificate)
-                                        .into(),
+                                        raw,
+                                    } =>  {
+                                        match self.payment(&recipient, amount, payment_fee, comment, with_certificate) {
+                                            Err(e) => AccountResponse::Error {
+                                                error: e.to_string(),
+                                            },
+                                            Ok(tx) => {
+                                                if raw {
+                                                    AccountResponse::RawTransactionCreated {
+                                                        data: tx.tx.into()
+                                                    }
+                                                } else {
+                                                    Ok(tx.to_info(self.database.epoch())).into()
+                                                }
+                                            }
+                                        }
+                                    }
                                     AccountRequest::PublicPayment {
                                         recipient,
                                         amount,
                                         payment_fee,
-                                    } => self.public_payment(&recipient, amount, payment_fee).into(),
+                                        raw,
+                                    } => {
+                                        match self.public_payment(&recipient, amount, payment_fee) {
+                                            Err(e) => AccountResponse::Error {
+                                                error: e.to_string(),
+                                            },
+                                            Ok(tx) => {
+                                                if raw {
+                                                    AccountResponse::RawTransactionCreated {
+                                                        data: tx.tx.into()
+                                                    }
+                                                } else {
+                                                    Ok(tx.to_info(self.database.epoch())).into()
+                                                }
+                                            }
+                                        }
+                                    }
                                     AccountRequest::StakeAll { payment_fee } => {
                                         self.stake_all(payment_fee).into()
                                     }

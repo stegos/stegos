@@ -118,7 +118,7 @@ impl WebSocketClient {
         if let Err(e) = SinkExt::send(&mut self.connection, msg.clone()).await {
             info!("Error on sending message to websocket, reconnecting");
             debug!("Websocket::send_raw error = {:?}", e);
-
+            tokio::time::delay_for(RECONNECT_TIMEOUT).await;
             let endpoit = self.endpoint.clone();
             if let Ok(connection) = FutureRetry::new(
                 || tokio_tungstenite::connect_async(&endpoit),
@@ -152,6 +152,7 @@ impl WebSocketClient {
             Err(e) => {
                 info!("Error on receiving message to websocket, reconnecting");
                 debug!("Websocket::receive error = {:?}", e);
+                tokio::time::delay_for(RECONNECT_TIMEOUT).await;
                 let endpoit = self.endpoint.clone();
                 if let Ok(connection) = FutureRetry::new(
                     || tokio_tungstenite::connect_async(&endpoit),

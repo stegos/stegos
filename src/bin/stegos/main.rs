@@ -95,6 +95,13 @@ async fn main() {
                 .takes_value(false),
         )
         .arg(
+            Arg::with_name("keep-console")
+                .short("N")
+                .long("keep-console")
+                .help("Use stegos CLI to subscribe on notifications.")
+                .takes_value(false),
+        )
+        .arg(
             Arg::with_name("data-dir")
                 .short("d")
                 .long("data-dir")
@@ -145,6 +152,7 @@ async fn main() {
         }
     }
     let raw = args.is_present("raw");
+    let subscribed = args.is_present("keep-console");
     let history_file = data_dir.join("stegos.history");
     let api_token_file = if let Some(api_token_file) = args.value_of("api-token-file") {
         PathBuf::from(api_token_file)
@@ -169,6 +177,7 @@ async fn main() {
         history_file,
         formatter,
         raw,
+        subscribed,
     )
     .await
     .unwrap();

@@ -20,6 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use failure::{format_err, Error};
+use futures::future::Fuse;
 use futures::prelude::*;
 use futures::select;
 use lazy_static::*;
@@ -158,6 +159,7 @@ pub struct ConsoleService {
     formatter: Formatter,
     /// Parse stdin line as JSON request.
     raw: bool,
+    subscribed: bool,
 }
 
 impl ConsoleService {
@@ -171,6 +173,7 @@ impl ConsoleService {
         history_file: PathBuf,
         formatter: Formatter,
         raw: bool,
+        subscribed: bool,
     ) -> Result<(), Error> {
         let mut client = WebSocketClient::new(uri, api_token).await?;
         let account_id = Arc::new(Mutex::new("1".to_string()));
@@ -200,22 +203,28 @@ impl ConsoleService {
             reader,
             formatter,
             raw,
+            subscribed,
         };
         service.run().await
     }
 
     async fn run(mut self) -> Result<(), Error> {
+        let mut first_time = true;
         loop {
             let mut notification_orig = self.client.notification();
 
             let notification = unsafe { Pin::new_unchecked(&mut notification_orig) };
             let mut notification = notification.fuse();
+            let mut reader = self.reader.next().fuse();
+            if !first_time {
+                reader = Fuse::terminated();
+            }
             select! {
                 item = notification => {
                     drop(notification_orig);
                     self.on_notification(item.unwrap());
                 },
-                input = self.reader.next().fuse() => {
+                input = reader => {
                     drop(notification_orig);
                     match input {
                         Some(Ok(line)) => {
@@ -225,7 +234,15 @@ impl ConsoleService {
                             eprintln!("Error during processing stdin = {}", e);
                             break;
                         }
-                        None => self.on_exit(),
+                        None => {
+                            if !self.subscribed {
+                                self.on_exit()
+                            }
+                            else {
+                                println!("Keeping console for notifications.");
+                                first_time = false;
+                            }
+                        }
                     }
                 }
             }
@@ -702,6 +719,7 @@ impl ConsoleService {
                     recipient,
                     amount,
                     payment_fee,
+                    raw: false,
                 }
             } else {
                 AccountRequest::Payment {
@@ -710,6 +728,7 @@ impl ConsoleService {
                     payment_fee,
                     comment,
                     with_certificate,
+                    raw: false,
                 }
             };
             self.send_account_request(request).await?
@@ -796,6 +815,7 @@ impl ConsoleService {
                 payment_fee,
                 comment,
                 with_certificate: false,
+                raw: false,
             };
             self.send_account_request(request).await?
         } else if msg.starts_with("stake all") {

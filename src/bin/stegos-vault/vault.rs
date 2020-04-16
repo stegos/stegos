@@ -38,10 +38,13 @@ use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, Transaction,
 };
 use stegos_crypto::scc::Fr;
+use tokio::time::{Duration, Instant};
 
 const PENDING_OUTPUTS: &'static str = "pending_outputs";
 
 const COLON_FAMILIES: &[&'static str] = &[PENDING_OUTPUTS];
+
+const RESUBSCRIBE_INTERVAL: Duration = Duration::from_secs(10);
 
 // TODO: Add pending list of created outputs, in order to confirm processing.
 // TODO:
@@ -99,6 +102,10 @@ type Subscribtion = Box<dyn Stream<Item = RawResponse> + Unpin + Send>;
 
 #[async_trait]
 impl ApiHandler for Vault {
+    fn register_notification(&self) -> Vec<String> {
+        vec!["subscribe".to_string()]
+    }
+
     async fn process_request(&self, req: RawRequest) -> Result<RawResponse, Error> {
         let request: VaultRequest = req.try_into()?;
         let response = self.request(request).await?;
@@ -111,6 +118,10 @@ impl ApiHandler for Vault {
         notifications: &mut SelectAll<Subscribtion>,
         is_notification: bool,
     ) -> Result<RawResponse, Error> {
+        debug!(
+            "calling try_process in vault api_handler, notification={}",
+            is_notification
+        );
         let request: VaultRequest = req.try_into()?;
         let mut response = self.request(request).await?;
         if is_notification {
@@ -150,9 +161,9 @@ struct VaultService {
     account_subscribtion: mpsc::UnboundedReceiver<AccountNotification>,
 
     created_accounts: HashMap<AccountId, scc::PublicKey>,
-    users_list: HashMap<scc::PublicKey, scc::SecretKey>,
+    users_list: HashMap<scc::PublicKey, (AccountId, scc::SecretKey)>,
 
-    sender: Option<(u64, mpsc::Sender<VaultNotification>)>,
+    sender: Option<(u64, mpsc::UnboundedSender<VaultNotification>)>,
 
     pending_updates: HashMap<Hash, UserBalanceUpdated>, // in database
     notifications_block: BTreeMap<u64, NotificationBlock>, // in database
@@ -271,6 +282,8 @@ impl VaultService {
 
     async fn run(mut self) {
         Self::subscribe_to_online_node(&mut self.client, self.handle.status.epoch).await;
+        let mut interval =
+            tokio::time::interval_at(Instant::now() + RESUBSCRIBE_INTERVAL, RESUBSCRIBE_INTERVAL);
         loop {
             let notifications = self.client.notification();
             select! {
@@ -285,10 +298,15 @@ impl VaultService {
                 },
                 node_notification = notifications.fuse() => {
                     self.handle_client(node_notification.expect("Online node should never gone.")).await;
-                }
+                },
                 account_notification = self.account_subscribtion.next() => {
                     let account_notification = account_notification.expect("Inner account node should never gone.");
                     self.handle_account_notification(account_notification).await;
+                    interval = tokio::time::interval_at(Instant::now() + RESUBSCRIBE_INTERVAL, RESUBSCRIBE_INTERVAL);
+                },
+                tick = interval.tick().fuse() => {
+                    debug!("Timeout while receiving for notification from node, resubscribing.");
+                    Self::subscribe_to_online_node(&mut self.client, self.handle.status.epoch).await;
                 }
             }
 
@@ -306,8 +324,8 @@ impl VaultService {
             }
             AccountNotification::StatusChanged(status_info) => {
                 self.handle.status = status_info.clone();
-                debug!(
-                    "Main account changed:  epoch={}, offset={}",
+                info!(
+                    "Main account changed: epoch={}, offset={}",
                     status_info.epoch, status_info.offset
                 );
             }
@@ -344,8 +362,21 @@ impl VaultService {
         }
     }
 
-    async fn process_deposit(&mut self, outputs: Vec<Output>) -> Result<(), Error> {
+    async fn process_deposit(&mut self, epoch: u64, outputs: Vec<Output>) -> Result<(), Error> {
         const MIN_PAYMENT_FEE: i64 = 1000;
+
+        for output in &outputs {
+            let input = Hash::digest(output);
+            if let Some(balance) = self.pending_update_take_by_output(&input) {
+                info!(
+                    "Confirmed balance update: user = {}, amount = {}",
+                    balance.id, balance.amount
+                );
+                let notification = VaultNotificationEntry::UserDepositConfirmed(balance);
+                self.push_user_updates(epoch, notification);
+            }
+        }
+
         let mut txins: HashMap<scc::PublicKey, Vec<PublicPaymentOutput>> = HashMap::new();
         for output in outputs {
             match output {
@@ -363,8 +394,8 @@ impl VaultService {
             }
         }
         for (public_key, txins) in txins {
-            let secret_key = self.users_list.get(&public_key).unwrap().clone();
-            let data = match handle_create_raw_tx(
+            let (id, secret_key) = self.users_list.get(&public_key).unwrap().clone();
+            let (amount, data) = match handle_create_raw_tx(
                 &self.database,
                 txins,
                 self.handle.public_key,
@@ -378,18 +409,33 @@ impl VaultService {
                 }
             };
 
-            let request = NodeRequest::BroadcastTransaction { data };
+            let request = NodeRequest::BroadcastTransaction { data: data.clone() };
             let raw_request = Request {
                 id: 0,
                 kind: RequestKind::NodeRequest(request),
             };
 
-            info!("Broadcasting transaction trough online node.");
+            debug!("Broadcasting transaction trough online node.");
             let response = self.client.request(raw_request).await.unwrap();
             match response.kind {
                 ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction { hash, .. }) => {
-                    info!("Successfully broadcasted transaction. Added to pending list.");
-                    // self.tx_hashes.insert(hash, public_key);
+                    debug!("Successfully broadcasted transaction. Added to pending list.");
+                    let update = UserBalanceUpdated {
+                        public_key,
+                        id,
+                        amount,
+                    };
+                    for output in data.txouts() {
+                        let output_hash = Hash::digest(&output);
+                        debug!(
+                            "Received balance update: hash = {}, update= {:?}",
+                            output_hash, update
+                        );
+                        self.push_pending_update(output_hash, update.clone());
+                        let notification =
+                            VaultNotificationEntry::UserDepositReceived(update.clone());
+                        self.push_user_updates(epoch, notification);
+                    }
                 }
                 _ => {
                     trace!(
@@ -412,7 +458,10 @@ impl VaultService {
                         block.block.header.epoch
                     );
                     let validators = block.epoch_info.into_stakers_group();
-                    if let Err(e) = self.process_deposit(block.block.outputs.clone()).await {
+                    if let Err(e) = self
+                        .process_deposit(block.block.header.epoch, block.block.outputs.clone())
+                        .await
+                    {
                         error!("Failed to process deposit = {}", e)
                     }
                     let light_block = block.block.into_light_macro_block(validators);
@@ -445,6 +494,7 @@ impl VaultService {
                 recipient,
                 amount,
                 payment_fee,
+                raw: true,
             }
         } else {
             AccountRequest::Payment {
@@ -453,6 +503,7 @@ impl VaultService {
                 payment_fee,
                 comment: "Withdraw".to_string(),
                 with_certificate: true,
+                raw: true,
             }
         };
         let response = self.handle.account.request(account_request);
@@ -462,17 +513,41 @@ impl VaultService {
             return Err(VaultError::WithdrawRequestCanceled);
         };
         match response {
-            AccountResponse::TransactionCreated(tx) => {
-                let outputs_hashes: Vec<_> = tx.outputs.iter().map(|o| o.output_hash()).collect();
-                Ok(VaultResponse::WithdrawCreated { outputs_hashes })
+            AccountResponse::RawTransactionCreated { data: tx } => {
+                let outputs_hashes: Vec<_> = tx.txouts().iter().map(Hash::digest).collect();
+
+                let request = NodeRequest::BroadcastTransaction { data: tx };
+                let raw_request = Request {
+                    id: 0,
+                    kind: RequestKind::NodeRequest(request),
+                };
+
+                debug!("Broadcasting transaction trough online node.");
+                let response = self.client.request(raw_request).await.unwrap();
+                match response.kind {
+                    ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction {
+                        hash, ..
+                    }) => {
+                        debug!(
+                            "Successfully broadcasted withdraw transaction, tx_hash = {}",
+                            hash
+                        );
+                        Ok(VaultResponse::WithdrawCreated { outputs_hashes })
+                    }
+                    _ => Err(format_err!(
+                        "Received wrong response for broadcast request = {:?}",
+                        response
+                    )
+                    .into()),
+                }
             }
             response => return Err(VaultError::UnexpectedResponse(format!("{:?}", response))),
         }
     }
 
     // Get pending update by output_hash
-    fn pending_update_by_output(&self, output_hash: &Hash) -> Option<UserBalanceUpdated> {
-        self.pending_updates.get(output_hash).cloned()
+    fn pending_update_take_by_output(&mut self, output_hash: &Hash) -> Option<UserBalanceUpdated> {
+        self.pending_updates.remove(output_hash)
     }
 
     // Get pending update by output_hash
@@ -484,14 +559,19 @@ impl VaultService {
         let current_epoch = self.handle.status.epoch;
         if let Some((sender_epoch, sender)) = &mut self.sender {
             let last_epoch = *sender_epoch + 1;
-
+            if last_epoch >= current_epoch {
+                return;
+            }
             for (epoch, block) in self.notifications_block.range(last_epoch..=current_epoch) {
                 *sender_epoch = *epoch;
                 debug!(
                     "Sending notification: epoch={}, notification={:?}",
                     epoch, block
                 );
-                let notification = VaultNotification::BlockProcessed(block.clone());
+                let notification = VaultNotification::BlockProcessed {
+                    epoch: *epoch,
+                    notification: block.clone(),
+                };
                 if let Err(e) = sender.send(notification).await {
                     error!(
                         "Cannot send notification to client, removing sender: error = {}",
@@ -530,7 +610,7 @@ impl VaultService {
     }
 
     async fn subscribe(&mut self, epoch: u64) -> Result<VaultResponse, VaultError> {
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = mpsc::unbounded();
         if let Some(sender) = &mut self.sender {
             debug!("Found old notification, disconnecting");
             let error = VaultError::OnlySingleNotificationAllowed;
@@ -734,9 +814,12 @@ impl VaultService {
 
         assert!(self
             .created_accounts
-            .insert(account_id, account_pkey)
+            .insert(account_id.clone(), account_pkey)
             .is_none());
-        assert!(self.users_list.insert(account_pkey, account_skey).is_none());
+        assert!(self
+            .users_list
+            .insert(account_pkey, (account_id, account_skey))
+            .is_none());
         Ok(())
     }
 
@@ -885,7 +968,7 @@ fn handle_create_raw_tx(
     recipient: scc::PublicKey,
     account_secret_key: scc::SecretKey,
     fee: i64,
-) -> Result<Transaction, Error> {
+) -> Result<(i64, Transaction), Error> {
     let mut amount = 0;
     let mut inputs = Vec::new();
     for input in txins {
@@ -909,5 +992,5 @@ fn handle_create_raw_tx(
     outputs.push(output.into());
 
     let tx = PaymentTransaction::new(&account_secret_key, &inputs, &outputs, &outputs_gamma, fee)?;
-    Ok(tx.into())
+    Ok((amount, tx.into()))
 }

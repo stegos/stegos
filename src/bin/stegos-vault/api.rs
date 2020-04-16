@@ -91,7 +91,7 @@ pub enum VaultResponse {
     },
     Subscribed {
         #[serde(skip)]
-        rx: Option<mpsc::Receiver<VaultNotification>>, // Option is needed for serde.
+        rx: Option<mpsc::UnboundedReceiver<VaultNotification>>, // Option is needed for serde.
     },
     Error {
         code: u64,
@@ -135,14 +135,14 @@ pub enum UtxoInfo {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserBalanceUpdated {
-    public_key: scc::PublicKey,
-    id: String,
-    amount: i64,
+    pub public_key: scc::PublicKey,
+    pub id: String,
+    pub amount: i64,
     // utxos: Vec<UtxoInfo>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[serde(tag = "update_type")]
 #[serde(rename_all = "snake_case")]
 pub enum VaultNotificationEntry {
     UserDepositReceived(UserBalanceUpdated),
@@ -160,6 +160,13 @@ pub struct NotificationBlock {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum VaultNotification {
-    BlockProcessed(NotificationBlock),
-    Disconnected { error: String, code: u64 },
+    BlockProcessed {
+        epoch: u64,
+        #[serde(flatten)]
+        notification: NotificationBlock,
+    },
+    Disconnected {
+        error: String,
+        code: u64,
+    },
 }

@@ -42,7 +42,7 @@ use tungstenite::protocol::Message;
 
 use tokio::task::JoinHandle;
 /// The number of values to fit in the output buffer.
-const OUTPUT_BUFFER_SIZE: usize = 10;
+const OUTPUT_BUFFER_SIZE: usize = 100;
 /// Topic used for debugging.
 const CONSOLE_TOPIC: &'static str = "console";
 

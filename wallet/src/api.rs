@@ -28,10 +28,13 @@ use stegos_blockchain::api::StatusInfo;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+use stegos_blockchain::Transaction;
 pub use stegos_blockchain::TransactionStatus;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
+use stegos_crypto::utils::deserialize_protobuf_from_hex;
+use stegos_crypto::utils::serialize_protobuf_to_hex;
 pub use stegos_replication::api::*;
 
 pub type AccountId = String;
@@ -190,11 +193,15 @@ pub enum AccountRequest {
         payment_fee: i64,
         comment: String,
         with_certificate: bool,
+        #[serde(default)]
+        raw: bool,
     },
     PublicPayment {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
+        #[serde(default)]
+        raw: bool,
     },
     SecurePayment {
         recipient: scc::PublicKey,
@@ -292,6 +299,11 @@ pub enum AccountResponse {
     #[serde(skip)]
     Disabled,
     TransactionCreated(TransactionInfo),
+    RawTransactionCreated {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
     BalanceInfo(AccountBalance),
     AccountInfo(AccountInfo),
     UnspentInfo {

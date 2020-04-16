@@ -674,11 +674,12 @@ impl UnsealedAccountService {
             &self.account_skey,
         );
 
-        self.notify_status();
         self.on_tx_statuses_changed(&transaction_statuses);
         if transaction_statuses.len() > 0 {
             self.notify_balance_changed(self.database.balance());
         }
+
+        self.notify_status();
         Ok(())
     }
 
@@ -743,11 +744,12 @@ impl UnsealedAccountService {
         // if let Some((ref mut snowball, _)) = &mut self.snowball {
         //     snowball.change_facilitator(self.database.facilitator_pkey().clone());
         // }
-        self.notify_status();
         self.on_tx_statuses_changed(&transaction_statuses);
         if transaction_statuses.len() > 0 {
             self.notify_balance_changed(self.database.balance());
         }
+
+        self.notify_status();
         Ok(())
     }
 
@@ -1078,7 +1080,10 @@ impl UnsealedAccountService {
                                         payment_fee,
                                         comment,
                                     } => {
-                                        unimplemented!();
+                                        error!("Snowball deprecated.");
+                                        AccountResponse::Error {
+                                                error: format!("Snowball was deprecated"),
+                                        }
                                         // match self.secure_payment(&recipient, amount, payment_fee, comment)
                                         // {
                                         //     Ok(snowball) => {

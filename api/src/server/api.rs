@@ -137,7 +137,7 @@ impl RawResponse {
                     response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
                 }
             }
-            ResponseKind::NetworkNotification(_) | ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) => {
+            ResponseKind::NetworkNotification(_) | ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) | ResponseKind::Inner(_)=> {
                 bail!("Got notification message, expected response.")
             }
             ResponseKind::WalletResponse(_) | ResponseKind::WalletNotification(_) => {

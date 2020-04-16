@@ -58,6 +58,17 @@ pub enum RequestKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum InnerResponses {
+    /// This notifications are imediately created after reconnected to server,
+    /// and need to inform client that it should resubscribe.
+    Reconnect,
+    InternalError {
+        error: String,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct Request {
     #[serde(flatten)]
@@ -78,6 +89,7 @@ pub enum ResponseKind {
     StatusNotification(StatusNotification),
     ChainNotification(ChainNotification),
     Raw(serde_json::Value),
+    Inner(InnerResponses),
 }
 
 #[derive(Debug, Serialize, Deserialize)]

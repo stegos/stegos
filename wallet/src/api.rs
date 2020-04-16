@@ -122,6 +122,8 @@ pub struct AccountBalance {
     pub total: Balance,
     /// Is account balance finalized (was updated before last macroblock).
     pub is_final: bool,
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// Recovery information.

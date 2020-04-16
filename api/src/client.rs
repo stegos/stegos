@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 use crate::crypto::ApiToken;
+use crate::InnerResponses;
 use crate::ResponseKind;
 use crate::{decode, encode, Request, Response};
 use failure::bail;
@@ -72,33 +73,45 @@ impl WebSocketClient {
         trace!("[{}] <= {:?}", self.endpoint, msg);
         let msg = encode(&self.api_token, &msg);
         let msg = Message::Text(msg);
-        self.send_raw(msg).await?;
         loop {
-            let response = self.receive().await?;
-            match response.kind {
-                ResponseKind::NetworkResponse(_)
-                | ResponseKind::WalletResponse(_)
-                | ResponseKind::NodeResponse(_)
-                | ResponseKind::Raw(_) => {
-                    return Ok(response);
-                }
-                _ => {
-                    trace!("Received notification in response of request, pushing to pending list, notification = {:?}", response);
-                    self.pending_notifications.push_back(response);
+            self.send_raw(msg.clone()).await?;
+            'inner: loop {
+                let response = self.receive().await?;
+                let response = if let Some(response) = response {
+                    response
+                } else {
+                    warn!("Disconected during receive, trying to request again.");
+                    break 'inner;
+                };
+
+                match response.kind {
+                    ResponseKind::NetworkResponse(_)
+                    | ResponseKind::WalletResponse(_)
+                    | ResponseKind::NodeResponse(_)
+                    | ResponseKind::Raw(_) => {
+                        return Ok(response);
+                    }
+                    _ => {
+                        trace!("Received notification in response of request, pushing to pending list, notification = {:?}", response);
+                        self.pending_notifications.push_back(response);
+                    }
                 }
             }
         }
     }
 
-    pub fn notification<'a>(
-        &'a mut self,
-    ) -> Pin<Box<dyn Future<Output = Result<Response, Error>> + Send + 'a>> {
-        if let Some(item) = self.pending_notifications.pop_front() {
-            return Box::pin(futures::future::ok(item));
-        }
+    pub async fn notification(&mut self) -> Result<Response, Error> {
+        loop {
+            if let Some(item) = self.pending_notifications.pop_front() {
+                return Ok(item);
+            }
 
-        assert!(self.pending_notifications.is_empty());
-        Box::pin(self.receive())
+            assert!(self.pending_notifications.is_empty());
+
+            if let Some(receive) = self.receive().await? {
+                return Ok(receive);
+            }
+        }
     }
 
     async fn send_raw(&mut self, msg: Message) -> Result<(), Error> {
@@ -115,7 +128,9 @@ impl WebSocketClient {
             {
                 self.connection = (connection.0).0;
                 info!("Reconnected to websocket, trying to resend last request.");
-                SinkExt::send(&mut self.connection, msg).await?
+                let msg = SinkExt::send(&mut self.connection, msg).await?;
+                self.push_reconnect_notification();
+                msg
             } else {
                 return Err(e.into());
             }
@@ -131,7 +146,8 @@ impl WebSocketClient {
         Ok(result)
     }
 
-    async fn receive(&mut self) -> Result<Response, Error> {
+    /// Returns None - on reconnect
+    async fn receive(&mut self) -> Result<Option<Response>, Error> {
         let result = match self.receive_raw().await {
             Err(e) => {
                 info!("Error on receiving message to websocket, reconnecting");
@@ -145,7 +161,8 @@ impl WebSocketClient {
                 {
                     self.connection = (connection.0).0;
                     info!("Reconnected to websocket, trying to receive again.");
-                    self.receive_raw().await?
+                    self.push_reconnect_notification();
+                    return Ok(None);
                 } else {
                     return Err(e.into());
                 }
@@ -154,5 +171,11 @@ impl WebSocketClient {
         };
         let result = result.into_text()?;
         decode(&self.api_token, &result)
+    }
+
+    fn push_reconnect_notification(&mut self) {
+        let kind = ResponseKind::Inner(InnerResponses::Reconnect);
+        let response = Response { id: 0, kind };
+        self.pending_notifications.push_back(response);
     }
 }

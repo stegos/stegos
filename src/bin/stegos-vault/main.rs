@@ -232,7 +232,8 @@ async fn run() -> Result<(), Error> {
     }
     cfg.node_token_path = remote_api_token_file;
 
-    let (genesis, _chain_cfg) = initialize_chain(&cfg.general.chain)?;
+    let (genesis, chain_cfg) = initialize_chain(&cfg.general.chain)?;
+    cfg.chain_cfg = chain_cfg;
     // Start WebSocket API server.
     if cfg.general.api_endpoint == "" {
         warn!("No endpoint provided using default 127.0.0.1:4145");

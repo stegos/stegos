@@ -95,7 +95,7 @@ impl From<std::str::Utf8Error> for OutputError {
 }
 
 /// Payment UTXO.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PaymentOutput {
     /// Cloaked public key of recipient.
     pub recipient: PublicKey,
@@ -109,7 +109,22 @@ pub struct PaymentOutput {
     pub ag: Pt,
 
     /// Encrypted payload.
+    #[serde(deserialize_with = "stegos_crypto::utils::vec_deserialize_from_hex")]
+    #[serde(serialize_with = "stegos_crypto::utils::vec_serialize_to_hex")]
     pub payload: Vec<u8>,
+}
+
+use std::fmt;
+
+impl fmt::Debug for PaymentOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PaymentOutput")
+            .field("recipient", &self.recipient)
+            .field("proof", &self.proof)
+            .field("ag", &self.ag)
+            .field("payload", &hex::encode(&self.payload))
+            .finish()
+    }
 }
 
 /// PublicPayment UTXO.

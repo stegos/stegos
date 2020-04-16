@@ -27,6 +27,8 @@ pub enum VaultRequest {
         account_id: String,
     },
 
+    BalanceInfo {},
+
     GetUser {
         account_id: String,
     },
@@ -41,7 +43,9 @@ pub enum VaultRequest {
         #[serde(default)]
         burn: bool,
     },
-    Subscribe {},
+    Subscribe {
+        epoch: u64,
+    },
     Withdraw {
         public_key: scc::PublicKey,
         amount: i64,
@@ -67,6 +71,11 @@ pub enum VaultResponse {
     GetUser {
         account_id: String,
         public_key: scc::PublicKey,
+    },
+    BalanceInfo {
+        main: scc::PublicKey,
+        amount: i64,
+        confirmed_epoch: u64,
     },
     GetUsers {
         main: scc::PublicKey,
@@ -124,19 +133,33 @@ pub enum UtxoInfo {
     Received { output_hash: Hash, amount: i64 },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserBalanceUpdated {
+    public_key: scc::PublicKey,
+    id: String,
+    amount: i64,
+    // utxos: Vec<UtxoInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+pub enum VaultNotificationEntry {
+    UserDepositReceived(UserBalanceUpdated),
+    UserDepositConfirmed(UserBalanceUpdated),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct NotificationBlock {
+    pub list: Vec<VaultNotificationEntry>,
+    // if balance updated
+    pub amount: Option<i64>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum VaultNotification {
-    UserBalanceUpdated {
-        public_key: scc::PublicKey,
-        id: String,
-        amount: i64,
-        // utxos: Vec<UtxoInfo>,
-    },
-
-    ColdBalanceUpdated {
-        amount: i64,
-        // spent: Vec<UtxoInfo>,
-    },
+    BlockProcessed(NotificationBlock),
+    Disconnected { error: String, code: u64 },
 }

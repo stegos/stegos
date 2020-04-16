@@ -15,6 +15,8 @@ pub enum Error {
     AccountNotFound(AccountId),
     #[fail(display = "Withdraw request was canceled by account")]
     WithdrawRequestCanceled,
+    #[fail(display = "Only single notification to vault allowed")]
+    OnlySingleNotificationAllowed,
 }
 
 impl Error {
@@ -26,6 +28,7 @@ impl Error {
             Error::AccountNotFound(..) => 4,
             Error::WithdrawRequestCanceled => 5,
             Error::UnexpectedResponse(..) => 6,
+            Error::OnlySingleNotificationAllowed => 7,
         }
     }
 }

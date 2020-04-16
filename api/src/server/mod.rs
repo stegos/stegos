@@ -23,7 +23,7 @@
 
 use crate::crypto::ApiToken;
 use crate::network_api::NetworkApi;
-use crate::{decode, encode, Request, Response};
+use crate::{decode, encode, InnerResponses, Request, Response, ResponseKind};
 use failure::{bail, Error};
 use futures::prelude::*;
 use futures::select;
@@ -171,7 +171,12 @@ impl WebSocketHandler {
                     let req = RawRequest(req);
                     trace!("Request = {:?}", req);
                     let block = async {
-                        let kind = self.register.try_process("nothing", req).await?.0;
+                        let kind = match self.register.try_process("nothing", req).await {
+                            Ok(response) => response.0,
+                            Err(e) => {ResponseKind::Inner(InnerResponses::InternalError {
+                                error: e.to_string()
+                            })}
+                        };
                         let response = Response { kind, id };
                         Self::send(&mut self.connection, &self.api_token, response).await
                     };

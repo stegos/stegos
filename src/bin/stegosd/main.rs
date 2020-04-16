@@ -655,7 +655,10 @@ async fn main() {
 mod tests {
     use super::*;
     use simple_logger;
+    use std::ffi::OsStr;
+    use stegos_blockchain::ChainConfig;
     use tempdir::TempDir;
+    // use pretty_assertions::assert_eq;
 
     #[test]
     #[ignore]
@@ -720,5 +723,35 @@ mod tests {
         warn!("This is warn output");
         error!("This is error output");
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    #[ignore]
+    fn serde() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let timestamp = Timestamp::now();
+        let (genesis, chain_cfg) = initialize_chain(&"testnet").unwrap();
+
+        stegos_crypto::set_network_prefix(chain_to_prefix(&"testnet")).ok();
+
+        let blockchain = Blockchain::new(
+            chain_cfg,
+            OsStr::new("/home/vladimir/stegos/data/chain").as_ref(),
+            ConsistencyCheck::None,
+            genesis,
+            timestamp,
+        )
+        .unwrap();
+
+        let block = blockchain.macro_block(26).unwrap().into_owned();
+
+        let block_serialized = serde_json::to_string(&block).unwrap();
+
+        let block_deserialized: stegos_blockchain::MacroBlock =
+            serde_json::from_str(&block_serialized).unwrap();
+        println!("left: {:#?}", block);
+        println!("right: {:#?}", block_deserialized);
+        panic!();
     }
 }

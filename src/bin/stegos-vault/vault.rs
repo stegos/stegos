@@ -7,6 +7,8 @@ use futures::channel::{mpsc, oneshot};
 use futures::prelude::*;
 
 use log::*;
+use rocksdb::{self, Options, DB};
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -15,7 +17,7 @@ use futures::select;
 use futures::stream::SelectAll;
 use stegos_api::load_api_token;
 use stegos_api::WebSocketClient;
-use stegos_api::{Request, RequestKind, Response, ResponseKind};
+use stegos_api::{InnerResponses, Request, RequestKind, Response, ResponseKind};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::{api::StatusInfo, LightBlock};
 use stegos_crypto::hash::Hash;
@@ -27,6 +29,7 @@ use stegos_node::api::ChainNotification;
 use stegos_node::{NodeRequest, NodeResponse};
 use stegos_wallet::{
     accounts::UnsealedAccountService,
+    api::{AccountBalance, Balance},
     api::{AccountNotification, AccountRequest, AccountResponse},
     Account, AccountEvent,
 };
@@ -35,6 +38,13 @@ use stegos_blockchain::{
     Output, PaymentOutput, PaymentPayloadData, PaymentTransaction, PublicPaymentOutput, Transaction,
 };
 use stegos_crypto::scc::Fr;
+
+const PENDING_OUTPUTS: &'static str = "pending_outputs";
+
+const COLON_FAMILIES: &[&'static str] = &[PENDING_OUTPUTS];
+
+// TODO: Add pending list of created outputs, in order to confirm processing.
+// TODO:
 
 type AsyncRequest = (oneshot::Sender<VaultResponse>, VaultRequest);
 use crate::error::Error as VaultError;
@@ -142,7 +152,13 @@ struct VaultService {
     created_accounts: HashMap<AccountId, scc::PublicKey>,
     users_list: HashMap<scc::PublicKey, scc::SecretKey>,
 
-    sender: Option<mpsc::Sender<VaultNotification>>,
+    sender: Option<(u64, mpsc::Sender<VaultNotification>)>,
+
+    pending_updates: HashMap<Hash, UserBalanceUpdated>, // in database
+    notifications_block: BTreeMap<u64, NotificationBlock>, // in database
+
+    // RocksDB database object.
+    database: rocksdb::DB,
 }
 
 impl VaultService {
@@ -155,7 +171,16 @@ impl VaultService {
         let created_accounts = HashMap::new();
         let uri = format!("ws://{}", cfg.node_address);
         let api_token = load_api_token(&cfg.node_token_path).map_err(Error::from)?;
-        let client = WebSocketClient::new(uri, api_token).await?;
+        let client = match WebSocketClient::new(uri, api_token).await {
+            Ok(client) => client,
+            Err(e) => {
+                error!(
+                    "Cannot connect to online node, check if {} address is available.",
+                    cfg.node_address
+                );
+                return Err(e);
+            }
+        };
 
         let (resp, password, handle, account_subscribtion, created) = loop {
             match server
@@ -190,7 +215,16 @@ impl VaultService {
             }
         };
         resp.send(VaultResponse::Unsealed { created }).ok();
-        trace!("Opened main account");
+        trace!("Main account oppened");
+
+        let path = cfg.general.data_dir.join("vault_db");
+        debug!("Database path = {}", path.to_string_lossy());
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        opts.create_missing_column_families(true);
+        let database = DB::open_cf(&opts, path, COLON_FAMILIES).expect("couldn't open database");
+        debug!("Loading database");
+
         let mut vault_service = VaultService {
             server,
             cfg,
@@ -202,13 +236,15 @@ impl VaultService {
             created_accounts,
             account_subscribtion,
             sender: None,
+            database,
+            pending_updates: HashMap::new(),
+            notifications_block: BTreeMap::new(),
         };
         vault_service.load_users()?;
         Ok(vault_service)
     }
 
-    async fn run(mut self) {
-        let epoch = self.handle.status.epoch;
+    async fn subscribe_to_online_node(client: &mut WebSocketClient, epoch: u64) {
         info!(
             "Requesting history from online node since epoch = {}",
             epoch
@@ -219,18 +255,22 @@ impl VaultService {
             kind: request_kind,
             id: 0,
         };
-        let response = self.client.request(request).await.unwrap();
+        let response = client.request(request).await.unwrap();
         match response.kind {
             ResponseKind::NodeResponse(NodeResponse::SubscribedChain { .. }) => {
-                info!("successfully subscribed to oonline node chain notifications");
+                info!("Successfully subscribed to online node chain notifications");
             }
             _ => {
-                trace!(
+                error!(
                     "Received wrong response for notification request = {:?}",
                     response
                 );
             }
         }
+    }
+
+    async fn run(mut self) {
+        Self::subscribe_to_online_node(&mut self.client, self.handle.status.epoch).await;
         loop {
             let notifications = self.client.notification();
             select! {
@@ -244,13 +284,15 @@ impl VaultService {
                     sender.send(response).unwrap();
                 },
                 node_notification = notifications.fuse() => {
-                    self.handle_client(node_notification.unwrap()).await;
+                    self.handle_client(node_notification.expect("Online node should never gone.")).await;
                 }
                 account_notification = self.account_subscribtion.next() => {
-                    let account_notification = account_notification.expect("Online node should never gone.");
+                    let account_notification = account_notification.expect("Inner account node should never gone.");
                     self.handle_account_notification(account_notification).await;
                 }
             }
+
+            self.broadcast_notifications().await
         }
     }
 
@@ -260,7 +302,14 @@ impl VaultService {
         match account_notification {
             AccountNotification::BalanceChanged(b) => {
                 let amount = b.total.available;
-                let notification = VaultNotification::ColdBalanceUpdated { amount };
+                self.push_balance_update(b.epoch, b.total.available);
+            }
+            AccountNotification::StatusChanged(status_info) => {
+                self.handle.status = status_info.clone();
+                debug!(
+                    "Main account changed:  epoch={}, offset={}",
+                    status_info.epoch, status_info.offset
+                );
             }
             _ => {} // ignore rest notifications
         }
@@ -279,7 +328,7 @@ impl VaultService {
             }
             VaultRequest::CreateUser { account_id } => self.create_account(account_id),
             VaultRequest::GetUser { account_id } => self.get_user(account_id),
-            VaultRequest::GetUsers { .. } => self.get_users(),
+            VaultRequest::GetUsers { .. } => self.get_users().await,
             VaultRequest::RemoveUser { account_id, burn } => self.remove_user(account_id),
             VaultRequest::Withdraw {
                 public_key,
@@ -290,7 +339,8 @@ impl VaultService {
                 self.request_withdraw(public_key, amount, payment_fee, public)
                     .await
             }
-            VaultRequest::Subscribe {} => self.subscribe(),
+            VaultRequest::BalanceInfo {} => self.request_balance().await,
+            VaultRequest::Subscribe { epoch } => self.subscribe(epoch).await,
         }
     }
 
@@ -315,6 +365,7 @@ impl VaultService {
         for (public_key, txins) in txins {
             let secret_key = self.users_list.get(&public_key).unwrap().clone();
             let data = match handle_create_raw_tx(
+                &self.database,
                 txins,
                 self.handle.public_key,
                 secret_key,
@@ -326,6 +377,7 @@ impl VaultService {
                     continue;
                 }
             };
+
             let request = NodeRequest::BroadcastTransaction { data };
             let raw_request = Request {
                 id: 0,
@@ -359,17 +411,23 @@ impl VaultService {
                         "Received new macro_block epoch={}, processing",
                         block.block.header.epoch
                     );
-                    let validators = block
-                        .old_epoch_info
-                        .unwrap_or(block.epoch_info)
-                        .into_stakers_group();
-                    self.process_deposit(block.block.outputs.clone())
-                        .await
-                        .unwrap();
+                    let validators = block.epoch_info.into_stakers_group();
+                    if let Err(e) = self.process_deposit(block.block.outputs.clone()).await {
+                        error!("Failed to process deposit = {}", e)
+                    }
                     let light_block = block.block.into_light_macro_block(validators);
 
-                    self.handle.chain_tx.send(light_block.into()).await.unwrap();
+                    self.handle
+                        .chain_tx
+                        .send(light_block.into())
+                        .await
+                        .expect("Account should read blocks.");
                 }
+            }
+
+            ResponseKind::Inner(InnerResponses::Reconnect) => {
+                info!("Connection to node was recovered, trying to resubscribe.");
+                Self::subscribe_to_online_node(&mut self.client, self.handle.status.epoch).await;
             }
             _ => {}
         }
@@ -412,9 +470,79 @@ impl VaultService {
         }
     }
 
-    fn subscribe(&mut self) -> Result<VaultResponse, VaultError> {
+    // Get pending update by output_hash
+    fn pending_update_by_output(&self, output_hash: &Hash) -> Option<UserBalanceUpdated> {
+        self.pending_updates.get(output_hash).cloned()
+    }
+
+    // Get pending update by output_hash
+    fn push_pending_update(&mut self, output_hash: Hash, balance: UserBalanceUpdated) {
+        self.pending_updates.insert(output_hash, balance);
+    }
+
+    async fn broadcast_notifications(&mut self) {
+        let current_epoch = self.handle.status.epoch;
+        if let Some((sender_epoch, sender)) = &mut self.sender {
+            let last_epoch = *sender_epoch + 1;
+
+            for (epoch, block) in self.notifications_block.range(last_epoch..=current_epoch) {
+                *sender_epoch = *epoch;
+                debug!(
+                    "Sending notification: epoch={}, notification={:?}",
+                    epoch, block
+                );
+                let notification = VaultNotification::BlockProcessed(block.clone());
+                if let Err(e) = sender.send(notification).await {
+                    error!(
+                        "Cannot send notification to client, removing sender: error = {}",
+                        e
+                    );
+                    self.sender = None;
+                    break;
+                }
+            }
+        } else {
+            debug!("Ignoring notification processing, client was not found.");
+        }
+    }
+
+    // Set balance changed in specific epoch.
+    fn push_balance_update(&mut self, epoch: u64, amount: i64) {
+        self.notifications_block
+            .entry(epoch)
+            .or_insert(NotificationBlock {
+                list: Vec::new(),
+                amount: None,
+            })
+            .amount = Some(amount);
+    }
+
+    // Push new update for specific block
+    fn push_user_updates(&mut self, epoch: u64, notification: VaultNotificationEntry) {
+        self.notifications_block
+            .entry(epoch)
+            .or_insert(NotificationBlock {
+                list: Vec::new(),
+                amount: None,
+            })
+            .list
+            .push(notification)
+    }
+
+    async fn subscribe(&mut self, epoch: u64) -> Result<VaultResponse, VaultError> {
         let (tx, rx) = mpsc::channel(100);
-        self.sender = Some(tx);
+        if let Some(sender) = &mut self.sender {
+            debug!("Found old notification, disconnecting");
+            let error = VaultError::OnlySingleNotificationAllowed;
+            sender
+                .1
+                .send(VaultNotification::Disconnected {
+                    code: error.code(),
+                    error: error.to_string(),
+                })
+                .await;
+        }
+        self.sender = Some((epoch, tx));
         Ok(VaultResponse::Subscribed { rx: rx.into() })
     }
 
@@ -474,7 +602,26 @@ impl VaultService {
         }
     }
 
-    fn get_users(&mut self) -> Result<VaultResponse, VaultError> {
+    async fn request_balance(&mut self) -> Result<VaultResponse, VaultError> {
+        let account_request = AccountRequest::BalanceInfo {};
+        let response = self.handle.account.request(account_request);
+        let response = if let Ok(response) = response.await {
+            response
+        } else {
+            return Err(VaultError::WithdrawRequestCanceled);
+        };
+
+        match response {
+            AccountResponse::BalanceInfo(balance) => Ok(VaultResponse::BalanceInfo {
+                main: self.handle.public_key,
+                amount: balance.total.available,
+                confirmed_epoch: self.handle.status.epoch,
+            }),
+            response => return Err(VaultError::UnexpectedResponse(format!("{:?}", response))),
+        }
+    }
+
+    async fn get_users(&mut self) -> Result<VaultResponse, VaultError> {
         let main = self.handle.public_key;
         let list = self
             .created_accounts
@@ -733,6 +880,7 @@ fn create_keypair(
 }
 
 fn handle_create_raw_tx(
+    database: &rocksdb::DB,
     txins: Vec<PublicPaymentOutput>,
     recipient: scc::PublicKey,
     account_secret_key: scc::SecretKey,
@@ -748,6 +896,7 @@ fn handle_create_raw_tx(
         bail!("Failed to create tx, amount is too small {}.", amount)
     }
     let value = amount - fee;
+
     let mut outputs_gamma = Fr::zero();
     let mut outputs = Vec::new();
     let (output, gamma, _) = PaymentOutput::with_payload(

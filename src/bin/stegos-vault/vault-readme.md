@@ -141,6 +141,7 @@ api_endpoint = "127.0.0.1:4145"
 ```
 {
 "type": "subscribe",
+"epoch": u64, // Numeric epoch where last notification was processed 
 }
 ```
 
@@ -176,6 +177,29 @@ api_endpoint = "127.0.0.1:4145"
 }
 ```
 
+8. Get recovery phrase
+
+
+### Request:
+```
+{
+  "type": "recovery_info"
+  "account_id": "1", // optional account_id, if not passed, getting recovery phrase for main cold_storage account
+}
+```
+
+### Response:
+
+```
+{
+  "account_id": "1", // if skiped or nill ,then it main account
+  "type": "recovery",
+  "recovery": "swear praise ginger oxygen anchor ten small planet crime cave fold chuckle foot dragon decorate guess poverty grass crew depend define twice mother update",
+}
+
+```
+
+
 ## Errors handling
 
 If something happen during request processing, response with error would be created.
@@ -191,20 +215,27 @@ If something happen during request processing, response with error would be crea
 ## Notifications
 
 After subscribing for notifications, you can receive next possible notifications:
-1. User balance changed:
+1. Block processed:
 ```
 {
-"type": "user_balance_updated",
-"public_key": "", // user account public key,
-"id": "", // string represented account id of user.
-"amount": "", // changed amount.
+"type": "block_processed",
+"list": [{ // list of users updates
+    "update_type": "user_deposit_received" | "user_deposit_confirmed", // Type of user update
+    "public_key": "", // user account public key,
+    "id": "", // string represented account id of user.
+    "amount": i64, // Amount of 
+}.
+]
+"amount": "", // if balance was changed, new amount should be present.
 }
 ```
 
-2. Cold storage balance changed:
+2. Notification disconnected by server reason:
 ```
 {
-"type": "cold_balance_updated",
-"amount": "", // new amount.
+"type": "disconnected",
+"error": "", // Reason why notification was disconnected.
+"code": ""// numeric code of the error
 }
 ```
+

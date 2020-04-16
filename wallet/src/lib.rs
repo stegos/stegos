@@ -28,7 +28,7 @@ mod change;
 mod error;
 mod metrics;
 mod protos;
-mod recovery;
+pub mod recovery;
 // mod snowball;
 mod storage;
 //#[cfg(test)]

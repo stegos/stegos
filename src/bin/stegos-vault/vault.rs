@@ -359,6 +359,7 @@ impl VaultService {
             }
             VaultRequest::BalanceInfo {} => self.request_balance().await,
             VaultRequest::Subscribe { epoch } => self.subscribe(epoch).await,
+            VaultRequest::RecoveryInfo { account_id } => self.request_recovery(account_id).await,
         }
     }
 
@@ -480,6 +481,30 @@ impl VaultService {
             }
             _ => {}
         }
+    }
+
+    async fn request_recovery(
+        &mut self,
+        account_id: Option<String>,
+    ) -> Result<VaultResponse, VaultError> {
+        let skey = match &account_id {
+            None => &self.handle.secret_key,
+            Some(id) => {
+                let pk = if let Some(pk) = self.created_accounts.get(id) {
+                    pk
+                } else {
+                    return Err(VaultError::AccountNotFound(id.clone()));
+                };
+                let (get_id, secret_key) = self.users_list.get(pk).unwrap();
+                assert_eq!(id, get_id);
+                secret_key
+            }
+        };
+        let recovery = stegos_wallet::recovery::account_skey_to_recovery(skey);
+        Ok(VaultResponse::Recovery {
+            account_id,
+            recovery,
+        })
     }
 
     async fn request_withdraw(

@@ -35,6 +35,11 @@ pub enum VaultRequest {
 
     GetUsers {},
 
+    RecoveryInfo {
+        #[serde(default)]
+        account_id: Option<String>,
+    },
+
     RemoveUser {
         account_id: String,
 
@@ -67,6 +72,10 @@ pub enum VaultResponse {
     },
     CreatedUser {
         account_id: String,
+    },
+    Recovery {
+        account_id: Option<String>,
+        recovery: String,
     },
     GetUser {
         account_id: String,

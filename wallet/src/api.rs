@@ -22,6 +22,7 @@
 // SOFTWARE.
 
 // pub use crate::snowball::State as SnowballStatus;
+use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use stegos_blockchain::api::StatusInfo;
@@ -261,6 +262,7 @@ pub enum WalletControlRequest {
         account_id: AccountId,
     },
     LightReplicationInfo {},
+    SubscribeWalletUpdates {},
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -331,7 +333,7 @@ pub struct AccountInfo {
     pub status: StatusInfo,
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum WalletControlResponse {
@@ -346,12 +348,16 @@ pub enum WalletControlResponse {
         account_id: AccountId,
     },
     LightReplicationInfo(ReplicationInfo),
+    SubscribedWalletUpdates {
+        #[serde(skip)]
+        rx: Option<mpsc::UnboundedReceiver<WalletNotification>>, // Option is needed for serde.
+    },
     Error {
         error: String,
     },
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(untagged)]
 pub enum WalletResponse {

@@ -50,7 +50,7 @@ clap = "2.32"
 dirs = "2.0"
 failure = "0.1"
 futures = "0.3"
-hyper = "0.12"
+hyper = "0.13.5"
 lazy_static = "1.1"
 log = "0.4"
 log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"] }

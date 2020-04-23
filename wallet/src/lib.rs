@@ -37,9 +37,9 @@ pub mod accounts;
 mod transaction;
 use self::accounts::*;
 
-use futures::task::{Poll};
 use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
+use futures::task::Poll;
 // use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use self::storage::*;
 use self::transaction::*;
@@ -138,17 +138,6 @@ impl Account {
     }
 }
 
-#[derive(Debug)]
-enum WalletEvent {
-    Subscribe {
-        tx: mpsc::UnboundedSender<WalletNotification>,
-    },
-    Request {
-        request: WalletRequest,
-        tx: oneshot::Sender<WalletResponse>,
-    },
-}
-
 pub struct AccountHandle {
     /// Account public key.
     pub account_pkey: scc::PublicKey,
@@ -176,7 +165,7 @@ pub struct WalletService {
         SelectAll<Box<dyn Stream<Item = (AccountId, AccountNotification)> + Unpin + Send>>,
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
 
-    events: mpsc::UnboundedReceiver<WalletEvent>,
+    events: mpsc::UnboundedReceiver<(WalletRequest, oneshot::Sender<WalletResponse>)>,
     replication: Replication,
 }
 
@@ -192,7 +181,7 @@ impl WalletService {
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
     ) -> Result<(Self, Wallet), Error> {
-        let (outbox, events) = mpsc::unbounded::<WalletEvent>();
+        let (outbox, events) = mpsc::unbounded();
         let subscribers = Vec::new();
         let account_notifications = SelectAll::new();
         let light = true;
@@ -409,6 +398,11 @@ impl WalletService {
             WalletControlRequest::LightReplicationInfo {} => Ok(
                 WalletControlResponse::LightReplicationInfo(self.replication.info()),
             ),
+            WalletControlRequest::SubscribeWalletUpdates {} => {
+                let (sender, rx) = mpsc::unbounded();
+                self.subscribers.push(sender);
+                Ok(WalletControlResponse::SubscribedWalletUpdates { rx: rx.into() })
+            }
         }
     }
 
@@ -524,31 +518,27 @@ impl WalletService {
         // Process events.
         loop {
             select! {
-                    event = self.events.next() => match event.unwrap() {
-                        WalletEvent::Subscribe { tx } => {
-                            self.subscribers.push(tx);
-                        }
-                        WalletEvent::Request { request, tx } => {
-                            match request {
-                                // process DeleteAccount seperately, because we need to end account future before.
-                                WalletRequest::WalletControlRequest(
-                                    WalletControlRequest::DeleteAccount { account_id },
-                                ) => self.handle_account_delete(account_id, tx),
-                                WalletRequest::WalletControlRequest(request) => {
-                                    let response = match self.handle_control_request(request) {
-                                        Ok(r) => r,
-                                        Err(e) => WalletControlResponse::Error {
-                                            error: format!("{}", e),
-                                        },
-                                    };
-                                    let response = WalletResponse::WalletControlResponse(response);
-                                    tx.send(response).ok(); // ignore errors.
-                                }
-                                WalletRequest::AccountRequest {
-                                    account_id,
-                                    request,
-                                } => self.handle_account_request(account_id, request, tx),
+                    event = self.events.next() => {
+                        let (request, tx) = event.unwrap();
+                        match request {
+                            // process DeleteAccount seperately, because we need to end account future before.
+                            WalletRequest::WalletControlRequest(
+                                WalletControlRequest::DeleteAccount { account_id },
+                            ) => self.handle_account_delete(account_id, tx),
+                            WalletRequest::WalletControlRequest(request) => {
+                                let response = match self.handle_control_request(request) {
+                                    Ok(r) => r,
+                                    Err(e) => WalletControlResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                };
+                                let response = WalletResponse::WalletControlResponse(response);
+                                tx.send(response).ok(); // ignore errors.
                             }
+                            WalletRequest::AccountRequest {
+                                account_id,
+                                request,
+                            } => self.handle_account_request(account_id, request, tx),
                         }
                     },
                 // Forward notifications.
@@ -635,7 +625,7 @@ impl WalletService {
                         &block_reader,
                     ))
                 });
-                match replication_fut.await{
+                match replication_fut.await {
                     Poll::Ready(Some(ReplicationRow::LightBlock(block))) => {
                         if let Err(e) = self.handle_block(block).await {
                             error!("Invalid block received from replication: {}", e);
@@ -673,23 +663,16 @@ impl BlockReader for DummyBlockReady {
 
 #[derive(Debug, Clone)]
 pub struct Wallet {
-    outbox: mpsc::UnboundedSender<WalletEvent>,
+    outbox: mpsc::UnboundedSender<(WalletRequest, oneshot::Sender<WalletResponse>)>,
 }
 
 impl Wallet {
-    /// Subscribe for changes.
-    pub fn subscribe(&self) -> mpsc::UnboundedReceiver<WalletNotification> {
-        let (tx, rx) = mpsc::unbounded();
-        let msg = WalletEvent::Subscribe { tx };
-        self.outbox.unbounded_send(msg).expect("connected");
-        rx
-    }
-
     /// Execute a Wallet Request.
     pub fn request(&self, request: WalletRequest) -> oneshot::Receiver<WalletResponse> {
         let (tx, rx) = oneshot::channel();
-        let msg = WalletEvent::Request { request, tx };
-        self.outbox.unbounded_send(msg).expect("connected");
+        self.outbox
+            .unbounded_send((request, tx))
+            .expect("connected");
         rx
     }
 }

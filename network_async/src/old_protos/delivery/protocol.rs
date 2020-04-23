@@ -297,7 +297,7 @@ mod tests {
         test_one(msg, "127.0.0.1:12643".parse().unwrap());
     }
 
-    fn test_one(msg: DeliveryMessage, listener_addr: std::net::SocketAddr ) {
+    fn test_one(msg: DeliveryMessage, listener_addr: std::net::SocketAddr) {
         let msg_server = msg.clone();
         let msg_client = msg.clone();
 

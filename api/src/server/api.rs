@@ -33,7 +33,7 @@ use std::collections::HashSet;
 use std::convert::{TryFrom, TryInto};
 use stegos_node::{Node, NodeRequest, NodeResponse};
 use stegos_wallet::{
-    api::{WalletRequest, WalletResponse},
+    api::{WalletControlRequest, WalletControlResponse, WalletRequest, WalletResponse},
     Wallet,
 };
 
@@ -52,6 +52,9 @@ impl RawRequest {
                 | NetworkRequest::SubscribeUnicast { .. } => true,
                 _ => false,
             },
+            RequestKind::WalletsRequest(WalletRequest::WalletControlRequest(
+                WalletControlRequest::SubscribeWalletUpdates {},
+            )) => true,
             RequestKind::WalletsRequest(_r) => false,
             RequestKind::Raw(r) => {
                 if let Some(notification_type) = r
@@ -136,6 +139,10 @@ impl RawResponse {
                     }
                     response => bail!("Received response that cannot be converted to notification stream: response={:?}", response)
                 }
+            }
+            ResponseKind::WalletResponse(WalletResponse::WalletControlResponse(WalletControlResponse::SubscribedWalletUpdates {rx}))  => {
+                let rx = rx.take().expect("Stream exist");
+                Ok(Box::new(rx.map(ResponseKind::WalletNotification).map(RawResponse)))
             }
             ResponseKind::NetworkNotification(_) | ResponseKind::ChainNotification(_) | ResponseKind::StatusNotification(_) | ResponseKind::Inner(_)=> {
                 bail!("Got notification message, expected response.")

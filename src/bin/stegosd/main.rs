@@ -27,7 +27,7 @@ use dirs;
 use failure::{format_err, Error};
 use futures::{Future, Stream, StreamExt};
 use hyper::server::Server;
-use hyper::service::service_fn_ok;
+use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
@@ -169,7 +169,7 @@ fn load_logger_configuration(
     Ok(log4rs::init_config(config)?)
 }
 
-fn report_metrics(_req: Request<Body>) -> Response<Body> {
+async fn report_metrics(_req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     let mut response = Response::builder();
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
@@ -188,7 +188,7 @@ fn report_metrics(_req: Request<Body>) -> Response<Body> {
         .header("Content-Type", encoder.format_type())
         .body(Body::from(buffer))
         .unwrap();
-    res
+    Ok(res)
 }
 
 /// Enable backtraces and coredumps.
@@ -542,18 +542,17 @@ async fn run() -> Result<(), Error> {
     .await?;
 
     // // Start metrics exporter
-    // if cfg.general.prometheus_endpoint != "" {
-    //     let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
-    //     info!("Starting Prometheus Exporter on {}", &addr);
+    if cfg.general.prometheus_endpoint != "" {
+        let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
+        info!("Starting Prometheus Exporter on {}", &addr);
 
-    //     let prom_serv = || service_fn_ok(report_metrics);
-    //     let hyper_service = Server::bind(&addr)
-    //         .serve(prom_serv)
-    //         .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+        let service =
+            make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(report_metrics)) });
+        let hyper_service = Server::bind(&addr).serve(service);
 
-    //     // Run hyper server to export Prometheus metrics
-    //     rt.spawn(hyper_service);
-    // }
+        // Run hyper server to export Prometheus metrics
+        tokio::spawn(hyper_service);
+    }
 
     // Initialize blockchain
     let (genesis, chain_cfg) = initialize_chain(&cfg.general.chain)?;

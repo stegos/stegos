@@ -37,6 +37,7 @@ pub mod accounts;
 mod transaction;
 use self::accounts::*;
 
+use futures::task::{Poll};
 use self::error::WalletError;
 use self::recovery::recovery_to_account_skey;
 // use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
@@ -505,12 +506,12 @@ impl WalletService {
     }
 
     /// Handle incoming blocks received from network.
-    fn handle_block(&mut self, block: LightBlock) -> Result<(), Error> {
+    async fn handle_block(&mut self, block: LightBlock) -> Result<(), Error> {
         for (account_id, handle) in &mut self.accounts {
             if !handle.unsealed {
                 continue;
             }
-            if let Err(e) = handle.chain_tx.try_send(block.clone()) {
+            if let Err(e) = handle.chain_tx.send(block.clone()).await {
                 warn!("{}: account_id={}", e, account_id);
             }
         }
@@ -518,6 +519,8 @@ impl WalletService {
     }
 
     pub async fn start(mut self) {
+        // Update replication timer.
+        let mut poll_timer = tokio::time::interval(Duration::from_secs(1));
         // Process events.
         loop {
             select! {
@@ -588,61 +591,63 @@ impl WalletService {
                         }
                     }
                 }
+                timer = poll_timer.tick().fuse() => {}
 
             }
 
             // Replication
-            // 'outer: while self.accounts.len() > 0 {
-            //     // Sic: check that all accounts are ready before polling the replication.
-            //     let mut current_epoch = std::u64::MAX;
-            //     let mut current_offset = std::u32::MAX;
-            //     let mut unsealed = false;
-            //     for (_account_id, handle) in &mut self.accounts {
-            //         if !handle.unsealed {
-            //             continue;
-            //         }
-            //         unsealed = true;
-            //         match handle.chain_tx.poll_ready() {
-            //             Ok(Async::Ready(_)) => true,
-            //             _ => break 'outer,
-            //         };
-            //         if handle.status.epoch <= current_epoch {
-            //             current_epoch = handle.status.epoch;
-            //             if handle.status.offset <= current_offset {
-            //                 current_offset = handle.status.offset;
-            //             }
-            //         }
-            //     }
+            'outer: while self.accounts.len() > 0 {
+                // Sic: check that all accounts are ready before polling the replication.
+                let mut current_epoch = std::u64::MAX;
+                let mut current_offset = std::u32::MAX;
+                let mut unsealed = false;
+                for (_account_id, handle) in &mut self.accounts {
+                    if !handle.unsealed {
+                        continue;
+                    }
+                    unsealed = true;
+                    if handle.status.epoch <= current_epoch {
+                        current_epoch = handle.status.epoch;
+                        if handle.status.offset <= current_offset {
+                            current_offset = handle.status.offset;
+                        }
+                    }
+                }
 
-            //     if !unsealed {
-            //         break;
-            //     }
+                if !unsealed {
+                    break;
+                }
 
-            //     let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
-            //     let block_reader = DummyBlockReady {};
-            //     trace!(
-            //         "Poll replication: current_epoch={}, current_offset={}",
-            //         current_epoch,
-            //         current_offset
-            //     );
-            //     match self.replication.poll(
-            //         current_epoch,
-            //         current_offset,
-            //         micro_blocks_in_epoch,
-            //         &block_reader,
-            //     ) {
-            //         Async::Ready(Some(ReplicationRow::LightBlock(block))) => {
-            //             if let Err(e) = self.handle_block(block) {
-            //                 error!("Invalid block received from replication: {}", e);
-            //             }
-            //         }
-            //         Async::Ready(Some(ReplicationRow::Block(_block))) => {
-            //             panic!("The full block received from replication");
-            //         }
-            //         Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-            //         Async::NotReady => break,
-            //     }
-            // }
+                let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
+                let block_reader = DummyBlockReady {};
+                trace!(
+                    "Poll replication: current_epoch={}, current_offset={}",
+                    current_epoch,
+                    current_offset
+                );
+
+                let replication_fut = future::poll_fn(|cx| {
+                    Poll::Ready(self.replication.poll(
+                        cx,
+                        current_epoch,
+                        current_offset,
+                        micro_blocks_in_epoch,
+                        &block_reader,
+                    ))
+                });
+                match replication_fut.await{
+                    Poll::Ready(Some(ReplicationRow::LightBlock(block))) => {
+                        if let Err(e) = self.handle_block(block).await {
+                            error!("Invalid block received from replication: {}", e);
+                        }
+                    }
+                    Poll::Ready(Some(ReplicationRow::Block(_block))) => {
+                        panic!("The full block received from replication");
+                    }
+                    Poll::Ready(None) => return, // Shutdown.
+                    Poll::Pending => break 'outer,
+                }
+            }
         }
     }
 }

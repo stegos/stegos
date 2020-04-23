@@ -278,7 +278,7 @@ mod tests {
             seq_no: rand::random::<[u8; 20]>().to_vec(),
         });
 
-        test_one(msg);
+        test_one(msg, "127.0.0.1:12644".parse().unwrap());
 
         let (_, node_id) = pbc::make_random_keys();
 
@@ -294,13 +294,12 @@ mod tests {
             seq_no: rand::random::<[u8; 20]>().to_vec(),
         });
 
-        test_one(msg);
+        test_one(msg, "127.0.0.1:12643".parse().unwrap());
     }
 
-    fn test_one(msg: DeliveryMessage) {
+    fn test_one(msg: DeliveryMessage, listener_addr: std::net::SocketAddr ) {
         let msg_server = msg.clone();
         let msg_client = msg.clone();
-        let listener_addr: std::net::SocketAddr = "127.0.0.1:12643".parse().unwrap();
 
         let server = Box::pin(async {
             let listener = TcpListener::bind(&listener_addr).await.unwrap();

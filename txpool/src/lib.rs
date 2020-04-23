@@ -24,10 +24,14 @@
 pub mod protos;
 pub use self::protos::*;
 
-use futures::sync::mpsc;
-use futures::{Async, Future, Poll, Stream};
+use futures::channel::mpsc;
+use futures::{
+    task::{Context, Poll},
+    Future, StreamExt,
+};
 use log::*;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::time::Duration;
 use stegos_blockchain::PaymentOutput;
 use stegos_crypto::dicemix;
@@ -36,7 +40,7 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_network::{Network, UnicastMessage};
 use stegos_serialization::traits::*;
-use tokio_timer::Interval;
+use tokio::time::{self, Interval};
 
 pub const MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const MIN_PARTICIPANTS: usize = 3;
@@ -58,9 +62,7 @@ impl TransactionPoolService {
     /// Crates new TransactionPool.
     pub fn new(network: Network) -> TransactionPoolService {
         let participants = HashMap::new();
-        let mut timer = Interval::new_interval(MESSAGE_TIMEOUT);
-        // register new timer to the current task.
-        let _ = timer.poll();
+        let timer = time::interval(MESSAGE_TIMEOUT);
         // Unicast messages from other nodes
         let pool_join_rx = network.subscribe_unicast(POOL_JOIN_TOPIC).unwrap();
         TransactionPoolService {
@@ -136,6 +138,8 @@ impl TransactionPoolService {
 }
 
 impl Drop for TransactionPoolService {
+    // WARN! Don't move pool_join_rx or timer in drop, allso all drop code should be located in `inner_drop`,
+    // to ensure that you didn't move anything
     fn drop(&mut self) {
         if self.try_to_form_pool() {
             return;
@@ -154,20 +158,15 @@ impl Drop for TransactionPoolService {
 }
 
 impl Future for TransactionPoolService {
-    type Item = ();
-    type Error = ();
+    type Output = ();
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         //
         // Poll PoolJoin messages.
         //
         loop {
-            match self
-                .pool_join_rx
-                .poll()
-                .expect("all errors are already handled")
-            {
-                Async::Ready(Some(msg)) => {
+            match self.pool_join_rx.poll_next_unpin(cx) {
+                Poll::Ready(Some(msg)) => {
                     debug!("Received join message: from={}", msg.from);
                     let pj_rec = match PoolJoin::from_buffer(&msg.data) {
                         Ok(pj_rec) => pj_rec,
@@ -178,22 +177,22 @@ impl Future for TransactionPoolService {
                     };
                     self.handle_join_message(pj_rec, msg.from);
                 }
-                Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-                Async::NotReady => break,
+                Poll::Ready(None) => return Poll::Ready(()), // shutdown.
+                Poll::Pending => break,
             }
         }
 
         //
         // Poll timer.
         //
-        match self.timer.poll().expect("timer fails") {
-            Async::Ready(Some(_)) => {
+        match self.timer.poll_next_unpin(cx) {
+            Poll::Ready(Some(_)) => {
                 self.try_to_form_pool();
             }
-            Async::Ready(None) => return Ok(Async::Ready(())), // shutdown.
-            Async::NotReady => {}
+            Poll::Ready(None) => return Poll::Ready(()), // shutdown.
+            Poll::Pending => {}
         }
 
-        Ok(Async::NotReady)
+        Poll::Pending
     }
 }

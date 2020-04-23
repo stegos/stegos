@@ -29,9 +29,9 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::str::FromStr;
-use tokio::runtime::Runtime;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let name = "Stegos CLI".to_string();
     let version = format!(
         "{}.{}.{} ({} {})",
@@ -95,6 +95,13 @@ fn main() {
                 .takes_value(false),
         )
         .arg(
+            Arg::with_name("keep-console")
+                .short("N")
+                .long("keep-console")
+                .help("Use stegos CLI to subscribe on notifications.")
+                .takes_value(false),
+        )
+        .arg(
             Arg::with_name("data-dir")
                 .short("d")
                 .long("data-dir")
@@ -145,6 +152,7 @@ fn main() {
         }
     }
     let raw = args.is_present("raw");
+    let subscribed = args.is_present("keep-console");
     let history_file = data_dir.join("stegos.history");
     let api_token_file = if let Some(api_token_file) = args.value_of("api-token-file") {
         PathBuf::from(api_token_file)
@@ -160,9 +168,7 @@ fn main() {
         }
     };
     let formatter = Formatter::from_str(args.value_of("formatter").unwrap()).unwrap();
-
-    let mut rt = Runtime::new().expect("Failed to initialize tokio");
-    let console_service = ConsoleService::new(
+    ConsoleService::spawn(
         chain,
         name,
         version,
@@ -171,7 +177,8 @@ fn main() {
         history_file,
         formatter,
         raw,
-    );
-    rt.block_on(console_service)
-        .expect("errors are handled earlier");
+        subscribed,
+    )
+    .await
+    .unwrap();
 }

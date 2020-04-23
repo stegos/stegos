@@ -21,17 +21,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub use crate::snowball::State as SnowballStatus;
+// pub use crate::snowball::State as SnowballStatus;
+use futures::channel::mpsc;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use stegos_blockchain::api::StatusInfo;
 pub use stegos_blockchain::PaymentPayloadData;
 pub use stegos_blockchain::StakeInfo;
 use stegos_blockchain::Timestamp;
+use stegos_blockchain::Transaction;
 pub use stegos_blockchain::TransactionStatus;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
 use stegos_crypto::scc;
+use stegos_crypto::utils::deserialize_protobuf_from_hex;
+use stegos_crypto::utils::serialize_protobuf_to_hex;
 pub use stegos_replication::api::*;
 
 pub type AccountId = String;
@@ -59,6 +63,16 @@ pub enum OutputInfo {
     Payment(PaymentInfo),
     PublicPayment(PublicPaymentInfo),
     Staked(StakeInfo),
+}
+
+impl OutputInfo {
+    pub fn output_hash(&self) -> Hash {
+        match self {
+            OutputInfo::Payment(p) => p.output_hash,
+            OutputInfo::PublicPayment(p) => p.output_hash,
+            OutputInfo::Staked(p) => p.output_hash,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -112,6 +126,8 @@ pub struct AccountBalance {
     pub total: Balance,
     /// Is account balance finalized (was updated before last macroblock).
     pub is_final: bool,
+    #[serde(default)]
+    pub epoch: u64,
 }
 
 /// Recovery information.
@@ -135,7 +151,7 @@ pub enum AccountNotification {
     Unsealed,
     Sealed,
     BalanceChanged(AccountBalance),
-    SnowballStatus(SnowballStatus),
+    // SnowballStatus(SnowballStatus),
     TransactionStatus {
         tx_hash: Hash,
         #[serde(flatten)]
@@ -178,11 +194,15 @@ pub enum AccountRequest {
         payment_fee: i64,
         comment: String,
         with_certificate: bool,
+        #[serde(default)]
+        raw: bool,
     },
     PublicPayment {
         recipient: scc::PublicKey,
         amount: i64,
         payment_fee: i64,
+        #[serde(default)]
+        raw: bool,
     },
     SecurePayment {
         recipient: scc::PublicKey,
@@ -242,6 +262,7 @@ pub enum WalletControlRequest {
         account_id: AccountId,
     },
     LightReplicationInfo {},
+    SubscribeWalletUpdates {},
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -280,6 +301,11 @@ pub enum AccountResponse {
     #[serde(skip)]
     Disabled,
     TransactionCreated(TransactionInfo),
+    RawTransactionCreated {
+        #[serde(serialize_with = "serialize_protobuf_to_hex")]
+        #[serde(deserialize_with = "deserialize_protobuf_from_hex")]
+        data: Transaction,
+    },
     BalanceInfo(AccountBalance),
     AccountInfo(AccountInfo),
     UnspentInfo {
@@ -307,7 +333,7 @@ pub struct AccountInfo {
     pub status: StatusInfo,
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(tag = "type")]
 pub enum WalletControlResponse {
@@ -322,12 +348,16 @@ pub enum WalletControlResponse {
         account_id: AccountId,
     },
     LightReplicationInfo(ReplicationInfo),
+    SubscribedWalletUpdates {
+        #[serde(skip)]
+        rx: Option<mpsc::UnboundedReceiver<WalletNotification>>, // Option is needed for serde.
+    },
     Error {
         error: String,
     },
 }
 
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[serde(untagged)]
 pub enum WalletResponse {

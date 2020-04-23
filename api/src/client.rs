@@ -22,34 +22,29 @@
 // SOFTWARE.
 
 use crate::crypto::ApiToken;
+use crate::InnerResponses;
+use crate::ResponseKind;
 use crate::{decode, encode, Request, Response};
-use futures::future::Future;
-use futures::sink::Sink;
-use futures::stream::{SplitSink, SplitStream, Stream};
-use futures::{task, AsyncSink};
-use futures::{Async, Poll};
+use failure::bail;
+use failure::Error;
+use futures::prelude::*;
+use futures::SinkExt;
 use log::*;
-use std::time::Duration;
-use tokio::codec::Framed;
+use std::pin::Pin;
 use tokio::net::TcpStream;
-use tokio_timer::{clock, Delay};
-use websocket::header::Headers;
-use websocket::r#async::MessageCodec;
-use websocket::result::WebSocketError;
-pub use websocket::url;
-use websocket::{ClientBuilder, OwnedMessage};
+use tokio_tungstenite::tungstenite::Error as WsError;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+use futures_retry::{FutureRetry, RetryPolicy};
+use std::collections::VecDeque;
+use std::time::Duration;
 
-type S = Framed<TcpStream, MessageCodec<OwnedMessage>>;
-type ClientSink = SplitSink<S>;
-type ClientStream = SplitStream<S>;
-type ConnectionFuture = Box<dyn Future<Item = (S, Headers), Error = WebSocketError> + Send>;
-
-enum State {
-    WaitReconnect(Delay),
-    Connect(ConnectionFuture),
-    Connected(ClientSink, ClientStream),
+fn handle_connection_error(_e: WsError) -> RetryPolicy<WsError> {
+    // This is kinda unrealistical error handling, don't use it as it is!
+    debug!("Error on reconnect");
+    RetryPolicy::WaitRetry(RECONNECT_TIMEOUT)
 }
 
 pub struct WebSocketClient {
@@ -57,162 +52,131 @@ pub struct WebSocketClient {
     endpoint: String,
     /// API Token.
     api_token: ApiToken,
-    /// True if outgoing buffer should be flushed on the next poll().
-    need_flush: bool,
-    /// Connection state.
-    state: State,
+    connection: WebSocketStream<TcpStream>,
+    /// Pending notifications.
+    pending_notifications: VecDeque<Response>,
 }
 
 impl WebSocketClient {
-    pub fn new(endpoint: String, api_token: ApiToken) -> Self {
-        let state = State::WaitReconnect(Delay::new(clock::now()));
-        let need_flush = false;
-        Self {
+    pub async fn new(endpoint: String, api_token: ApiToken) -> Result<Self, Error> {
+        let connection = tokio_tungstenite::connect_async(&endpoint).await?.0;
+        let pending_notifications = VecDeque::new();
+        Ok(Self {
             endpoint,
             api_token,
-            need_flush,
-            state,
-        }
+            connection,
+            pending_notifications,
+        })
     }
 
-    pub fn send(&mut self, msg: Request) -> Result<(), WebSocketError> {
+    pub async fn request(&mut self, msg: Request) -> Result<Response, Error> {
         trace!("[{}] <= {:?}", self.endpoint, msg);
         let msg = encode(&self.api_token, &msg);
-        let msg = OwnedMessage::Text(msg);
-        self.send_raw(msg)
+        let msg = Message::Text(msg);
+        loop {
+            self.send_raw(msg.clone()).await?;
+            'inner: loop {
+                let response = self.receive().await?;
+                let response = if let Some(response) = response {
+                    response
+                } else {
+                    warn!("Disconected during receive, trying to request again.");
+                    break 'inner;
+                };
+
+                match response.kind {
+                    ResponseKind::NetworkResponse(_)
+                    | ResponseKind::WalletResponse(_)
+                    | ResponseKind::NodeResponse(_)
+                    | ResponseKind::Raw(_) => {
+                        return Ok(response);
+                    }
+                    _ => {
+                        trace!("Received notification in response of request, pushing to pending list, notification = {:?}", response);
+                        self.pending_notifications.push_back(response);
+                    }
+                }
+            }
+        }
     }
 
-    fn send_raw(&mut self, msg: OwnedMessage) -> Result<(), WebSocketError> {
-        let sink = match &mut self.state {
-            State::Connected(sink, _) => sink,
-            _ => {
-                return Err(WebSocketError::IoError(
-                    std::io::ErrorKind::NotConnected.into(),
-                ));
+    pub async fn notification(&mut self) -> Result<Response, Error> {
+        loop {
+            if let Some(item) = self.pending_notifications.pop_front() {
+                return Ok(item);
             }
+
+            assert!(self.pending_notifications.is_empty());
+
+            if let Some(receive) = self.receive().await? {
+                return Ok(receive);
+            }
+        }
+    }
+
+    async fn send_raw(&mut self, msg: Message) -> Result<(), Error> {
+        if let Err(e) = SinkExt::send(&mut self.connection, msg.clone()).await {
+            info!("Error on sending message to websocket, reconnecting");
+            debug!("Websocket::send_raw error = {:?}", e);
+            tokio::time::delay_for(RECONNECT_TIMEOUT).await;
+            let endpoit = self.endpoint.clone();
+            if let Ok(connection) = FutureRetry::new(
+                || tokio_tungstenite::connect_async(&endpoit),
+                handle_connection_error,
+            )
+            .await
+            {
+                self.connection = (connection.0).0;
+                info!("Reconnected to websocket, trying to resend last request.");
+                let msg = SinkExt::send(&mut self.connection, msg).await?;
+                self.push_reconnect_notification();
+                msg
+            } else {
+                return Err(e.into());
+            }
+        }
+        Ok(())
+    }
+    async fn receive_raw(&mut self) -> Result<Message, Error> {
+        let result = self.connection.next().await;
+        let result = match result {
+            Some(result) => result?,
+            None => bail!("Stream gone on receive, check if api.token is correct."),
         };
-
-        match sink.start_send(msg)? {
-            AsyncSink::Ready => {
-                task::current().notify();
-                self.need_flush = true;
-                Ok(())
-            }
-            AsyncSink::NotReady(_msg) => Err(WebSocketError::IoError(
-                std::io::ErrorKind::WouldBlock.into(),
-            )),
-        }
+        Ok(result)
     }
 
-    /// Returns true if client is connected to remote part.
-    pub fn is_connected(&self) -> bool {
-        match &self.state {
-            State::Connected(..) => true,
-            _ => false,
-        }
-    }
-}
-
-impl WebSocketClient {
-    fn poll_impl(&mut self) -> Poll<Option<Response>, WebSocketError> {
-        match &mut self.state {
-            State::Connect(connection_fut) => {
-                trace!("poll: state=Connect");
-                match connection_fut.poll()? {
-                    Async::Ready((duplex, _)) => {
-                        let (sink, stream) = duplex.split();
-                        let state = State::Connected(sink, stream);
-                        std::mem::replace(&mut self.state, state);
-                        task::current().notify();
-                        debug!("[{}] Connected", self.endpoint);
-                    }
-                    Async::NotReady => {}
-                }
-            }
-            State::WaitReconnect(delay) => {
-                trace!("poll: state=WaitReconnect");
-                match delay.poll().unwrap() {
-                    Async::Ready(()) => {
-                        let connect_fut = ClientBuilder::new(&self.endpoint)
-                            .unwrap()
-                            .async_connect_insecure();
-                        let state = State::Connect(connect_fut);
-                        std::mem::replace(&mut self.state, state);
-                        task::current().notify();
-                        debug!("[{}] Connecting...", self.endpoint);
-                    }
-                    Async::NotReady => {}
-                }
-            }
-            State::Connected(sink, stream) => {
-                trace!("poll: state=Connected");
-                if self.need_flush {
-                    match sink.poll_complete()? {
-                        Async::Ready(()) => {
-                            self.need_flush = false;
-                        }
-                        Async::NotReady => {}
-                    }
-                }
-
-                match stream.poll()? {
-                    Async::Ready(Some(OwnedMessage::Text(msg))) => {
-                        trace!("[{}] => Text({})", self.endpoint, msg);
-                        let response: Response = decode(&self.api_token, &msg)?;
-                        trace!("[{}] => {:?}", self.endpoint, response);
-                        return Ok(Async::Ready(Some(response)));
-                    }
-                    Async::Ready(Some(OwnedMessage::Binary(msg))) => {
-                        trace!("[{}] => Binary(len={})", self.endpoint, msg.len());
-                        return Err(WebSocketError::ResponseError("binary is not supported"));
-                    }
-                    Async::Ready(Some(OwnedMessage::Ping(msg))) => {
-                        trace!("[{}] => Ping(len={})", self.endpoint, msg.len());
-                        self.send_raw(OwnedMessage::Pong(msg))?;
-                    }
-                    Async::Ready(Some(OwnedMessage::Pong(msg))) => {
-                        trace!("[{}] => Pong(len={})", self.endpoint, msg.len());
-                    }
-                    Async::Ready(Some(OwnedMessage::Close(data))) => {
-                        trace!("[{}] => Close(has_data={})", self.endpoint, data.is_some());
-                        return Err(WebSocketError::IoError(
-                            std::io::ErrorKind::ConnectionReset.into(),
-                        ));
-                    }
-                    Async::Ready(None) => {
-                        trace!("[{}] => EOF", self.endpoint);
-                        return Err(WebSocketError::IoError(
-                            std::io::ErrorKind::ConnectionReset.into(),
-                        ));
-                    }
-                    Async::NotReady => {}
-                }
-            }
-        }
-        Ok(Async::NotReady)
-    }
-}
-
-// Event loop.
-impl Stream for WebSocketClient {
-    type Item = Response;
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Option<Self::Item>, Self::Error> {
-        match self.poll_impl() {
-            Ok(r) => Ok(r),
+    /// Returns None - on reconnect
+    async fn receive(&mut self) -> Result<Option<Response>, Error> {
+        let result = match self.receive_raw().await {
             Err(e) => {
-                error!("[{}] {:?}", self.endpoint, e);
-                let deadline = clock::now() + RECONNECT_TIMEOUT;
-                let state2 = State::WaitReconnect(Delay::new(deadline));
-                std::mem::replace(&mut self.state, state2);
-                task::current().notify();
-                debug!(
-                    "[{}] Reconnecting after {:?}",
-                    self.endpoint, RECONNECT_TIMEOUT
-                );
-                Ok(Async::NotReady)
+                info!("Error on receiving message to websocket, reconnecting");
+                debug!("Websocket::receive error = {:?}", e);
+                tokio::time::delay_for(RECONNECT_TIMEOUT).await;
+                let endpoit = self.endpoint.clone();
+                if let Ok(connection) = FutureRetry::new(
+                    || tokio_tungstenite::connect_async(&endpoit),
+                    handle_connection_error,
+                )
+                .await
+                {
+                    self.connection = (connection.0).0;
+                    info!("Reconnected to websocket, trying to receive again.");
+                    self.push_reconnect_notification();
+                    return Ok(None);
+                } else {
+                    return Err(e.into());
+                }
             }
-        }
+            Ok(result) => result,
+        };
+        let result = result.into_text()?;
+        decode(&self.api_token, &result)
+    }
+
+    fn push_reconnect_notification(&mut self) {
+        let kind = ResponseKind::Inner(InnerResponses::Reconnect);
+        let response = Response { id: 0, kind };
+        self.pending_notifications.push_back(response);
     }
 }

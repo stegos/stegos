@@ -73,6 +73,7 @@ impl ConsensusState {
     }
 }
 
+#[derive(Debug)]
 /// Consensus State.
 pub struct Consensus {
     //

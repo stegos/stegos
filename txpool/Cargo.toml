@@ -15,19 +15,18 @@ description = "Stegos - Facilitator"
 [dependencies]
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
 stegos_blockchain = { version = "1.0.0", path = "../blockchain" }
-stegos_network = { version = "1.0.0", path = "../network" }
+stegos_network = { version = "1.0.0", path = "../network_async", package="stegos_network_async"}
 stegos_serialization = { version = "1.0.0", path = "../serialization" }
 log = "0.4"
 failure = "0.1"
-futures = "0.1"
+futures = "0.3"
 protobuf = "2.6"
 rand = "0.7.0"
 rand_core = "0.5"
 serde = "1.0"
 serde_derive = "1.0"
 simple_logger = "1.2"
-tokio-timer = "0.2"
-tokio-executor = "0.1.7"
+tokio = {version="0.2.13", features=["time", "stream"]}
 
 [build-dependencies]
 stegos_serialization = { version = "1.0.0", path = "../serialization" }

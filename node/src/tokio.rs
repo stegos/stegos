@@ -29,10 +29,15 @@ use crate::{
     VIEW_CHANGE_DIRECT, VIEW_CHANGE_PROOFS_TOPIC, VIEW_CHANGE_TOPIC,
 };
 use failure::{format_err, Error};
-use futures::sync::{mpsc, oneshot};
-use futures::{task, Async, AsyncSink, Future, Poll, Sink, Stream};
-use futures_stream_select_all_send::select_all;
+use futures::channel::{mpsc, oneshot};
+use futures::{
+    future::{self, Fuse, OptionFuture},
+    stream,
+};
+use futures::{select, task::Poll, FutureExt, Stream, StreamExt};
 use log::*;
+use pin_utils::pin_mut;
+use std::pin::Pin;
 use std::thread;
 use stegos_blockchain::{Block, BlockReader, Blockchain, Transaction};
 use stegos_crypto::pbc;
@@ -42,7 +47,7 @@ use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 use stegos_txpool::TransactionPoolService;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio_timer::{clock, Delay, Interval};
+use tokio::time::{self, Interval};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -85,10 +90,10 @@ struct ChainReader {
 }
 
 impl ChainReader {
-    fn poll(&mut self, chain: &Blockchain) -> Poll<(), Error> {
+    fn advance(&mut self, chain: &Blockchain) -> Result<(), ()> {
         // Check if subscriber has already been synchronized.
         if self.epoch == chain.epoch() && self.offset == chain.offset() {
-            return Ok(Async::Ready(()));
+            return Ok(());
         }
 
         // Feed blocks from the disk.
@@ -96,9 +101,29 @@ impl ChainReader {
             let (msg, next_epoch, next_offset) = match block {
                 Block::MacroBlock(block) => {
                     assert_eq!(block.header.epoch, self.epoch);
-                    let epoch_info = chain.epoch_info(block.header.epoch)?.unwrap().clone();
+                    let epoch_info = chain
+                        .epoch_info(block.header.epoch)
+                        .unwrap()
+                        .unwrap()
+                        .clone();
+                    let epoch = block.header.epoch;
+                    let old_epoch_info = if epoch > 0 {
+                        Some(
+                            chain
+                                .epoch_info(epoch - 1)
+                                .unwrap()
+                                .expect("Expect epoch info for last macroblock.")
+                                .clone(),
+                        )
+                    } else {
+                        None
+                    };
                     let next_epoch = block.header.epoch + 1;
-                    let msg = ExtendedMacroBlock { block, epoch_info };
+                    let msg = ExtendedMacroBlock {
+                        block,
+                        epoch_info,
+                        old_epoch_info,
+                    };
                     let msg = ChainNotification::MacroBlockCommitted(msg);
                     (msg, next_epoch, 0)
                 }
@@ -116,42 +141,22 @@ impl ChainReader {
                 }
             };
 
-            match self.tx.start_send(msg)? {
-                AsyncSink::Ready => {
+            match self.tx.try_send(msg) {
+                Ok(()) => {
                     self.epoch = next_epoch;
                     self.offset = next_offset;
                 }
-                AsyncSink::NotReady(_msg) => {
-                    break;
+                Err(e) => {
+                    if e.is_full() {
+                        warn!("Receiver can't receive blocks so fast, slowing down.");
+                        break;
+                    }
+                    error!("Tx stopped = {}", e);
+                    return Err(());
                 }
             }
         }
-
-        self.tx.poll_complete()?;
-        Ok(Async::NotReady)
-    }
-}
-
-/// Notify all subscribers about new event.
-fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) {
-    let mut i = 0;
-    while i < subscribers.len() {
-        let tx = &mut subscribers[i];
-        match tx.start_send(msg.clone()) {
-            Ok(AsyncSink::Ready) => {}
-            Ok(AsyncSink::NotReady(_msg)) => {
-                log::warn!("Subscriber is slow, discarding messages");
-            }
-            Err(_e /* SendError<ChainNotification> */) => {
-                subscribers.swap_remove(i);
-                continue;
-            }
-        }
-        if let Err(_e) = tx.poll_complete() {
-            subscribers.swap_remove(i);
-            continue;
-        }
-        i += 1;
+        Ok(())
     }
 }
 
@@ -162,22 +167,14 @@ pub struct NodeService {
     check_sync: Interval,
 
     /// Aggregated stream of events.
-    events: Box<dyn Stream<Item = NodeIncomingEvent, Error = ()> + Send>,
+    events: Vec<Pin<Box<dyn Stream<Item = NodeIncomingEvent> + Send>>>,
 
     /// Subscribers for status events.
     status_subscribers: Vec<mpsc::Sender<StatusNotification>>,
     /// Subscribers for chain events.
     chain_subscribers: Vec<mpsc::Sender<ChainNotification>>,
-    /// Subscribers for chain events which are fed from the disk.
-    /// Automatically promoted to chain_subscribers after synchronization.
-    chain_readers: Vec<ChainReader>,
     /// Network interface.
     network: Network,
-
-    macro_block_propose_timer: Option<Delay>,
-    macro_block_view_change_timer: Option<Delay>,
-    micro_block_propose_timer: Option<oneshot::Receiver<Vec<u8>>>,
-    micro_block_view_change_timer: Option<Delay>,
 
     /// Txpool
     txpool_service: Option<TransactionPoolService>,
@@ -203,33 +200,32 @@ impl NodeService {
 
         let status_subscribers = Vec::new();
 
-        let mut streams =
-            Vec::<Box<dyn Stream<Item = NodeIncomingEvent, Error = ()> + Send>>::new();
+        let mut streams = Vec::<Pin<Box<dyn Stream<Item = NodeIncomingEvent> + Send>>>::new();
 
         // Control messages
-        streams.push(Box::new(inbox));
+        streams.push(Box::pin(inbox));
 
         // Transaction Requests
         let transaction_rx = network
             .subscribe(&TX_TOPIC)?
             .map(|m| NodeIncomingEvent::Transaction(m));
-        streams.push(Box::new(transaction_rx));
+        streams.push(transaction_rx.boxed());
 
         // Consensus Requests
         let consensus_rx = network
             .subscribe(&CONSENSUS_TOPIC)?
             .map(|m| NodeIncomingEvent::Consensus(m));
-        streams.push(Box::new(consensus_rx));
+        streams.push(consensus_rx.boxed());
 
         let view_change_rx = network
             .subscribe(&VIEW_CHANGE_TOPIC)?
             .map(|m| NodeIncomingEvent::ViewChangeMessage(m));
-        streams.push(Box::new(view_change_rx));
+        streams.push(view_change_rx.boxed());
 
         let view_change_proofs_rx = network
             .subscribe(&VIEW_CHANGE_PROOFS_TOPIC)?
             .map(|m| NodeIncomingEvent::ViewChangeProof(m));
-        streams.push(Box::new(view_change_proofs_rx));
+        streams.push(view_change_proofs_rx.boxed());
 
         let view_change_unicast_rx = network.subscribe_unicast(&VIEW_CHANGE_DIRECT)?.map(|m| {
             NodeIncomingEvent::ViewChangeProofMessage {
@@ -237,13 +233,13 @@ impl NodeService {
                 data: m.data,
             }
         });
-        streams.push(Box::new(view_change_unicast_rx));
+        streams.push(view_change_unicast_rx.boxed());
 
         // Sealed blocks broadcast topic.
         let block_rx = network
             .subscribe(&SEALED_BLOCK_TOPIC)?
             .map(|m| NodeIncomingEvent::Block(m));
-        streams.push(Box::new(block_rx));
+        streams.push(block_rx.boxed());
 
         // Chain loader messages.
         let requests_rx = network.subscribe_unicast(CHAIN_LOADER_TOPIC)?.map(|m| {
@@ -252,12 +248,9 @@ impl NodeService {
                 data: m.data,
             }
         });
-        streams.push(Box::new(requests_rx));
+        streams.push(requests_rx.boxed());
 
-        let events = select_all(streams);
-
-        let check_sync = Interval::new_interval(state.cfg.sync_change_timeout);
-        let chain_readers = Vec::new();
+        let check_sync = time::interval(state.cfg.sync_change_timeout);
         let chain_subscribers = Vec::new();
         let node = Node {
             outbox,
@@ -269,15 +262,10 @@ impl NodeService {
 
         let service = NodeService {
             state,
-            chain_readers,
             chain_subscribers,
             network: network.clone(),
-            macro_block_propose_timer: None,
-            macro_block_view_change_timer: None,
-            micro_block_propose_timer: None,
-            micro_block_view_change_timer: None,
             check_sync,
-            events,
+            events: streams,
             txpool_service,
             replication,
             status_subscribers,
@@ -291,30 +279,49 @@ impl NodeService {
         self.state.init()
     }
 
+    /// Notify all subscribers about new event.
+    fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) {
+        let mut i = 0;
+        while i < subscribers.len() {
+            let tx = &mut subscribers[i];
+            match tx.try_send(msg.clone()) {
+                Ok(_) => {}
+                Err(e /* SendError<ChainNotification> */) => {
+                    if e.is_full() {
+                        log::warn!("Subscriber is slow, discarding message, and remove subscriber");
+                    }
+                    subscribers.swap_remove(i);
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
     /// Handler subscription to status.
     fn handle_subscription_to_status(
-        &mut self,
+        status_subscribers: &mut Vec<mpsc::Sender<StatusNotification>>,
     ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
         let (tx, rx) = mpsc::channel(1);
-        self.status_subscribers.push(tx);
+        status_subscribers.push(tx);
         Ok(rx)
     }
 
     /// Handle subscription to chain.
     fn handle_subscription_to_chain(
-        &mut self,
+        state: &NodeState,
+        chain_readers: &mut Vec<ChainReader>,
         epoch: u64,
         offset: u32,
     ) -> Result<mpsc::Receiver<ChainNotification>, Error> {
-        if epoch > self.state.chain.epoch() {
+        if epoch > state.chain.epoch() {
             return Err(format_err!("Invalid epoch requested: epoch={}", epoch));
         }
         // Set buffer size to fit entire epoch plus some extra blocks.
-        let buffer = self.state.chain.cfg().micro_blocks_in_epoch as usize + 10;
+        let buffer = state.chain.cfg().micro_blocks_in_epoch as usize + 10;
         let (tx, rx) = mpsc::channel(buffer);
         let subscriber = ChainReader { tx, epoch, offset };
-        self.chain_readers.push(subscriber);
-        task::current().notify();
+        chain_readers.push(subscriber);
         Ok(rx)
     }
 
@@ -322,39 +329,44 @@ impl NodeService {
     // Loader
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
-    pub fn request_history_from(&mut self, from: pbc::PublicKey) -> Result<(), Error> {
-        let epoch = self.state.chain.epoch();
+    pub fn request_history_from(
+        network: &mut Network,
+        state: &NodeState,
+        from: pbc::PublicKey,
+    ) -> Result<(), Error> {
+        let epoch = state.chain.epoch();
         info!("Downloading blocks: from={}, epoch={}", &from, epoch);
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
-        self.network
-            .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+        network.send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(
-        &mut self,
+        network: &mut Network,
+        state: &NodeState,
         pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
-        if request.epoch > self.state.chain.epoch() {
+        if request.epoch > state.chain.epoch() {
             warn!(
                 "Received a loader request with epoch >= our_epoch: remote_epoch={}, our_epoch={}",
                 request.epoch,
-                self.state.chain.epoch()
+                state.chain.epoch()
             );
             return Ok(());
         }
 
-        self.send_blocks(pkey, request.epoch, 0)
+        Self::send_blocks(network, state, pkey, request.epoch, 0)
     }
 
     pub fn send_blocks(
-        &mut self,
+        network: &mut Network,
+        state: &NodeState,
         pkey: pbc::PublicKey,
         epoch: u64,
         offset: u32,
     ) -> Result<(), Error> {
         let mut blocks: Vec<Block> = Vec::new();
-        for block in self.state.chain.blocks_starting(epoch, offset) {
+        for block in state.chain.blocks_starting(epoch, offset) {
             blocks.push(block);
             // Feed the whole epoch.
             match blocks.last().unwrap() {
@@ -367,13 +379,12 @@ impl NodeService {
         }
         info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
-        self.network
-            .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
+        network.send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())
     }
 
     fn handle_response_blocks(
-        &mut self,
+        state: &mut NodeState,
         pkey: pbc::PublicKey,
         response: ResponseBlocks,
     ) -> Result<(), Error> {
@@ -395,20 +406,20 @@ impl NodeService {
             Some(Block::MicroBlock(block)) => block.header.epoch,
             None => unreachable!("Checked above"),
         };
-        if first_epoch > self.state.chain.epoch() {
+        if first_epoch > state.chain.epoch() {
             warn!(
                 "Received blocks from the future: from={}, our_epoch={}, first_epoch={}",
                 pkey,
-                self.state.chain.epoch(),
+                state.chain.epoch(),
                 first_epoch
             );
             return Ok(());
-        } else if last_epoch < self.state.chain.epoch() {
+        } else if last_epoch < state.chain.epoch() {
             warn!(
                 "Received blocks from the past: from={}, last_epoch={}, our_epoch={}",
                 pkey,
                 last_epoch,
-                self.state.chain.epoch()
+                state.chain.epoch()
             );
             return Ok(());
         }
@@ -417,7 +428,7 @@ impl NodeService {
             "Received blocks: from={}, first_epoch={}, our_epoch={}, last_epoch={}, num_blocks={}",
             pkey,
             first_epoch,
-            self.state.chain.epoch(),
+            state.chain.epoch(),
             last_epoch,
             response.blocks.len()
         );
@@ -425,141 +436,102 @@ impl NodeService {
         for block in response.blocks {
             // Fail on the first error.
             let event = NodeIncomingEvent::DecodedBlock(block);
-            self.state.handle_event(event);
+            state.handle_event(event);
         }
 
         Ok(())
     }
 
     pub fn handle_chain_loader_message(
-        &mut self,
+        network: &mut Network,
+        state: &mut NodeState,
         pkey: pbc::PublicKey,
         msg: ChainLoaderMessage,
     ) -> Result<(), Error> {
         match msg {
-            ChainLoaderMessage::Request(r) => self.handle_request_blocks(pkey, r),
-            ChainLoaderMessage::Response(r) => self.handle_response_blocks(pkey, r),
+            ChainLoaderMessage::Request(r) => Self::handle_request_blocks(network, state, pkey, r),
+            ChainLoaderMessage::Response(r) => Self::handle_response_blocks(state, pkey, r),
         }
     }
-}
 
-// Event loop.
-impl Future for NodeService {
-    type Item = ();
-    type Error = ();
+    pub async fn start(self) {
+        let macro_block_propose_timer = Fuse::terminated();
+        let macro_block_view_change_timer = Fuse::terminated();
+        let micro_block_propose_timer: Fuse<oneshot::Receiver<Vec<u8>>> = Fuse::terminated();
+        let micro_block_view_change_timer = Fuse::terminated();
+        pin_mut!(
+            macro_block_propose_timer,
+            macro_block_view_change_timer,
+            micro_block_propose_timer,
+            micro_block_view_change_timer
+        );
 
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        if let Some(timer) = &mut self.macro_block_propose_timer {
-            match timer.poll().unwrap() {
-                Async::Ready(()) => {
-                    std::mem::replace(&mut self.macro_block_propose_timer, None);
+        // let mut chain_readers = future::select_all(self.chain_readers.into_iter().map(Box::pin)).fuse();
+        // Subscribers for chain events which are fed from the disk.
+        // Automatically promoted to chain_subscribers after synchronization.
+        let mut chain_readers = Vec::<ChainReader>::new();
+        let mut status_subscribers = self.status_subscribers;
+        let mut chain_subscribers = self.chain_subscribers.clone();
+        let mut events = stream::select_all(self.events);
+        let mut replication = self.replication;
+        let mut state = self.state;
+        let mut txpool_service: OptionFuture<_> = self.txpool_service.map(FutureExt::fuse).into();
+        let mut check_sync = self.check_sync;
+        let mut network = self.network;
+
+        loop {
+            // handle events, then flush responses.
+            select! {
+                // poll timers
+                _ = macro_block_propose_timer => {
                     let event = NodeIncomingEvent::MacroBlockProposeTimer;
-                    self.state.handle_event(event);
-                }
-                Async::NotReady => {}
-            }
-        }
-        if let Some(timer) = &mut self.macro_block_view_change_timer {
-            match timer.poll().unwrap() {
-                Async::Ready(()) => {
-                    std::mem::replace(&mut self.macro_block_view_change_timer, None);
+                    state.handle_event(event);
+                },
+                _ = macro_block_view_change_timer => {
                     let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
-                    self.state.handle_event(event);
-                }
-                Async::NotReady => {}
-            }
-        }
-        if let Some(solver) = &mut self.micro_block_propose_timer {
-            match solver.poll().unwrap() {
-                Async::Ready(solution) => {
-                    std::mem::replace(&mut self.micro_block_propose_timer, None);
+                    state.handle_event(event);
+                },
+
+                solution = micro_block_propose_timer => {
+                    // Panic is possible only if thread of solver was killed, which is a bug.
+                    let solution = solution.expect("Solution should always be calculated, no panics expected.");
                     let event = NodeIncomingEvent::MicroBlockProposeTimer(solution);
-                    self.state.handle_event(event);
-                }
-                Async::NotReady => {}
-            }
-        }
-        if let Some(timer) = &mut self.micro_block_view_change_timer {
-            match timer.poll().unwrap() {
-                Async::Ready(()) => {
-                    std::mem::replace(&mut self.micro_block_view_change_timer, None);
+                    state.handle_event(event);
+                },
+
+                _ = micro_block_view_change_timer => {
                     let event = NodeIncomingEvent::MicroBlockViewChangeTimer;
-                    self.state.handle_event(event);
-                }
-                Async::NotReady => {}
-            }
-        }
-
-        loop {
-            match self.check_sync.poll() {
-                Ok(Async::Ready(Some(_))) => {
+                    state.handle_event(event);
+                },
+                interval = check_sync.tick().fuse() => {
                     let event = NodeIncomingEvent::CheckSyncTimer;
-                    self.state.handle_event(event);
-                    break;
-                }
-                Ok(Async::Ready(None)) => {
-                    error!("Error during process sync status");
-                    return Ok(Async::Ready(()));
-                }
-                Err(e) => {
-                    error!("Error: {}", e);
-                    return Err(());
-                }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-            }
-        }
+                    state.handle_event(event);
+                },
 
-        // Poll chain readers.
-        let mut i = 0;
-        while i < self.chain_readers.len() {
-            match self.chain_readers[i].poll(&self.state.chain) {
-                Ok(Async::Ready(())) => {
-                    // Synchronized with node, convert into a subscription.
-                    let subscriber = self.chain_readers.swap_remove(i);
-                    self.chain_subscribers.push(subscriber.tx);
-                }
-                Ok(Async::NotReady) => {
-                    i += 1;
-                }
-                Err(_e) => {
-                    self.chain_readers.swap_remove(i);
-                }
-            }
-        }
-
-        if let Some(ref mut txpool_service) = &mut self.txpool_service {
-            match txpool_service.poll().unwrap() {
-                Async::Ready(()) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => {}
-            };
-        }
-        // Poll internal events.
-        loop {
-            match self.events.poll().expect("all errors are already handled") {
-                Async::Ready(Some(event)) => {
+                _ = txpool_service => {/*do nothing*/},
+                event = events.next() => {
+                    let event = event.expect("Should be no end in internall event stream.");
                     match event {
                         NodeIncomingEvent::Request { request, tx } => {
                             match request {
                                 NodeRequest::ChangeUpstream {} => {
-                                    self.replication.change_upstream();
+                                    replication.change_upstream(false);
                                     let response = NodeResponse::UpstreamChanged;
                                     tx.send(response).ok(); // ignore errors.
                                     continue;
                                 }
                                 NodeRequest::ReplicationInfo {} => {
                                     let response =
-                                        NodeResponse::ReplicationInfo(self.replication.info());
+                                        NodeResponse::ReplicationInfo(replication.info());
                                     tx.send(response).ok(); // ignore errors.
                                     continue;
                                 }
                                 NodeRequest::SubscribeChain { epoch, offset } => {
                                     let response =
-                                        match self.handle_subscription_to_chain(epoch, offset) {
+                                        match Self::handle_subscription_to_chain(&mut state, &mut chain_readers, epoch, offset) {
                                             Ok(rx) => NodeResponse::SubscribedChain {
-                                                current_epoch: self.state.chain.epoch(),
-                                                current_offset: self.state.chain.offset(),
+                                                current_epoch: state.chain.epoch(),
+                                                current_offset: state.chain.offset(),
                                                 rx: Some(rx),
                                             },
                                             Err(e) => NodeResponse::Error {
@@ -570,9 +542,9 @@ impl Future for NodeService {
                                     continue;
                                 }
                                 NodeRequest::SubscribeStatus {} => {
-                                    let response = match self.handle_subscription_to_status() {
+                                    let response = match Self::handle_subscription_to_status(&mut status_subscribers) {
                                         Ok(rx) => {
-                                            let status = self.state.chain.status();
+                                            let status = state.chain.status();
                                             NodeResponse::SubscribedStatus {
                                                 status,
                                                 rx: Some(rx),
@@ -587,130 +559,167 @@ impl Future for NodeService {
                                 }
                                 request => {
                                     let event = NodeIncomingEvent::Request { request, tx };
-                                    self.state.handle_event(event)
+                                    state.handle_event(event)
                                 }
                             }
                         }
                         NodeIncomingEvent::ChainLoaderMessage { from, data } => {
                             if let Err(e) = ChainLoaderMessage::from_buffer(&data)
-                                .map(|data| self.handle_chain_loader_message(from, data))
+                                .map(|data| Self::handle_chain_loader_message(&mut network, &mut state, from, data))
                             {
                                 error!("Invalid block from loader: {}", e);
                             }
                         }
-                        event => self.state.handle_event(event),
+                        event => state.handle_event(event),
                     }
-                }
-                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => break,
-            }
-        }
-        // Replication
-        loop {
-            let micro_blocks_in_epoch = self.state.chain.cfg().micro_blocks_in_epoch;
-            let block_reader: &dyn BlockReader = &self.state.chain;
-            match self.replication.poll(
-                self.state.chain.epoch(),
-                self.state.chain.offset(),
-                micro_blocks_in_epoch,
-                block_reader,
-            ) {
-                Async::Ready(Some(ReplicationRow::LightBlock(_block))) => {
-                    panic!("Received the light block from the replication");
-                }
-                Async::Ready(Some(ReplicationRow::Block(block))) => {
-                    let event = NodeIncomingEvent::DecodedBlock(block);
-                    self.state.handle_event(event);
-                }
-                Async::Ready(None) => return Ok(Async::Ready(())), // Shutdown.
-                Async::NotReady => break,
-            }
-        }
+                },
 
-        //
-        // Flush events.
-        //
-        for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
-            let result = match event {
-                NodeOutgoingEvent::FacilitatorChanged { facilitator } => {
-                    if facilitator == self.state.network_pkey {
-                        info!("I am facilitator");
-                        let txpool_service = TransactionPoolService::new(self.network.clone());
-                        self.txpool_service = Some(txpool_service);
-                    } else {
-                        info!("Facilitator is {}", facilitator);
-                        self.txpool_service = None;
+            }
+            // Replication
+            'inner: loop {
+                // Replication interface need deep interaction with state and blockchain.
+                // So we create a temporary feature that fastly return result of poll.
+                // TODO: Replace by refcell and local task
+                let replication_fut = future::poll_fn(|cx| {
+                    let micro_blocks_in_epoch = state.chain.cfg().micro_blocks_in_epoch;
+                    let block_reader: &dyn BlockReader = &state.chain;
+                    Poll::Ready(replication.poll(
+                        cx,
+                        state.chain.epoch(),
+                        state.chain.offset(),
+                        micro_blocks_in_epoch,
+                        block_reader,
+                    ))
+                });
+
+                match replication_fut.await {
+                    Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
+                        panic!("Received the light block from the replication");
                     }
-                    Ok(())
+                    Poll::Ready(Some(ReplicationRow::Block(block))) => {
+                        let event = NodeIncomingEvent::DecodedBlock(block);
+                        state.handle_event(event);
+                    }
+                    Poll::Ready(None) => return (), // Shutdown main feature (replication failure).
+                    Poll::Pending => break 'inner,
                 }
-                NodeOutgoingEvent::Publish { topic, data } => {
-                    //
-                    self.network.publish(&topic, data)
+            }
+
+            for event in std::mem::replace(&mut state.outgoing, Vec::new()) {
+                trace!("Outgoing event = {:?}", event);
+                let result = match event {
+                    NodeOutgoingEvent::FacilitatorChanged { facilitator } => {
+                        if facilitator == state.network_pkey {
+                            info!("I am facilitator");
+                            let txpool = TransactionPoolService::new(network.clone());
+                            txpool_service = OptionFuture::from(Some(txpool).map(FutureExt::fuse));
+                        } else {
+                            info!("Facilitator is {}", facilitator);
+                            txpool_service = OptionFuture::from(None);
+                        }
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::ChangeUpstream {} => {
+                        replication.change_upstream(true);
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::Publish { topic, data } => {
+                        //
+                        network.publish(&topic, data)
+                    }
+                    NodeOutgoingEvent::Send { dest, topic, data } => {
+                        //
+                        network.send(dest, &topic, data)
+                    }
+                    NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
+                        macro_block_propose_timer.set(time::delay_for(duration).fuse());
+                        micro_block_propose_timer.set(Fuse::terminated());
+                        micro_block_view_change_timer.set(Fuse::terminated());
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
+                        macro_block_propose_timer.set(Fuse::terminated());
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
+                        macro_block_view_change_timer.set(time::delay_for(duration).fuse());
+                        micro_block_propose_timer.set(Fuse::terminated());
+                        micro_block_view_change_timer.set(Fuse::terminated());
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MicroBlockProposeTimer {
+                        random,
+                        vdf,
+                        difficulty,
+                    } => {
+                        let (tx, rx) = oneshot::channel::<Vec<u8>>();
+                        let challenge = random.to_bytes();
+                        let solver = move || {
+                            let solution = vdf.solve(&challenge, difficulty);
+                            tx.send(solution).ok(); // ignore errors.
+                        };
+                        // Spawn a background thread to solve VDF puzzle.
+                        thread::spawn(solver);
+                        micro_block_propose_timer.set(rx.fuse());
+                        macro_block_propose_timer.set(Fuse::terminated());
+                        macro_block_view_change_timer.set(Fuse::terminated());
+                        // task::current().notify();
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MicroBlockProposeTimerCancel => {
+                        micro_block_propose_timer.set(Fuse::terminated());
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
+                        micro_block_view_change_timer.set(time::delay_for(duration).fuse());
+                        macro_block_propose_timer.set(Fuse::terminated());
+                        macro_block_view_change_timer.set(Fuse::terminated());
+                        // task::current().notify();
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
+                        // TODO: refator on_block to be async fn.
+                        let block = block;
+                        let light_block = light_block;
+                        let replication = &mut replication;
+                        let state = &state;
+                        future::poll_fn(move |cx| {
+                            replication.on_block(
+                                cx,
+                                block.clone(),
+                                light_block.clone(),
+                                state.chain.cfg().micro_blocks_in_epoch,
+                            );
+                            Poll::Ready(())
+                        })
+                        .await;
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::StatusNotification(notification) => {
+                        Self::notify_subscribers(&mut status_subscribers, notification);
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::ChainNotification(notification) => {
+                        Self::notify_subscribers(&mut chain_subscribers, notification);
+                        Ok(())
+                    }
+                    NodeOutgoingEvent::RequestBlocksFrom { from } => {
+                        Self::request_history_from(&mut network, &state, from)
+                    }
+                    NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
+                        Self::send_blocks(&mut network, &mut state, to, epoch, offset)
+                    }
+                };
+                if let Err(e) = result {
+                    error!("Error: {}", e);
                 }
-                NodeOutgoingEvent::Send { dest, topic, data } => {
-                    //
-                    self.network.send(dest, &topic, data)
+            }
+
+            for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
+                if let Ok(_) = reader.advance(&state.chain) {
+                    chain_readers.push(reader)
                 }
-                NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                    let deadline = clock::now() + duration;
-                    self.macro_block_propose_timer = Some(Delay::new(deadline));
-                    task::current().notify();
-                    Ok(())
-                }
-                NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
-                    let deadline = clock::now() + duration;
-                    self.macro_block_view_change_timer = Some(Delay::new(deadline));
-                    task::current().notify();
-                    Ok(())
-                }
-                NodeOutgoingEvent::MicroBlockProposeTimer {
-                    random,
-                    vdf,
-                    difficulty,
-                } => {
-                    let (tx, rx) = oneshot::channel::<Vec<u8>>();
-                    let challenge = random.to_bytes();
-                    let solver = move || {
-                        let solution = vdf.solve(&challenge, difficulty);
-                        tx.send(solution).ok(); // ignore errors.
-                    };
-                    // Spawn a background thread to solve VDF puzzle.
-                    thread::spawn(solver);
-                    self.micro_block_propose_timer = Some(rx);
-                    task::current().notify();
-                    Ok(())
-                }
-                NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
-                    let deadline = clock::now() + duration;
-                    self.micro_block_view_change_timer = Some(Delay::new(deadline));
-                    task::current().notify();
-                    Ok(())
-                }
-                NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
-                    self.replication.on_block(
-                        block,
-                        light_block,
-                        self.state.chain.cfg().micro_blocks_in_epoch,
-                    );
-                    Ok(())
-                }
-                NodeOutgoingEvent::StatusNotification(notification) => {
-                    notify_subscribers(&mut self.status_subscribers, notification);
-                    Ok(())
-                }
-                NodeOutgoingEvent::ChainNotification(notification) => {
-                    notify_subscribers(&mut self.chain_subscribers, notification);
-                    Ok(())
-                }
-                NodeOutgoingEvent::RequestBlocksFrom { from } => self.request_history_from(from),
-                NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
-                    self.send_blocks(to, epoch, offset)
-                }
-            };
-            if let Err(e) = result {
-                error!("Error: {}", e);
             }
         }
-        Ok(Async::NotReady)
     }
 }

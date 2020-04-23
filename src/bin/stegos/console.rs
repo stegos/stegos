@@ -20,11 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 use failure::{format_err, Error};
-use futures::sync::mpsc::{channel, Receiver, Sender};
-use futures::try_ready;
-use futures::{Async, Future, Poll, Sink, Stream};
+use futures::future::Fuse;
+use futures::prelude::*;
+use futures::select;
 use lazy_static::*;
-use log::debug;
+use log::{debug, trace};
 use regex::Regex;
 use rpassword::prompt_password_stdout;
 use rustyline as rl;
@@ -32,9 +32,9 @@ use serde::ser::Serialize;
 use std::fmt;
 use std::io::stdin;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::time::Duration;
 use stegos_api::*;
 use stegos_blockchain::{chain_to_prefix, Timestamp};
@@ -147,42 +147,24 @@ impl FromStr for Formatter {
     }
 }
 
-pub enum ChainNameResolver {
-    NotSet,
-    Resolving,
-    Set(String),
-}
-
-impl From<Option<String>> for ChainNameResolver {
-    fn from(chain: Option<String>) -> Self {
-        match chain {
-            None => ChainNameResolver::NotSet,
-            Some(v) => ChainNameResolver::Set(v),
-        }
-    }
-}
-
 /// Console (stdin) service.
 pub struct ConsoleService {
-    /// Chain name.
-    chain: ChainNameResolver,
     /// API client.
     client: WebSocketClient,
     /// Current Account Id.
     account_id: Arc<Mutex<AccountId>>,
     /// A channel to receive message from stdin thread.
-    stdin: Receiver<String>,
-    /// A thread used for readline.
-    stdin_th: thread::JoinHandle<()>,
+    reader: Box<dyn Stream<Item = Result<String, Error>> + Unpin>,
     /// Display formatter.
     formatter: Formatter,
     /// Parse stdin line as JSON request.
     raw: bool,
+    subscribed: bool,
 }
 
 impl ConsoleService {
     /// Constructor.
-    pub fn new(
+    pub async fn spawn(
         chain: Option<String>,
         name: String,
         version: String,
@@ -191,49 +173,92 @@ impl ConsoleService {
         history_file: PathBuf,
         formatter: Formatter,
         raw: bool,
-    ) -> ConsoleService {
-        let (tx, rx) = channel::<String>(1);
-        let client = WebSocketClient::new(uri, api_token);
+        subscribed: bool,
+    ) -> Result<(), Error> {
+        let mut client = WebSocketClient::new(uri, api_token).await?;
         let account_id = Arc::new(Mutex::new("1".to_string()));
 
         if let Some(chain) = &chain {
             debug!("Initialising cli for chain = {}", chain);
             stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
                 .expect("Network prefix not initialised.");
+        } else {
+            Self::try_chain_name_resolve(&mut client).await;
         }
-        let (stdin_th, raw) = if atty::is(atty::Stream::Stdin) {
+        let (reader, raw) = if atty::is(atty::Stream::Stdin) {
             println!("{} {}", name, version);
             println!("Type 'help' to get help");
             println!();
             let th_account_id = account_id.clone();
             (
-                thread::spawn(move || Self::interactive_thread_f(tx, history_file, th_account_id)),
+                Self::interactive_thread_f(history_file, th_account_id),
                 false,
             )
         } else {
-            (
-                thread::spawn(move || Self::noninteractive_thread_f(tx)),
-                raw,
-            )
+            (Self::noninteractive_thread_f(), raw)
         };
-        let stdin = rx;
-        ConsoleService {
-            chain: chain.into(),
+        let service = ConsoleService {
             client,
             account_id,
-            stdin,
-            stdin_th,
+            reader,
             formatter,
             raw,
-        }
+            subscribed,
+        };
+        service.run().await
     }
 
+    async fn run(mut self) -> Result<(), Error> {
+        let mut first_time = true;
+        loop {
+            let mut notification_orig = self.client.notification();
+
+            let notification = unsafe { Pin::new_unchecked(&mut notification_orig) };
+            let mut notification = notification.fuse();
+            let mut reader = self.reader.next().fuse();
+            if !first_time {
+                reader = Fuse::terminated();
+            }
+            select! {
+                item = notification => {
+                    drop(notification_orig);
+                    self.on_notification(item.unwrap());
+                },
+                input = reader => {
+                    drop(notification_orig);
+                    match input {
+                        Some(Ok(line)) => {
+                            self.on_input(&line).await?;
+                        },
+                        Some(Err(e)) => {
+                            eprintln!("Error during processing stdin = {}", e);
+                            break;
+                        }
+                        None => {
+                            if !self.subscribed {
+                                self.on_exit()
+                            }
+                            else {
+                                println!("Keeping console for notifications.");
+                                first_time = false;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // TODO: FIx pormt in async/await
     /// Background thread to read stdin with TTY.
     fn interactive_thread_f(
-        mut tx: Sender<String>,
         history_file: PathBuf,
         account_id: Arc<Mutex<AccountId>>,
-    ) {
+    ) -> Box<dyn Stream<Item = Result<String, Error>> + Unpin> {
+        use futures::stream::try_unfold;
+        use tokio::task;
+
         let config = rl::Config::builder()
             .history_ignore_space(true)
             .history_ignore_dups(true)
@@ -245,64 +270,57 @@ impl ConsoleService {
         let mut rl = rl::Editor::<()>::with_config(config);
         rl.load_history(&history_file).ok(); // just ignore errors
 
-        loop {
-            let prompt = format!("account#{}> ", account_id.lock().unwrap().clone());
-            match rl.readline(&prompt) {
-                Ok(line) => {
-                    if line.is_empty() {
-                        continue;
+        let stream = try_unfold(rl, move |mut rl| {
+            let account_id_ref = account_id.clone();
+            let history_file_ref = history_file.clone();
+            async {
+                let handle = task::spawn_blocking(move || -> Result<_, Error> {
+                    let prompt = format!("account#{}> ", account_id_ref.lock().unwrap().clone());
+                    loop {
+                        match rl.readline(&prompt) {
+                            Ok(line) => {
+                                if line.is_empty() {
+                                    continue;
+                                }
+                                // Skip history for commands starting with whitespace.
+                                if !line.starts_with(" ") {
+                                    rl.add_history_entry(line.clone());
+                                }
+
+                                if let Err(e) = rl.save_history(&history_file_ref) {
+                                    eprintln!(
+                                        "Failed to save CLI history to {:?}: {}",
+                                        history_file_ref, e
+                                    );
+                                };
+
+                                return Ok(Some((line, rl)));
+                            }
+                            Err(rl::error::ReadlineError::Interrupted) => {
+                                return Err(rl::error::ReadlineError::Interrupted.into())
+                            }
+                            Err(rl::error::ReadlineError::Eof) => {
+                                return Err(rl::error::ReadlineError::Eof.into())
+                            }
+                            Err(err) => {
+                                eprintln!("CLI I/O Error: {}", err);
+                                return Err(err.into());
+                            }
+                        }
                     }
-                    // Skip history for commands starting with whitespace.
-                    if !line.starts_with(" ") {
-                        rl.add_history_entry(line.clone());
-                    }
-                    if tx.try_send(line).is_err() {
-                        assert!(tx.is_closed()); // this channel is never full
-                        break;
-                    }
-                    // Block until line is processed by ConsoleService.
-                    thread::park();
-                }
-                Err(rl::error::ReadlineError::Interrupted) | Err(rl::error::ReadlineError::Eof) => {
-                    break;
-                }
-                Err(e) => {
-                    eprintln!("CLI I/O Error: {}", e);
-                    break;
-                }
+                });
+                handle.await?
             }
-        }
-        tx.close().ok(); // ignore errors
-        if let Err(e) = rl.save_history(&history_file) {
-            eprintln!("Failed to save CLI history to {:?}: {}", history_file, e);
-        };
+        })
+        .map_err(From::from);
+        let stream = Box::pin(stream);
+        Box::new(stream)
     }
 
     /// Background thread to read stdin without TTY.
-    fn noninteractive_thread_f(mut tx: Sender<String>) {
-        loop {
-            match read_line() {
-                Ok(None) => {
-                    break; // EOF
-                }
-                Ok(Some(line)) => {
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if tx.try_send(line).is_err() {
-                        assert!(tx.is_closed()); // this channel is never full
-                        break;
-                    }
-                    // Block until line is processed by ConsoleService.
-                    thread::park();
-                }
-                Err(e) => {
-                    eprintln!("CLI I/O Error: {}", e);
-                    break;
-                }
-            }
-        }
-        tx.close().ok(); // ignore errors
+    fn noninteractive_thread_f() -> Box<dyn Stream<Item = Result<String, Error>> + Unpin> {
+        use tokio::io::{stdin, AsyncBufReadExt, BufReader};
+        Box::new(BufReader::new(stdin()).lines().map_err(From::from))
     }
 
     fn help() {
@@ -434,17 +452,21 @@ impl ConsoleService {
         eprintln!();
     }
 
-    fn send_network_request(&mut self, request: NetworkRequest) -> Result<(), WebSocketError> {
+    async fn send_network_request(&mut self, request: NetworkRequest) -> Result<(), Error> {
         self.print(&request);
         let request = Request {
             kind: RequestKind::NetworkRequest(request),
             id: 0,
         };
-        self.client.send(request)?;
+        let response = self.client.request(request).await?;
+        self.on_response(response);
         Ok(())
     }
 
-    fn send_wallet_control_request(&mut self, request: WalletControlRequest) -> Result<(), Error> {
+    async fn send_wallet_control_request(
+        &mut self,
+        request: WalletControlRequest,
+    ) -> Result<(), Error> {
         match &request {
             WalletControlRequest::CreateAccount { .. }
             | WalletControlRequest::RecoverAccount { .. } => {
@@ -462,11 +484,12 @@ impl ConsoleService {
             kind: RequestKind::WalletsRequest(request),
             id: 0,
         };
-        self.client.send(request)?;
+        let response = self.client.request(request).await?;
+        self.on_response(response);
         Ok(())
     }
 
-    fn send_account_request(&mut self, request: AccountRequest) -> Result<(), Error> {
+    async fn send_account_request(&mut self, request: AccountRequest) -> Result<(), Error> {
         match &request {
             AccountRequest::ChangePassword { .. }
             | AccountRequest::Seal { .. }
@@ -491,26 +514,40 @@ impl ConsoleService {
             kind: RequestKind::WalletsRequest(request),
             id: 0,
         };
-        self.client.send(request)?;
+        let response = self.client.request(request).await?;
+        self.on_response(response);
         Ok(())
     }
 
-    fn send_node_request(&mut self, request: NodeRequest) -> Result<(), WebSocketError> {
+    async fn send_raw_request(&mut self, request: serde_json::Value) -> Result<(), Error> {
+        trace!("Received raw request ={:?}", request);
+        self.print(&request);
+        let request = Request {
+            kind: RequestKind::Raw(request),
+            id: 0,
+        };
+        let response = self.client.request(request).await?;
+        self.on_response(response);
+        Ok(())
+    }
+
+    async fn send_node_request(&mut self, request: NodeRequest) -> Result<(), Error> {
         self.print(&request);
         let request = Request {
             kind: RequestKind::NodeRequest(request),
             id: 0,
         };
-        self.client.send(request)?;
+        let response = self.client.request(request).await?;
+        self.on_response(response);
         Ok(())
     }
 
     /// Called when line is typed on standard input.
-    fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
+    async fn on_input(&mut self, msg: &str) -> Result<bool, Error> {
         if self.raw {
             let request: Request = serde_json::from_str(msg)?;
             match request.kind {
-                RequestKind::NetworkRequest(request) => self.send_network_request(request)?,
+                RequestKind::NetworkRequest(request) => self.send_network_request(request).await?,
                 RequestKind::WalletsRequest(WalletRequest::AccountRequest {
                     account_id,
                     request,
@@ -519,22 +556,24 @@ impl ConsoleService {
                         let mut locked = self.account_id.lock().unwrap();
                         std::mem::replace(&mut *locked, account_id);
                     }
-                    self.send_account_request(request)?
+                    self.send_account_request(request).await?
                 }
                 RequestKind::WalletsRequest(WalletRequest::WalletControlRequest(request)) => {
-                    self.send_wallet_control_request(request)?
+                    self.send_wallet_control_request(request).await?
                 }
-                RequestKind::NodeRequest(request) => self.send_node_request(request)?,
+                RequestKind::NodeRequest(request) => self.send_node_request(request).await?,
+                RequestKind::Raw(request) => self.send_raw_request(request).await?,
             }
             return Ok(false); // keep stdin parked until response received.
         }
 
         let msg = msg.trim();
         if msg == "lock" || msg == "seal" {
-            self.send_account_request(AccountRequest::Seal {})?;
+            self.send_account_request(AccountRequest::Seal {}).await?;
         } else if msg == "unlock" || msg == "unseal" {
             let password = read_password()?;
-            self.send_account_request(AccountRequest::Unseal { password })?;
+            self.send_account_request(AccountRequest::Unseal { password })
+                .await?;
         } else if msg.starts_with("net publish ") {
             let caps = match PUBLISH_COMMAND_RE.captures(&msg[12..]) {
                 Some(c) => c,
@@ -547,7 +586,8 @@ impl ConsoleService {
             let topic = caps.name("topic").unwrap().as_str().to_string();
             let msg = caps.name("msg").unwrap().as_str();
             let data = msg.as_bytes().to_vec();
-            self.send_network_request(NetworkRequest::PublishBroadcast { topic, data })?;
+            self.send_network_request(NetworkRequest::PublishBroadcast { topic, data })
+                .await?;
         } else if msg.starts_with("net send ") {
             let caps = match SEND_COMMAND_RE.captures(&msg[9..]) {
                 Some(c) => c,
@@ -573,9 +613,11 @@ impl ConsoleService {
                 topic,
                 to: recipient,
                 data,
-            })?;
+            })
+            .await?;
         } else if msg.starts_with("net peers") {
-            self.send_network_request(NetworkRequest::ConnectedNodesRequest {})?
+            self.send_network_request(NetworkRequest::ConnectedNodesRequest {})
+                .await?
         } else if msg.starts_with("pay ") {
             let caps = match PAY_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -677,6 +719,7 @@ impl ConsoleService {
                     recipient,
                     amount,
                     payment_fee,
+                    raw: false,
                 }
             } else {
                 AccountRequest::Payment {
@@ -685,9 +728,10 @@ impl ConsoleService {
                     payment_fee,
                     comment,
                     with_certificate,
+                    raw: false,
                 }
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("validate certificate ") {
             let caps = match VALIDATE_CERTIFICATE_COMMAND_RE.captures(&msg[20..]) {
                 Some(c) => c,
@@ -741,7 +785,7 @@ impl ConsoleService {
                 recipient,
                 rvalue,
             };
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg.starts_with("msg ") {
             let caps = match MSG_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -771,12 +815,13 @@ impl ConsoleService {
                 payment_fee,
                 comment,
                 with_certificate: false,
+                raw: false,
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("stake all") {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::StakeAll { payment_fee };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("stake remote ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[13..]) {
                 Some(c) => c,
@@ -800,7 +845,7 @@ impl ConsoleService {
                 amount,
                 payment_fee,
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("stake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[6..]) {
                 Some(c) => c,
@@ -824,11 +869,11 @@ impl ConsoleService {
                 amount,
                 payment_fee,
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "unstake" {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::UnstakeAll { payment_fee };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("unstake ") {
             let caps = match STAKE_COMMAND_RE.captures(&msg[8..]) {
                 Some(c) => c,
@@ -852,41 +897,43 @@ impl ConsoleService {
                 amount,
                 payment_fee,
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "cloak" {
             let payment_fee = PAYMENT_FEE;
             let request = AccountRequest::CloakAll { payment_fee };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "show version" {
-            self.send_network_request(NetworkRequest::VersionInfo {})?;
+            self.send_network_request(NetworkRequest::VersionInfo {})
+                .await?;
             return Ok(true);
         } else if msg == "show validators" {
-            self.send_node_request(NodeRequest::ValidatorsInfo {})?;
+            self.send_node_request(NodeRequest::ValidatorsInfo {})
+                .await?;
             return Ok(true);
         } else if msg == "show keys" {
             let request = AccountRequest::AccountInfo {};
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "show balance" {
             let request = AccountRequest::BalanceInfo {};
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "show election" {
             let request = NodeRequest::ElectionInfo {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "show escrow" {
             let request = NodeRequest::EscrowInfo {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "show replication" {
             let request = NodeRequest::ReplicationInfo {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "change upstream" {
             let request = NodeRequest::ChangeUpstream {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "show utxo" {
             let request = AccountRequest::UnspentInfo {};
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "show light replication" {
             let request = WalletControlRequest::LightReplicationInfo {};
-            self.send_wallet_control_request(request)?
+            self.send_wallet_control_request(request).await?
         } else if msg.starts_with("show history") {
             let arg = &msg[12..];
             let starting_from = if arg.is_empty() {
@@ -898,10 +945,10 @@ impl ConsoleService {
                 starting_from,
                 limit: CONSOLE_HISTORY_LIMIT,
             };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg == "show recovery" {
             let request = AccountRequest::GetRecovery {};
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("show block") {
             let caps = match SHOW_BLOCK_COMMAND_RE.captures(&msg[10..]) {
                 Some(c) => c,
@@ -921,7 +968,7 @@ impl ConsoleService {
                 let epoch: u64 = epoch.as_str().parse()?;
                 NodeRequest::MacroBlockInfo { epoch }
             };
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg.starts_with("subscribe chain") {
             let caps = match SHOW_BLOCK_COMMAND_RE.captures(&msg[15..]) {
                 Some(c) => c,
@@ -938,20 +985,20 @@ impl ConsoleService {
                 0u32
             };
             let request = NodeRequest::SubscribeChain { epoch, offset };
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg.starts_with("show status") {
             let request = NodeRequest::StatusInfo {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg.starts_with("subscribe status") {
             let request = NodeRequest::SubscribeStatus {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "show accounts" {
             let request = WalletControlRequest::AccountsInfo {};
-            self.send_wallet_control_request(request)?;
+            self.send_wallet_control_request(request).await?;
         } else if msg == "create account" {
             let password = read_password_with_confirmation()?;
             let request = WalletControlRequest::CreateAccount { password };
-            self.send_wallet_control_request(request)?;
+            self.send_wallet_control_request(request).await?;
         } else if msg == "recover account" {
             let recovery = {
                 if !atty::is(atty::Stream::Stdin) {
@@ -965,11 +1012,11 @@ impl ConsoleService {
                 recovery: AccountRecovery { recovery },
                 password,
             };
-            self.send_wallet_control_request(request)?;
+            self.send_wallet_control_request(request).await?;
         } else if msg == "passwd" {
             let new_password = read_password_with_confirmation()?;
             let request = AccountRequest::ChangePassword { new_password };
-            self.send_account_request(request)?
+            self.send_account_request(request).await?
         } else if msg.starts_with("use ") {
             let caps = match USE_COMMAND_RE.captures(&msg[4..]) {
                 Some(c) => c,
@@ -997,16 +1044,16 @@ impl ConsoleService {
                 account_id
             };
             let request = WalletControlRequest::DeleteAccount { account_id };
-            self.send_wallet_control_request(request)?;
+            self.send_wallet_control_request(request).await?;
         } else if msg == "pop block" {
             let request = NodeRequest::PopMicroBlock {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "enable restaking" {
             let request = NodeRequest::EnableRestaking {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else if msg == "disable restaking" {
             let request = NodeRequest::DisableRestaking {};
-            self.send_node_request(request)?
+            self.send_node_request(request).await?
         } else {
             Self::help();
             return Ok(true);
@@ -1032,6 +1079,9 @@ impl ConsoleService {
             }
         }
     }
+    fn on_notification(&mut self, notification: Response) {
+        self.print(&notification);
+    }
 
     fn on_response(&mut self, response: Response) {
         match &response.kind {
@@ -1039,7 +1089,6 @@ impl ConsoleService {
             | ResponseKind::WalletResponse(_)
             | ResponseKind::NetworkResponse(_) => {
                 self.print(&response);
-                self.stdin_th.thread().unpark();
             }
             _ => {
                 self.print(&response);
@@ -1047,105 +1096,22 @@ impl ConsoleService {
         }
     }
 
-    fn try_chain_name_resolve(&mut self) -> Poll<(), ()> {
-        match &mut self.chain {
-            // Request name if it was not set.
-            ChainNameResolver::NotSet => {
-                debug!("ChainNameResolver::NotSet");
-                // Wait for connect before send.
-                if !self.client.is_connected() {
-                    match self.client.poll() {
-                        Ok(Async::NotReady) => {}
-                        Ok(Async::Ready(_)) | Err(()) => unreachable!(),
-                    }
-                    return Ok(Async::NotReady);
-                }
-
-                let request = Request {
-                    kind: RequestKind::NetworkRequest(NetworkRequest::ChainName {}),
-                    id: 0,
-                };
-
-                match self.client.send(request) {
-                    Err(e) => panic!("Cannot send prefix request = {}", e),
-                    Ok(_) => {
-                        self.chain = ChainNameResolver::Resolving;
-                        Ok(Async::NotReady)
-                    }
-                }
-            }
-            ChainNameResolver::Resolving => {
-                debug!("ChainNameResolver::Resolving");
-                match self.client.poll().unwrap() {
-                    Async::Ready(response) => {
-                        let chain = match response.unwrap() {
-                            Response {
-                                kind:
-                                    ResponseKind::NetworkResponse(NetworkResponse::ChainName { name }),
-                                ..
-                            } => name,
-                            response => {
-                                panic!("Wrong reponse to chain name request = {:?}", response)
-                            }
-                        };
-                        debug!("Initialising cli for chain = {}", chain);
-                        stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
-                            .expect("Network prefix not initialised.");
-                        self.chain = ChainNameResolver::Set(chain);
-                        Ok(Async::Ready(()))
-                    }
-                    Async::NotReady => Ok(Async::NotReady),
-                }
-            }
-            ChainNameResolver::Set(_) => Ok(Async::Ready(())), // If name was set just resume work
-        }
-    }
-}
-
-// Event loop.
-impl Future for ConsoleService {
-    type Item = ();
-    type Error = ();
-
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        try_ready!(self.try_chain_name_resolve());
-
-        loop {
-            match self.client.poll() {
-                Ok(Async::Ready(response)) => {
-                    self.on_response(response.unwrap());
-                }
-                Ok(Async::NotReady) => {
-                    break;
-                }
-                Err(()) => unreachable!(),
-            }
-        }
-
-        // Ignore stdin until client is connected.
-        if !self.client.is_connected() {
-            return Ok(Async::NotReady);
-        }
-
-        loop {
-            match self.stdin.poll() {
-                Ok(Async::Ready(Some(line))) => match self.on_input(&line) {
-                    Ok(true) => {
-                        self.stdin_th.thread().unpark();
-                    }
-                    Ok(false) => {}
-                    Err(e) => {
-                        eprintln!("{}", e);
-                        self.stdin_th.thread().unpark();
-                    }
-                },
-                Ok(Async::Ready(None)) => self.on_exit(),
-                Ok(Async::NotReady) => break, // fall through
-                Err(()) => unreachable!(),
-            }
-        }
-
-        return Ok(Async::NotReady);
+    async fn try_chain_name_resolve(client: &mut WebSocketClient) {
+        let request = Request {
+            kind: RequestKind::NetworkRequest(NetworkRequest::ChainName {}),
+            id: 0,
+        };
+        let response = client.request(request).await.unwrap();
+        let chain = match response {
+            Response {
+                kind: ResponseKind::NetworkResponse(NetworkResponse::ChainName { name }),
+                ..
+            } => name,
+            response => panic!("Wrong reponse to chain name request = {:?}", response),
+        };
+        debug!("Initialising cli for chain = {}", chain);
+        stegos_crypto::set_network_prefix(chain_to_prefix(&chain))
+            .expect("Network prefix not initialised.");
     }
 }
 

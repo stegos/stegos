@@ -22,13 +22,13 @@ members = [
     "consensus",
     "crypto",
     "keychain",
-    "network",
+    # "network",
+    "network_async",
     "node",
     "txpool",
     "replication",
     "serialization",
     "wallet",
-    "network/stubs/libp2p",
     "crypto/stubs/vdf_field",
 ]
 
@@ -38,7 +38,7 @@ stegos_blockchain = { version = "1.0.0", path = "./blockchain" }
 stegos_consensus = { version = "1.0.0", path = "./consensus" }
 stegos_crypto = { version = "1.0.0", path = "./crypto" }
 stegos_keychain = { version = "1.0.0", path = "./keychain" }
-stegos_network = { version = "1.0.0", path = "./network" }
+stegos_network = { version = "1.0.0", path = "./network_async", package="stegos_network_async"}
 stegos_replication = { version = "1.0.0", path = "./replication" }
 stegos_node = { version = "1.0.0", path = "./node" }
 stegos_serialization = { version = "1.0.0", path = "./serialization" }
@@ -49,8 +49,8 @@ bit-vec = "0.6"
 clap = "2.32"
 dirs = "2.0"
 failure = "0.1"
-futures = "0.1"
-hyper = "0.12"
+futures = "0.3"
+hyper = "0.13.5"
 lazy_static = "1.1"
 log = "0.4"
 log4rs = { version = "0.8", features = ["all_components", "gzip", "file", "toml_format"] }
@@ -63,8 +63,7 @@ serde = "1.0"
 serde_derive = "1.0"
 serde_yaml = "0.8"
 simple_logger = "1.2"
-tokio = { version = "0.1", default-features = false, features = []}
-tokio-timer = "0.2"
+tokio =  {version="0.2.13", features =["time", "io-std", "rt-threaded", "macros"]}
 toml = "0.5"
 humantime = "1.2.0"
 tempdir = "0.3"
@@ -74,9 +73,14 @@ atty = "0.2"
 serde_json = "1.0"
 jni = "0.14.0"
 backtrace = "0.3"
+async-trait="0.1.2"
+rocksdb = { version = "0.13", default-features = false, features = [ "zstd","snappy", "lz4"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 android_logger = "0.8"
+
+[dev-dependencies]
+pretty_assertions = "0.6.1"
 
 
 [build-dependencies]
@@ -86,7 +90,7 @@ chrono = "0.4"
 lazy_static = "1.4.0"
 
 [profile.release]
-panic = "abort"
+# panic = "abort"
 debug = 2
 
 [profile.dev]

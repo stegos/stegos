@@ -90,6 +90,15 @@ pub struct EpochInfo {
     pub awards: AwardsInfo,
 }
 
+impl EpochInfo {
+    pub fn into_stakers_group(&self) -> StakersGroup {
+        self.validators
+            .iter()
+            .map(|v| (v.network_pkey, v.slots))
+            .collect()
+    }
+}
+
 /// Retrospective information for some epoch.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LightEpochInfo {

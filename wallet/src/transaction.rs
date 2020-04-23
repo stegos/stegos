@@ -23,7 +23,7 @@
 
 use crate::change::*;
 use crate::error::*;
-use crate::snowball::ProposedUTXO;
+// use crate::snowball::ProposedUTXO;
 use crate::storage::{OutputValue, PaymentValue, PublicPaymentValue, StakeValue};
 use failure::Error;
 use log::*;
@@ -51,114 +51,114 @@ impl From<PaymentPayloadData> for TransactionType {
     }
 }
 
-/// Create a new snowball payment transaction.
-pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
-    sender_pkey: &PublicKey,
-    recipient: &PublicKey,
-    unspent_iter: UnspentIter,
-    amount: i64,
-    payment_fee: i64,
-    data: PaymentPayloadData,
-    max_inputs_in_tx: usize,
-) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
-where
-    UnspentIter: Iterator<Item = (PaymentOutput, i64)>,
-{
-    if amount < 0 {
-        return Err(WalletError::NegativeAmount(amount).into());
-    }
+// /// Create a new snowball payment transaction.
+// pub(crate) fn create_snowball_transaction<'a, UnspentIter>(
+//     sender_pkey: &PublicKey,
+//     recipient: &PublicKey,
+//     unspent_iter: UnspentIter,
+//     amount: i64,
+//     payment_fee: i64,
+//     data: PaymentPayloadData,
+//     max_inputs_in_tx: usize,
+// ) -> Result<(Vec<(Hash, PaymentOutput)>, Vec<ProposedUTXO>, i64), Error>
+// where
+//     UnspentIter: Iterator<Item = (PaymentOutput, i64)>,
+// {
+//     if amount < 0 {
+//         return Err(WalletError::NegativeAmount(amount).into());
+//     }
 
-    data.validate()?;
+//     data.validate()?;
 
-    debug!(
-        "Creating Snowball payment transaction: recipient={}, amount={}, data={:?}",
-        recipient, amount, data
-    );
+//     debug!(
+//         "Creating Snowball payment transaction: recipient={}, amount={}, data={:?}",
+//         recipient, amount, data
+//     );
 
-    //
-    // Find inputs
-    //
+//     //
+//     // Find inputs
+//     //
 
-    trace!("Checking for available funds in the account...");
-    let fee = 2 * payment_fee;
-    let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, max_inputs_in_tx)?;
-    let inputs: Vec<Output> = inputs
-        .into_iter()
-        .map(|o| Output::PaymentOutput(o.clone()))
-        .collect();
-    assert!(!inputs.is_empty());
+//     trace!("Checking for available funds in the account...");
+//     let fee = 2 * payment_fee;
+//     let (inputs, fee, change) = find_utxo(unspent_iter, amount, fee, max_inputs_in_tx)?;
+//     let inputs: Vec<Output> = inputs
+//         .into_iter()
+//         .map(|o| Output::PaymentOutput(o.clone()))
+//         .collect();
+//     assert!(!inputs.is_empty());
 
-    debug!(
-        "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
-        recipient,
-        amount,
-        amount + change + fee,
-        change,
-        fee
-    );
-    let mut inputs_pairs = Vec::<(Hash, PaymentOutput)>::new();
-    for input in &inputs {
-        let h = Hash::digest(input);
-        match input {
-            Output::PaymentOutput(o) => {
-                inputs_pairs.push((h.clone(), o.clone()));
-            }
-            _ => {
-                return Err(WalletError::IncorrectTXINType.into());
-            }
-        }
-        debug!("Use UTXO: hash={}", h);
-    }
+//     debug!(
+//         "Transaction preview: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+//         recipient,
+//         amount,
+//         amount + change + fee,
+//         change,
+//         fee
+//     );
+//     let mut inputs_pairs = Vec::<(Hash, PaymentOutput)>::new();
+//     for input in &inputs {
+//         let h = Hash::digest(input);
+//         match input {
+//             Output::PaymentOutput(o) => {
+//                 inputs_pairs.push((h.clone(), o.clone()));
+//             }
+//             _ => {
+//                 return Err(WalletError::IncorrectTXINType.into());
+//             }
+//         }
+//         debug!("Use UTXO: hash={}", h);
+//     }
 
-    //
-    // Create outputs
-    //
+//     //
+//     // Create outputs
+//     //
 
-    let mut outputs: Vec<ProposedUTXO> = Vec::<ProposedUTXO>::with_capacity(2);
+//     let mut outputs: Vec<ProposedUTXO> = Vec::<ProposedUTXO>::with_capacity(2);
 
-    // Create an output for payment
-    trace!("Creating payment UTXO...");
-    let output1 = ProposedUTXO {
-        recip: recipient.clone(),
-        amount,
-        data: data.clone(),
-        is_change: false,
-    };
-    outputs.push(output1);
+//     // Create an output for payment
+//     trace!("Creating payment UTXO...");
+//     let output1 = ProposedUTXO {
+//         recip: recipient.clone(),
+//         amount,
+//         data: data.clone(),
+//         is_change: false,
+//     };
+//     outputs.push(output1);
 
-    info!(
-        "Created payment UTXO: recipient={}, amount={}, data={:?}",
-        recipient, amount, data
-    );
+//     info!(
+//         "Created payment UTXO: recipient={}, amount={}, data={:?}",
+//         recipient, amount, data
+//     );
 
-    if change > 0 {
-        // Create an output for change
-        trace!("Creating change UTXO...");
-        let data = PaymentPayloadData::Comment("Change".to_string());
-        let output2 = ProposedUTXO {
-            recip: sender_pkey.clone(),
-            amount: change,
-            data: data.clone(),
-            is_change: true,
-        };
-        info!(
-            "Created change UTXO: recipient={}, change={}, data={:?}",
-            sender_pkey, change, data
-        );
-        outputs.push(output2);
-    }
+//     if change > 0 {
+//         // Create an output for change
+//         trace!("Creating change UTXO...");
+//         let data = PaymentPayloadData::Comment("Change".to_string());
+//         let output2 = ProposedUTXO {
+//             recip: sender_pkey.clone(),
+//             amount: change,
+//             data: data.clone(),
+//             is_change: true,
+//         };
+//         info!(
+//             "Created change UTXO: recipient={}, change={}, data={:?}",
+//             sender_pkey, change, data
+//         );
+//         outputs.push(output2);
+//     }
 
-    info!(
-        "Created payment transaction: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
-        recipient,
-        amount,
-        amount + change + fee,
-        change,
-        fee
-    );
+//     info!(
+//         "Created payment transaction: recipient={}, amount={}, withdrawn={}, change={}, fee={}",
+//         recipient,
+//         amount,
+//         amount + change + fee,
+//         change,
+//         fee
+//     );
 
-    Ok((inputs_pairs, outputs, fee))
-}
+//     Ok((inputs_pairs, outputs, fee))
+// }
 
 /// Create a new payment transaction.
 pub(crate) fn create_payment_transaction<'a, UnspentIter>(

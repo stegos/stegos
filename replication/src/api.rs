@@ -32,32 +32,37 @@ pub enum PeerInfo {
         peer_id: String,
     },
     Discovered {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Connecting {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Connected {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Accepted {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
     },
     Receiving {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         epoch: u64,
@@ -66,8 +71,9 @@ pub enum PeerInfo {
         blocks_received: u64,
     },
     Sending {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         epoch: u64,
@@ -76,8 +82,9 @@ pub enum PeerInfo {
         blocks_sent: u64,
     },
     Failed {
+        banned: bool,
         peer_id: String,
-        multiaddr: String,
+        multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
         idle: Duration,
         error: String,

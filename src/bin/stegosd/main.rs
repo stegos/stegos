@@ -25,9 +25,9 @@ use crate::config::GeneralConfig;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
-use futures::{Future, Stream};
+use futures::{Future, Stream, StreamExt};
 use hyper::server::Server;
-use hyper::service::service_fn_ok;
+use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
 use log::*;
 use log4rs::append::console::ConsoleAppender;
@@ -44,7 +44,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::{fs, process};
-use stegos_api::{load_or_create_api_token, WebSocketServer};
+use stegos_api::{load_or_create_api_token, server::spawn_server};
 use stegos_blockchain::{
     chain_to_prefix, initialize_chain, Blockchain, ConsistencyCheck, Timestamp,
 };
@@ -54,7 +54,7 @@ use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
 use stegos_node::NodeService;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
-use tokio_timer::clock;
+use tokio::time::Instant;
 
 /// The default file name for configuration
 const STEGOSD_TOML: &'static str = "stegosd.toml";
@@ -169,7 +169,7 @@ fn load_logger_configuration(
     Ok(log4rs::init_config(config)?)
 }
 
-fn report_metrics(_req: Request<Body>) -> Response<Body> {
+async fn report_metrics(_req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
     let mut response = Response::builder();
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
@@ -188,7 +188,7 @@ fn report_metrics(_req: Request<Body>) -> Response<Body> {
         .header("Content-Type", encoder.format_type())
         .body(Body::from(buffer))
         .unwrap();
-    res
+    Ok(res)
 }
 
 /// Enable backtraces and coredumps.
@@ -351,7 +351,7 @@ fn load_configuration(args: &ArgMatches<'_>) -> Result<config::Config, Error> {
     Ok(cfg)
 }
 
-fn run() -> Result<(), Error> {
+async fn run() -> Result<(), Error> {
     let name = "Stegos Node";
     let version = format!(
         "{}.{}.{} ({} {})",
@@ -534,25 +534,24 @@ fn run() -> Result<(), Error> {
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
     // Initialize network
-    let mut rt = Runtime::new()?;
     let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
         cfg.network.clone(),
         network_skey.clone(),
         network_pkey.clone(),
-    )?;
+    )
+    .await?;
 
-    // Start metrics exporter
+    // // Start metrics exporter
     if cfg.general.prometheus_endpoint != "" {
         let addr: SocketAddr = cfg.general.prometheus_endpoint.parse()?;
         info!("Starting Prometheus Exporter on {}", &addr);
 
-        let prom_serv = || service_fn_ok(report_metrics);
-        let hyper_service = Server::bind(&addr)
-            .serve(prom_serv)
-            .map_err(|e| error!("failed to bind prometheus exporter: {}", e));
+        let service =
+            make_service_fn(|_| async { Ok::<_, hyper::Error>(service_fn(report_metrics)) });
+        let hyper_service = Server::bind(&addr).serve(service);
 
         // Run hyper server to export Prometheus metrics
-        rt.spawn(hyper_service);
+        tokio::spawn(hyper_service);
     }
 
     // Initialize blockchain
@@ -562,8 +561,7 @@ fn run() -> Result<(), Error> {
         cfg.general.chain,
         Hash::digest(&genesis)
     );
-
-    let (node, wallet) = if !args.is_present("light") {
+    let (node, wallet): (_, Option<_>) = if !args.is_present("light") {
         info!("Starting the full node");
         let timestamp = Timestamp::now();
         let chain = Blockchain::new(
@@ -573,7 +571,6 @@ fn run() -> Result<(), Error> {
             genesis,
             timestamp,
         )?;
-
         // Initialize node
         let (mut node_service, node) = NodeService::new(
             cfg.node.clone(),
@@ -587,27 +584,22 @@ fn run() -> Result<(), Error> {
         )?;
 
         // Start all services when network is ready.
-        let executor = rt.executor();
-        let network_ready_future = network
-            .subscribe(&NETWORK_STATUS_TOPIC)?
-            .into_future()
-            .map_err(drop)
-            .and_then(|_s| {
-                // Sic: NetworkReady doesn't wait until unicast networking is initialized.
-                // https://github.com/stegos/stegos/issues/1192
-                // Fire a timer here to wait until unicast networking is fully initialized.
-                // This duration (30 secs) was experimentally found on the real network.
-                let network_grace_period = std::time::Duration::from_secs(0);
-                tokio_timer::Delay::new(clock::now() + network_grace_period).map_err(drop)
-            })
-            .and_then(move |()| {
-                info!("Network is ready");
-                // TODO: how to handle errors here?
-                node_service.init().expect("shit happens");
-                executor.spawn(node_service);
-                Ok(())
-            });
-        rt.spawn(network_ready_future);
+        let network_ready_future = async move {
+            // let item = network
+            // .subscribe(&NETWORK_STATUS_TOPIC).expect("Cannot subscribe to network status.")
+            // .next().await; //TODO: Ready by default
+            // Sic: NetworkReady doesn't wait until unicast networking is initialized.
+            // https://github.com/stegos/stegos/issues/1192
+            // Fire a timer here to wait until unicast networking is fully initialized.
+            // This duration (30 secs) was experimentally found on the real network.
+            let network_grace_period = std::time::Duration::from_secs(0);
+            tokio::time::delay_for(network_grace_period).await;
+            info!("Network is ready");
+            // TODO: how to handle errors here?
+            node_service.init().expect("shit happens");
+            tokio::spawn(node_service.start());
+        };
+        tokio::spawn(network_ready_future);
 
         (Some(node), None)
     } else {
@@ -619,12 +611,11 @@ fn run() -> Result<(), Error> {
             network.clone(),
             peer_id,
             replication_rx,
-            rt.executor(),
             Hash::digest(&genesis),
             chain_cfg,
             cfg.node.max_inputs_in_tx,
         )?;
-        rt.spawn(wallet_service);
+        tokio::spawn(wallet_service.start());
         (None, Some(wallet))
     };
 
@@ -632,27 +623,27 @@ fn run() -> Result<(), Error> {
     if cfg.general.api_endpoint != "" {
         let token_file = root_dir.join("api.token");
         let api_token = load_or_create_api_token(&token_file)?;
-        WebSocketServer::spawn(
+        spawn_server(
             cfg.general.api_endpoint,
             api_token,
-            rt.executor(),
-            network.clone(),
-            wallet,
-            node,
+            // wallet,
+            vec![Box::new(node), Box::new(wallet)],
+            network.clone().into(),
             version,
             cfg.general.chain,
-        )?;
+        )
+        .await?;
     }
 
     // Start main event loop
-    rt.block_on(network_service)
-        .expect("errors are handled earlier");
+    network_service.await;
 
     Ok(())
 }
 
-fn main() {
-    if let Err(e) = run() {
+#[tokio::main]
+async fn main() {
+    if let Err(e) = run().await {
         eprintln!("{}", e); // Logger can be not yet initialized.
         error!("{:?}", e);
         process::exit(1)
@@ -663,7 +654,10 @@ fn main() {
 mod tests {
     use super::*;
     use simple_logger;
+    use std::ffi::OsStr;
+    use stegos_blockchain::ChainConfig;
     use tempdir::TempDir;
+    // use pretty_assertions::assert_eq;
 
     #[test]
     #[ignore]
@@ -728,5 +722,35 @@ mod tests {
         warn!("This is warn output");
         error!("This is error output");
         assert_eq!(2 + 2, 4);
+    }
+
+    #[test]
+    #[ignore]
+    fn serde() {
+        simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
+
+        let timestamp = Timestamp::now();
+        let (genesis, chain_cfg) = initialize_chain(&"testnet").unwrap();
+
+        stegos_crypto::set_network_prefix(chain_to_prefix(&"testnet")).ok();
+
+        let blockchain = Blockchain::new(
+            chain_cfg,
+            OsStr::new("/home/vladimir/stegos/data/chain").as_ref(),
+            ConsistencyCheck::None,
+            genesis,
+            timestamp,
+        )
+        .unwrap();
+
+        let block = blockchain.macro_block(26).unwrap().into_owned();
+
+        let block_serialized = serde_json::to_string(&block).unwrap();
+
+        let block_deserialized: stegos_blockchain::MacroBlock =
+            serde_json::from_str(&block_serialized).unwrap();
+        println!("left: {:#?}", block);
+        println!("right: {:#?}", block_deserialized);
+        panic!();
     }
 }

@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![recursion_limit = "1024"] // used for `futures::select! macro`
 #![deny(warnings)]
 
 pub mod api;
@@ -38,7 +39,7 @@ use crate::error::*;
 use crate::mempool::Mempool;
 use crate::validation::*;
 use failure::{bail, format_err, Error};
-use futures::sync::oneshot;
+use futures::channel::oneshot;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -138,6 +139,7 @@ pub enum NodeOutgoingEvent {
         topic: String,
         data: Vec<u8>,
     },
+    ChangeUpstream {},
     Send {
         dest: pbc::PublicKey,
         topic: String,
@@ -153,12 +155,14 @@ pub enum NodeOutgoingEvent {
     ChainNotification(ChainNotification),
     StatusNotification(StatusNotification),
     MacroBlockProposeTimer(Duration),
+    MacroBlockProposeTimerCancel,
     MacroBlockViewChangeTimer(Duration),
     MicroBlockProposeTimer {
         random: Hash,
         vdf: VDF,
         difficulty: u64,
     },
+    MicroBlockProposeTimerCancel,
     MicroBlockViewChangeTimer(Duration),
     RequestBlocksFrom {
         from: pbc::PublicKey,
@@ -169,19 +173,20 @@ pub enum NodeOutgoingEvent {
         offset: u32,
     },
 }
-
+#[derive(Debug)]
 enum MicroBlockTimer {
     None,
     Propose,
     ViewChange,
 }
-
+#[derive(Debug)]
 enum MacroBlockTimer {
     None,
     Propose,
     ViewChange,
 }
 
+#[derive(Debug)]
 enum Validation {
     MicroBlockAuditor,
     MicroBlockValidator {
@@ -948,7 +953,22 @@ impl NodeState {
             .epoch_info(epoch)?
             .expect("Expect epoch info for last macroblock.")
             .clone();
-        let notification = ExtendedMacroBlock { block, epoch_info };
+
+        let old_epoch_info = if epoch > 0 {
+            Some(
+                self.chain
+                    .epoch_info(epoch - 1)?
+                    .expect("Expect epoch info for last macroblock.")
+                    .clone(),
+            )
+        } else {
+            None
+        };
+        let notification = ExtendedMacroBlock {
+            block,
+            epoch_info,
+            old_epoch_info,
+        };
         self.cheating_proofs.clear();
         self.on_facilitator_changed();
         self.on_block_added(block_timestamp, notification.into(), was_synchronized);
@@ -1266,12 +1286,16 @@ impl NodeState {
                   leader);
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
+
             self.outgoing
-                .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
-                    self.cfg.micro_block_timeout,
-                ));
+                .push(NodeOutgoingEvent::MicroBlockProposeTimerCancel);
             std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
         };
+
+        self.outgoing
+            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+                self.cfg.micro_block_timeout,
+            ));
     }
 
     /// Called when a leader for the next macro block has changed.
@@ -1306,6 +1330,8 @@ impl NodeState {
                     )));
                 *block_timer = MacroBlockTimer::Propose;
             } else {
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
                 *block_timer = MacroBlockTimer::None;
             }
         } else {
@@ -1318,13 +1344,16 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
-            let relevant_round = 1 + consensus.round();
             self.outgoing
-                .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
-                    self.cfg.macro_block_timeout * relevant_round,
-                ));
+                .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
             *block_timer = MacroBlockTimer::ViewChange;
         }
+
+        let relevant_round = 1 + consensus.round();
+        self.outgoing
+            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
+                self.cfg.macro_block_timeout * relevant_round,
+            ));
     }
 
     /// Called when facilitator is changed.
@@ -1734,7 +1763,7 @@ impl NodeState {
                 block_timer,
                 ..
             } => (view_change_collector, block_timer),
-            _ => panic!("Invalid state"),
+            s => panic!("Invalid state = {:?}", s),
         };
 
         // Update timer.
@@ -1906,7 +1935,16 @@ impl NodeState {
 
         let block = self.chain.macro_block(epoch)?.into_owned();
         let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
-        let msg = ExtendedMacroBlock { block, epoch_info };
+        let old_epoch_info = if epoch > 0 {
+            Some(self.chain.epoch_info(epoch - 1)?.unwrap().clone())
+        } else {
+            None
+        };
+        let msg = ExtendedMacroBlock {
+            block,
+            epoch_info,
+            old_epoch_info,
+        };
         Ok(msg)
     }
 
@@ -1980,6 +2018,7 @@ impl NodeState {
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
     fn handle_event(&mut self, event: NodeIncomingEvent) {
+        strace!(self, "Handle event = {:?}", event);
         let result: Result<(), Error> = match event {
             NodeIncomingEvent::Request { request, tx } => {
                 strace!(self, "=> {:?}", request);
@@ -2194,7 +2233,14 @@ impl NodeState {
             NodeIncomingEvent::Block(msg) => {
                 Block::from_buffer(&msg).and_then(|msg| self.handle_block(msg))
             }
-            NodeIncomingEvent::DecodedBlock(msg) => self.handle_block(msg),
+            NodeIncomingEvent::DecodedBlock(msg) => {
+                let result = self.handle_block(msg);
+                if let Err(error) = &result {
+                    sinfo!(self, "Error during processing block from replication, changing upstream: error = {}", error);
+                    self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
+                }
+                result
+            }
             NodeIncomingEvent::CheckSyncTimer => {
                 if !self.chain.is_synchronized() {
                     self.on_status_changed();
@@ -2221,6 +2267,7 @@ impl NodeState {
                 unreachable!("Must be handled by NodeService");
             }
         };
+        strace!(self, "Handle result event = {:?}", result);
         if let Err(e) = result {
             serror!(self, "Error: {}", e);
         }

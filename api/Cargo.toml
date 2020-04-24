@@ -30,6 +30,6 @@ async-trait="0.1.2"
 futures-retry="0.5.0"
 
 tokio-tungstenite="0.10.1"
-tungstenite="0.10"
+tungstenite = { version = "0.10", default-features = false }
 [dev-dependencies]
 lipsum = "0.6"

@@ -193,6 +193,7 @@ impl LightDatabase {
         &self.genesis_hash
     }
 
+    #[allow(dead_code)]
     /// Returns facilitator's public key.
     #[inline(always)]
     pub fn facilitator_pkey(&self) -> &pbc::PublicKey {
@@ -1313,10 +1314,6 @@ impl LightDatabase {
             .is_none());
     }
 
-    pub fn unlock_input(&mut self, input: &Hash) {
-        assert!(self.locked_inputs.remove(&input).is_some())
-    }
-
     pub fn is_input_locked(&mut self, input: &Hash) -> Option<&LockedInput> {
         self.locked_inputs.get(input)
     }
@@ -1533,15 +1530,6 @@ impl TransactionValue {
         assert!(tx.txouts.len() <= 2);
         assert_eq!(tx.txouts.len(), outputs.len());
 
-        TransactionValue {
-            outputs,
-            tx,
-            status: TransactionStatus::Created {},
-        }
-    }
-
-    pub fn new_snowball(tx: PaymentTransaction, outputs: Vec<OutputValue>) -> TransactionValue {
-        assert!(tx.txouts.len() >= 2);
         TransactionValue {
             outputs,
             tx,

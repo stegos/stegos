@@ -23,7 +23,7 @@
 
 use failure::Fail;
 use stegos_crypto::scc;
-
+#[allow(dead_code)]
 #[derive(Debug, Fail, PartialEq, Eq)]
 pub enum WalletError {
     #[fail(display = "Duplicate account: public key={}!", _0)]

@@ -44,7 +44,7 @@ use tokio::task::JoinHandle;
 /// The number of values to fit in the output buffer.
 const OUTPUT_BUFFER_SIZE: usize = 100;
 /// Topic used for debugging.
-const CONSOLE_TOPIC: &'static str = "console";
+// const CONSOLE_TOPIC: &'static str = "console";
 
 /// A type definition for stream.
 type WsStream = sink::Buffer<WebSocketStream<TcpStream>, Message>;
@@ -116,7 +116,7 @@ impl WebSocketHandler {
                 }
                 Some(Ok(Message::Ping(msg))) => {
                     trace!("[{}] => Ping(len={})", peer, msg.len());
-                    connection.send(Message::Pong(msg));
+                    let _err = connection.send(Message::Pong(msg)).await;
                 }
                 Some(Ok(Message::Pong(msg))) => {
                     trace!("[{}] => Pong(len={})", peer, msg.len());
@@ -152,7 +152,9 @@ impl WebSocketHandler {
                         trace!("Forwarding notification = {:?}", notification);
                         let kind = notification.0;
                         let response = Response { kind, id:0 };
-                        Self::send(&mut self.connection, &self.api_token, response).await;
+                        if let Err(e) = Self::send(&mut self.connection, &self.api_token, response).await {
+                            error!("Error during response send = {}", e);
+                        }
                     } else {
                         trace!("Notifications stream ended.");
                     };

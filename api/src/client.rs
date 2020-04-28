@@ -30,7 +30,6 @@ use failure::Error;
 use futures::prelude::*;
 use futures::SinkExt;
 use log::*;
-use std::pin::Pin;
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;

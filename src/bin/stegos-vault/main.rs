@@ -252,7 +252,7 @@ async fn run() -> Result<(), Error> {
         cfg.general.chain,
     )
     .await?;
-    join.await;
+    join.await?;
 
     Ok(())
 }

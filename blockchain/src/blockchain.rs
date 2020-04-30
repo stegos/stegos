@@ -185,7 +185,7 @@ pub(crate) struct Balance {
 }
 
 /// A special offset used to tore Macro Blocks on the disk.
-const MACRO_BLOCK_OFFSET: u32 = u32::max_value();
+pub const MACRO_BLOCK_OFFSET: u32 = u32::max_value();
 
 #[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct LSN(pub(crate) u64, pub(crate) u32); // use `struct` to disable explicit casts.

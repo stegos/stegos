@@ -163,11 +163,17 @@ impl Replication {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Registered: multiaddr={}", peer_id, multiaddr);
                         let peer = Peer::registered(peer_id.clone(), None);
-                        let prev = self
+                        if self
                             .peers
                             .entry(peer_id)
                             .or_insert(peer)
-                            .add_addr(multiaddr);
+                            .add_addr(multiaddr.clone())
+                        {
+                            error!(
+                                "Addres was already marked as registred: multiaddr={}",
+                                multiaddr
+                            )
+                        }
                     }
                     ReplicationEvent::Unregistered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);

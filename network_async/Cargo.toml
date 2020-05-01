@@ -26,10 +26,10 @@ failure = "0.1"
 fnv = "1.0"
 futures = "0.3.4"
 lazy_static = "1.4"
-libp2p = { version = "0.18"}
+libp2p = { version = "0.18", default-features = false, features=["gossipsub", "tcp"]}
+libp2p-tcp = { version = "0.18", default-features = false, features=["async-std"]}
 libp2p-core = { version = "0.18", default-features = false}
 libp2p-core-derive = "0.18"
-libp2p-tcp = "0.18"
 libp2p-dns = "0.18"
 libp2p-secio = "0.18"
 libp2p-mplex = "0.18"

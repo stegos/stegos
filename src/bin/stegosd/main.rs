@@ -25,7 +25,6 @@ use crate::config::GeneralConfig;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
-use futures::{Future, Stream, StreamExt};
 use hyper::server::Server;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
@@ -50,11 +49,9 @@ use stegos_blockchain::{
 };
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
-use stegos_network::{Libp2pNetwork, NETWORK_STATUS_TOPIC};
+use stegos_network::Libp2pNetwork;
 use stegos_node::NodeService;
 use stegos_wallet::WalletService;
-use tokio::runtime::Runtime;
-use tokio::time::Instant;
 
 /// The default file name for configuration
 const STEGOSD_TOML: &'static str = "stegosd.toml";
@@ -170,7 +167,7 @@ fn load_logger_configuration(
 }
 
 async fn report_metrics(_req: Request<Body>) -> Result<Response<Body>, hyper::Error> {
-    let mut response = Response::builder();
+    let response = Response::builder();
     let encoder = prometheus::TextEncoder::new();
     let metric_families = prometheus::gather();
 

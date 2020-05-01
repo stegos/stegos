@@ -23,10 +23,8 @@
 
 use crate::metrics;
 
-use crate::error::WalletError;
-use crate::recovery::recovery_to_account_skey;
-// use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use crate::api::*;
+use crate::error::WalletError;
 use crate::storage::*;
 use crate::transaction::*;
 
@@ -39,28 +37,19 @@ use futures::prelude::*;
 use futures::select;
 use log::*;
 use std::collections::HashMap;
-use std::fs;
-use std::mem;
-use std::path::{Path, PathBuf};
-use stegos_blockchain::api::StatusInfo;
+use std::path::PathBuf;
 use stegos_blockchain::TransactionStatus;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain as keychain;
-use stegos_keychain::keyfile::{
-    load_account_pkey, load_network_keypair, write_account_pkey, write_account_skey,
-};
-use stegos_keychain::KeyError;
-use stegos_network::{Network, PeerId, ReplicationEvent};
-use stegos_replication::api::PeerInfo;
-use stegos_replication::{Replication, ReplicationRow};
+use stegos_keychain::keyfile::load_network_keypair;
+use stegos_network::Network;
 use stegos_serialization::traits::ProtoConvert;
-use tokio::time::{Duration, Interval};
+use tokio::time::Interval;
 
 use crate::STAKE_FEE;
 use crate::{CHECK_LOCKED_INPUTS, PENDING_UTXO_TIME, RESEND_TX_INTERVAL, TX_TOPIC};
-use futures::stream::SelectAll;
 
 #[derive(Debug)]
 pub enum UnsealedAccountResult {
@@ -310,61 +299,6 @@ impl UnsealedAccountService {
                 },
             })
             .collect()
-    }
-
-    /// Send money using value shuffle.
-    fn secure_payment(
-        &mut self,
-        recipient: &scc::PublicKey,
-        amount: i64,
-        payment_fee: i64,
-        comment: String,
-    ) -> Result<(), Error> {
-        unimplemented!()
-        // if self.snowball.is_some() {
-        //     return Err(WalletError::SnowballBusy.into());
-        // }
-        // let payment_balance = self.database.balance().payment;
-        // if amount > payment_balance.available {
-        //     return Err(WalletError::NoEnoughToPay(
-        //         payment_balance.current,
-        //         payment_balance.available,
-        //     )
-        //     .into());
-        // }
-        // let data = PaymentPayloadData::Comment(comment);
-
-        // let unspent_iter = self.database.available_payment_outputs();
-        // let (inputs, outputs, fee) = create_snowball_transaction(
-        //     &self.account_pkey,
-        //     recipient,
-        //     unspent_iter,
-        //     amount,
-        //     payment_fee,
-        //     data,
-        //     snowball::MAX_UTXOS,
-        // )?;
-        // assert!(inputs.len() <= snowball::MAX_UTXOS);
-
-        // for (input, _) in &inputs {
-        //     self.database.lock_input(&input);
-        // }
-
-        // let snowball = Snowball::new(
-        //     self.account_skey.clone(),
-        //     self.account_pkey.clone(),
-        //     self.network_pkey.clone(),
-        //     self.network.clone(),
-        //     self.database.facilitator_pkey().clone(),
-        //     inputs,
-        //     outputs,
-        //     fee,
-        // );
-
-        // metrics::WALLET_CREATEAD_SECURE_PAYMENTS
-        //     .with_label_values(&[&String::from(&self.account_pkey)])
-        //     .inc();
-        // Ok(snowball)
     }
 
     fn stake_all(&mut self, payment_fee: i64) -> Result<TransactionInfo, Error> {
@@ -788,29 +722,6 @@ impl UnsealedAccountService {
         Ok(tx_info)
     }
 
-    fn handle_snowball_transaction(
-        &mut self,
-        tx: PaymentTransaction,
-        is_leader: bool,
-        outputs: Vec<OutputValue>,
-    ) -> Result<TransactionInfo, Error> {
-        metrics::WALLET_PUBLISHED_PAYMENTS
-            .with_label_values(&[&String::from(&self.account_pkey)])
-            .inc();
-
-        let tx_value = TransactionValue::new_snowball(tx, outputs);
-        let tx_info = tx_value.to_info(self.database.epoch());
-        self.database
-            .push_outgoing(Timestamp::now(), tx_value.clone())?;
-        if is_leader {
-            // if I'm leader, then send the completed super-transaction
-            // to the blockchain.
-            debug!("Sending SuperTransaction to BlockChain");
-            self.send_transaction(tx_value.tx.into())?
-        }
-        Ok(tx_info)
-    }
-
     fn on_tx_status(&mut self, tx_hash: &Hash, status: &TransactionStatus) {
         if let Some(timestamp) = self.database.tx_entry(*tx_hash) {
             // update persistent info.
@@ -876,26 +787,6 @@ impl UnsealedAccountService {
         for hash in pending {
             trace!("Found outdated pending utxo = {}", hash);
             balance_unlocked = true;
-            // if let Some((snowball, _)) = &self.snowball {
-            //     if !snowball.is_my_input(hash) {
-            //         continue;
-            //     }
-            //     // Terminate Snowball session.
-            //     error!("Snowball timed out");
-            //     let (_snowball, tx) = self.snowball.take().unwrap();
-            //     self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
-            //     let response = AccountResponse::Error {
-            //         error: "Snowball timed out".to_string(),
-            //     };
-            //     let _ = tx.send(response);
-
-            //     info!(
-            //         "Some outputs of snowball are now outdated: snowball_session = {}",
-            //         hash
-            //     );
-            //     warn!("Resetting Snowball on timeout.");
-            //     self.snowball = None;
-            // }
         }
 
         if !balance_unlocked {
@@ -965,6 +856,7 @@ impl UnsealedAccountService {
 
                     self.expire_locked_inputs()
                 },
+                _ = self.transaction_rx.next() => {}, // ignore incomming transactions
                 event = self.events.next() => {
                     drop((expire_locked_inputs, pending_tx));
                     if let Some(event) = event {
@@ -1114,18 +1006,6 @@ impl UnsealedAccountService {
                                         AccountResponse::Error {
                                                 error: format!("Snowball was deprecated"),
                                         }
-                                        // match self.secure_payment(&recipient, amount, payment_fee, comment)
-                                        // {
-                                        //     Ok(snowball) => {
-                                        //         let state = snowball.state();
-                                        //         self.notify(AccountNotification::SnowballStatus(state));
-                                        //         self.snowball = (snowball, tx).into();
-                                        //         continue;
-                                        //     }
-                                        //     Err(e) => AccountResponse::Error {
-                                        //         error: format!("{}", e),
-                                        //     },
-                                        // }
                                     }
                                 };
                                 tx.send(response).ok(); // ignore errors.
@@ -1173,51 +1053,5 @@ impl UnsealedAccountService {
 
             }
         }
-
-        // if let Some((mut snowball, response_sender)) = mem::replace(&mut self.snowball, None) {
-        //     let state = snowball.state();
-        //     match snowball.poll() {
-        //         Ok(Async::Ready(Some(SnowballOutput {
-        //             tx,
-        //             is_leader,
-        //             outputs,
-        //         }))) => {
-        //             self.notify(AccountNotification::SnowballStatus(
-        //                 SnowballState::Succeeded,
-        //             ));
-        //             let response = match self.handle_snowball_transaction(tx, is_leader, outputs) {
-        //                 Ok(tx) => AccountResponse::TransactionCreated(tx),
-        //                 Err(e) => {
-        //                     error!("Error during processing snowball transaction = {}", e);
-        //                     AccountResponse::Error {
-        //                         error: e.to_string(),
-        //                     }
-        //                 }
-        //             };
-        //             let _ = response_sender.send(response);
-        //         }
-        //         Ok(Async::Ready(None)) => {
-        //             return Ok(Async::Ready(UnsealedAccountResult::Terminated))
-        //         } // Shutdown.
-        //         Err((error, inputs)) => {
-        //             error!("Snowball failed: error={}", error);
-        //             self.notify(AccountNotification::SnowballStatus(SnowballState::Failed));
-        //             for (input_hash, _input) in inputs {
-        //                 self.database.unlock_input(&input_hash);
-        //             }
-        //             let response = AccountResponse::Error {
-        //                 error: error.to_string(),
-        //             };
-        //             let _ = response_sender.send(response);
-        //         }
-        //         Ok(Async::NotReady) => {
-        //             if state != snowball.state() {
-        //                 // Notify about state changes.
-        //                 self.notify(AccountNotification::SnowballStatus(snowball.state()));
-        //             }
-        //             self.snowball = (snowball, response_sender).into();
-        //         }
-        //     }
-        // }
     }
 }

@@ -21,45 +21,21 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::error::WalletError;
-use crate::recovery::recovery_to_account_skey;
-// use self::snowball::{Snowball, SnowballOutput, State as SnowballState};
 use super::unsealed::{UnsealedAccountResult, UnsealedAccountService};
 use crate::api::*;
-use crate::storage::*;
-use crate::transaction::*;
 use crate::{Account, AccountEvent};
-
-use bit_vec::BitVec;
-use failure::{format_err, Error};
-use futures::channel::{mpsc, oneshot};
+use futures::channel::mpsc;
 use futures::prelude::*;
-use futures::select;
 use log::*;
-use std::collections::HashMap;
-use std::fs;
-use std::mem;
 use std::path::{Path, PathBuf};
-use stegos_blockchain::api::StatusInfo;
-use stegos_blockchain::TransactionStatus;
 use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain as keychain;
-use stegos_keychain::keyfile::{
-    load_account_pkey, load_network_keypair, write_account_pkey, write_account_skey,
-};
+use stegos_keychain::keyfile::load_account_pkey;
 use stegos_keychain::KeyError;
-use stegos_network::{Network, PeerId, ReplicationEvent};
-use stegos_replication::api::PeerInfo;
-use stegos_replication::{Replication, ReplicationRow};
-use stegos_serialization::traits::ProtoConvert;
-use tokio::time::{Duration, Interval};
+use stegos_network::Network;
 
-use futures::stream::SelectAll;
-
-use crate::PENDING_UTXO_TIME;
-use crate::STAKE_FEE;
 pub struct SealedAccountService {
     /// Path to database dir.
     database_dir: PathBuf,

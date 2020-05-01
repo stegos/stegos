@@ -29,7 +29,6 @@ use stegos_node::api::ChainNotification;
 use stegos_node::{NodeRequest, NodeResponse};
 use stegos_wallet::{
     accounts::UnsealedAccountService,
-    api::{AccountBalance, Balance},
     api::{AccountNotification, AccountRequest, AccountResponse},
     Account, AccountEvent,
 };
@@ -154,7 +153,6 @@ struct VaultService {
     client: WebSocketClient,
 
     cfg: VaultConfig,
-    genesis_hash: Hash,
     password: String,
 
     handle: AccountHandle,
@@ -239,7 +237,6 @@ impl VaultService {
         let mut vault_service = VaultService {
             server,
             cfg,
-            genesis_hash,
             client,
             password,
             handle,
@@ -320,7 +317,7 @@ impl VaultService {
         match account_notification {
             AccountNotification::BalanceChanged(b) => {
                 let amount = b.total.available;
-                self.push_balance_update(b.epoch, b.total.available);
+                self.push_balance_update(b.epoch, amount);
             }
             AccountNotification::StatusChanged(status_info) => {
                 self.handle.status = status_info.clone();
@@ -347,7 +344,7 @@ impl VaultService {
             VaultRequest::CreateUser { account_id } => self.create_account(account_id),
             VaultRequest::GetUser { account_id } => self.get_user(account_id),
             VaultRequest::GetUsers { .. } => self.get_users().await,
-            VaultRequest::RemoveUser { account_id, burn } => self.remove_user(account_id),
+            VaultRequest::RemoveUser { account_id, burn } => self.remove_user(account_id, burn),
             VaultRequest::Withdraw {
                 public_key,
                 amount,
@@ -419,7 +416,7 @@ impl VaultService {
             debug!("Broadcasting transaction trough online node.");
             let response = self.client.request(raw_request).await.unwrap();
             match response.kind {
-                ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction { hash, .. }) => {
+                ResponseKind::NodeResponse(NodeResponse::BroadcastTransaction { .. }) => {
                     debug!("Successfully broadcasted transaction. Added to pending list.");
                     let update = UserBalanceUpdated {
                         public_key,
@@ -639,7 +636,7 @@ impl VaultService {
         if let Some(sender) = &mut self.sender {
             debug!("Found old notification, disconnecting");
             let error = VaultError::OnlySingleNotificationAllowed;
-            sender
+            let _ok_or_ignore = sender
                 .1
                 .send(VaultNotification::Disconnected {
                     code: error.code(),
@@ -651,7 +648,11 @@ impl VaultService {
         Ok(VaultResponse::Subscribed { rx: rx.into() })
     }
 
-    fn remove_user(&mut self, account_id: AccountId) -> Result<VaultResponse, VaultError> {
+    fn remove_user(
+        &mut self,
+        account_id: AccountId,
+        _burn: bool,
+    ) -> Result<VaultResponse, VaultError> {
         let account_dir = self.accounts_dir().join(&account_id);
 
         if !account_dir.exists() {
@@ -807,7 +808,7 @@ impl VaultService {
                 continue;
             }
 
-            self.register_account(account_id, account_pkey, account_skey);
+            self.register_account(account_id, account_pkey, account_skey)?;
         }
         Ok(())
     }
@@ -890,7 +891,7 @@ impl VaultService {
         network_config.max_connections = 0;
         network_config.readiness_threshold = 0;
 
-        let (network, network_service, _peer_id, replication_rx) =
+        let (network, network_service, _peer_id, _replication_rx) =
             stegos_network::Libp2pNetwork::new(
                 network_config,
                 network_skey.clone(),
@@ -988,7 +989,7 @@ fn create_keypair(
 }
 
 fn handle_create_raw_tx(
-    database: &rocksdb::DB,
+    _database: &rocksdb::DB,
     txins: Vec<PublicPaymentOutput>,
     recipient: scc::PublicKey,
     account_secret_key: scc::SecretKey,

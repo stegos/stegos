@@ -29,10 +29,12 @@ use std::time::Duration;
 #[serde(rename_all = "snake_case")]
 pub enum PeerInfo {
     Localhost {
+        version: String,
         peer_id: String,
     },
     Discovered {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -40,6 +42,7 @@ pub enum PeerInfo {
     },
     Connecting {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -47,6 +50,7 @@ pub enum PeerInfo {
     },
     Connected {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -54,6 +58,7 @@ pub enum PeerInfo {
     },
     Accepted {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -61,6 +66,7 @@ pub enum PeerInfo {
     },
     Receiving {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -72,6 +78,7 @@ pub enum PeerInfo {
     },
     Sending {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]
@@ -83,6 +90,7 @@ pub enum PeerInfo {
     },
     Failed {
         banned: bool,
+        version: String,
         peer_id: String,
         multiaddr: Vec<String>,
         #[serde(with = "humantime_serde")]

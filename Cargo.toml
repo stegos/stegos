@@ -1,6 +1,6 @@
 [package]
 name = "stegos"
-version = "0.13.0-pre"
+version = "1.3.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "database-implementations", "command-line-utilities"]

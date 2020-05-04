@@ -27,6 +27,7 @@ mod protos;
 
 use self::api::*;
 pub use self::peer::MAX_BLOCKS_PER_BATCH;
+use crate::protos::NetworkName;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -39,7 +40,7 @@ use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
-use stegos_network::{Network, PeerId, ReplicationEvent};
+use stegos_network::{Network, PeerId, ReplicationEvent, ReplicationVersion};
 use tokio::time::{self, Delay, Instant};
 
 pub enum ReplicationRow {
@@ -65,6 +66,9 @@ pub struct Replication {
 
     /// A channel with incoming replication events.
     events: mpsc::UnboundedReceiver<ReplicationEvent>,
+
+    // Current network
+    network_name: NetworkName,
 
     /// Network API.
     network: Network,
@@ -92,6 +96,7 @@ impl Replication {
             light,
             events,
             network,
+            network_name: NetworkName::Devnet,
         }
     }
 
@@ -136,6 +141,7 @@ impl Replication {
         }
         let my_info = PeerInfo::Localhost {
             peer_id: self.peer_id.to_base58(),
+            version: ReplicationVersion::latest().to_string(),
         };
         peers.push(my_info);
 
@@ -162,7 +168,7 @@ impl Replication {
                     ReplicationEvent::Registered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Registered: multiaddr={}", peer_id, multiaddr);
-                        let peer = Peer::registered(peer_id.clone(), None);
+                        let peer = Peer::registered(peer_id.clone(), None, None);
                         if self
                             .peers
                             .entry(peer_id)
@@ -173,6 +179,32 @@ impl Replication {
                                 "Addres was already marked as registred: multiaddr={}",
                                 multiaddr
                             )
+                        }
+                    }
+                    ReplicationEvent::ResolvedVersion { peer_id, version } => {
+                        debug!("[{}] Resolved peer version: version={}", peer_id, version);
+                        let new_version = version;
+                        match self.peers.get_mut(&peer_id) {
+                            Some(p) => {
+                                match p {
+                                    Peer::Connecting {ref mut version, ..} |  Peer::Registered {ref mut version, ..} => {
+                                        if version.is_some() {
+                                            debug!("Change peer registered version, new_version = {}", new_version)
+                                        }
+                                        *version = Some(new_version);
+                                    },
+                                    Peer::Connected {ref mut version, ..} | Peer::Accepted {ref mut version, ..} => {
+                                        debug!("Change peer registered version, new_version = {}", new_version);
+                                        *version = new_version;
+                                    }
+                                    state => {
+                                        error!("Resolved peer version, when peer at unexpected state: state={:?}", state.info(self.banned_peers.contains(&peer_id)))
+                                    }
+                                }
+                            },
+                            None => {
+                                error!("Resolved peer version of unknown peer = {}", peer_id)
+                            }
                         }
                     }
                     ReplicationEvent::Unregistered { peer_id, multiaddr } => {
@@ -219,6 +251,7 @@ impl Replication {
                 current_offset,
                 micro_blocks_in_epoch,
                 block_reader,
+                self.network_name,
             ) {
                 Poll::Ready(block) => {
                     return Poll::Ready(Some(block));

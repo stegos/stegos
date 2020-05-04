@@ -30,4 +30,5 @@ fn main() {
     build_script::build_protobuf("protos/gatekeeper_proto.proto", "gatekeeper_proto", &[]);
     build_script::build_protobuf("protos/delivery_proto.proto", "delivery_proto", &[]);
     build_script::build_protobuf("protos/dht.proto", "dht", &[]);
+    build_script::build_protobuf("protos/gossipsub.proto", "gossipsub", &[]);
 }

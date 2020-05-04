@@ -25,3 +25,4 @@ pub mod protocol;
 mod behavior;
 
 pub use self::behavior::{Replication, ReplicationEvent};
+pub use self::protocol::ReplicationVersion;

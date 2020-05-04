@@ -60,9 +60,9 @@ use std::io;
 use stegos_crypto::utils::u8v_to_hexstr;
 pub mod proto;
 
+use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::old_protos::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::old_protos::discovery::{Discovery, DiscoveryOutEvent};
-use crate::old_protos::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
 use crate::old_protos::ncp::{Ncp, NcpOutEvent};
 use crate::old_protos::pubsub::{Floodsub, FloodsubEvent};
 
@@ -275,13 +275,13 @@ fn new_service(
 #[derive(NetworkBehaviour)]
 pub struct Libp2pBehaviour {
     // gossipsub: Gossipsub,
+    gatekeeper: Gatekeeper, // handshake
+    replication: Replication,
 
     // OLD PROTOS BEGIN
     floodsub: Floodsub,
 
-    replication: Replication,
-    gatekeeper: Gatekeeper, // handshake
-    ncp: Ncp,               // Peer sharing, ping (should be merged with discovery)
+    ncp: Ncp, // Peer sharing, ping (should be merged with discovery)
     discovery: Discovery,
     delivery: Delivery,
 
@@ -624,11 +624,13 @@ pub fn build_tcp_ws_secio_yamux(
     mplex_config.max_substreams(256);
     // let mut yamux_config = yamux::Config::default();
     // yamux_config.set_window_update_mode(yamux::WindowUpdateMode::OnRead);
+    // yamux_config.set_read_after_close(true);
     // let yamux_config = libp2p_yamux::Config::new(yamux_config);
     CommonTransport::new()
         .upgrade(libp2p_core::upgrade::Version::V1)
         .authenticate(secio::SecioConfig::new(keypair))
         .multiplex(mplex_config)
+        // .multiplex(yamux_config)
         .map(|(peer, muxer), _| (peer, libp2p_core::muxing::StreamMuxerBox::new(muxer)))
         .timeout(Duration::from_secs(20))
 }

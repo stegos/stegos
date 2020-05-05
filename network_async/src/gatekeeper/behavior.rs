@@ -48,8 +48,6 @@ use crate::config::NetworkConfig;
 use crate::utils::{socket_to_multi_addr, ExpiringQueue, PeerIdKey};
 use std::net::SocketAddr;
 
-// Dialout timeout
-const DIAL_TIMEOUT: Duration = Duration::from_secs(60);
 // How long to wait for remote peer to connect
 const HASH_CASH_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 // How long proof/puzzle are considered valid

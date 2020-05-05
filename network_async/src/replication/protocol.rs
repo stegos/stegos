@@ -31,7 +31,6 @@ use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use log::trace;
 use std::fmt;
 use std::io;
-use std::iter;
 use unsigned_varint::codec;
 
 use libp2p_core::ProtocolName;

@@ -1697,8 +1697,6 @@ dependencies = [
 [[package]]
 name = "libp2p-gossipsub"
 version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f7f3f79f060864db0317cc47641b7d35276dee52a0ffa91553fbd0c153863a3"
 dependencies = [
  "base64 0.11.0",
  "byteorder 1.3.4",
@@ -1706,10 +1704,12 @@ dependencies = [
  "fnv",
  "futures 0.3.4",
  "futures_codec",
+ "lazy_static",
  "libp2p-core",
  "libp2p-swarm",
  "log",
  "lru",
+ "prometheus",
  "prost",
  "prost-build",
  "rand 0.7.3",
@@ -3295,6 +3295,7 @@ dependencies = [
  "arrayvec 0.4.12",
  "async-std",
  "bigint",
+ "byteorder 1.3.4",
  "bytes",
  "cuckoofilter",
  "derivative",

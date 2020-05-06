@@ -215,13 +215,19 @@ impl Replication {
                     }
                     ReplicationEvent::Connected { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
+
+                        debug!("[{}] Connected.", peer_id);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
                         peer.connected(self.light, current_epoch, current_offset, rx, tx);
                     }
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
-                        peer.accepted(rx, tx);
+                        if let Peer::Connected { .. } = peer {
+                            debug!("[{}] Peer connecting to us, but we already connecting to him, ignoring", peer_id);
+                        } else {
+                            peer.accepted(rx, tx);
+                        }
                     }
                     ReplicationEvent::ConnectionFailed { peer_id, error } => {
                         assert_ne!(peer_id, self.peer_id);

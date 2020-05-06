@@ -43,7 +43,7 @@ use stegos_api::{server::spawn_server, ApiToken};
 use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
-use stegos_network::{Libp2pNetwork, NetworkConfig};
+use stegos_network::{Libp2pNetwork, NetworkConfig, NetworkName};
 use stegos_node::NodeConfig;
 use stegos_wallet::WalletService;
 use tokio::runtime::Runtime;
@@ -176,8 +176,13 @@ async fn init(
             network_config.seed_pool =
                 format!("_stegos._tcp.{}.stegos.com", &chain_name).to_string();
         }
-        let (network, network_service, peer_id, replication_rx) =
-            Libp2pNetwork::new(network_config, network_skey.clone(), network_pkey.clone()).await?;
+        let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
+            network_config,
+            NetworkName::from_str(&chain_name).expect("Valid network name."),
+            network_skey.clone(),
+            network_pkey.clone(),
+        )
+        .await?;
 
         // Initialize Wallet.
         let (genesis, chain_cfg) = initialize_chain(&chain_name)?;

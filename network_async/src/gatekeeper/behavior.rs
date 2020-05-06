@@ -43,7 +43,7 @@ use std::{
 use stegos_crypto::vdf::VDF;
 
 use super::handler::{GatekeeperHandler, GatekeeperSendEvent};
-use super::protocol::{GatekeeperMessage, VDFProof};
+use super::protocol::{GatekeeperMessage, NetworkName, VDFProof};
 use crate::config::NetworkConfig;
 use crate::utils::{socket_to_multi_addr, ExpiringQueue, PeerIdKey};
 use libp2p_core::multiaddr::Protocol;
@@ -110,7 +110,7 @@ impl Gatekeeper {
     /// Creates a NetworkBehaviour for Gatekeeper.
     pub fn new(config: &NetworkConfig, metadata: Metadata) -> Self {
         let mut desired_addesses: HashSet<Multiaddr> = HashSet::new();
-        let mut events: VecDeque<NetworkBehaviourAction<GatekeeperSendEvent, GatekeeperOutEvent>> =
+        let events: VecDeque<NetworkBehaviourAction<GatekeeperSendEvent, GatekeeperOutEvent>> =
             VecDeque::new();
 
         // Randomize seed nodes array
@@ -118,15 +118,15 @@ impl Gatekeeper {
         let mut addrs = config.seed_nodes.clone();
         addrs.shuffle(&mut rng);
 
-        // for addr in addrs.iter() {
-        //     let addr = addr.parse::<SocketAddr>().expect("Invalid seed_node");
-        //     let addr = socket_to_multi_addr(&addr);
-        //     debug!(target: "stegos_network::gatekeeper", "dialing peer with address {}", addr);
-        //     events.push_back(NetworkBehaviourAction::DialAddress {
-        //         address: addr.clone(),
-        //     });
-        //     desired_addesses.insert(addr);
-        // }
+        for addr in addrs.iter() {
+            let addr = addr.parse::<SocketAddr>().expect("Invalid seed_node");
+            let addr = socket_to_multi_addr(&addr);
+            // debug!(target: "stegos_network::gatekeeper", "dialing peer with address {}", addr);
+            // events.push_back(NetworkBehaviourAction::DialAddress {
+            //     address: addr.clone(),
+            // });
+            desired_addesses.insert(addr);
+        }
 
         let (solution_sink, solution_stream) = unbounded::<Solution>();
         let solver_threads = max(num_cpus::get() - 2, 1);
@@ -140,7 +140,7 @@ impl Gatekeeper {
             pending_in_peers: ExpiringQueue::new(HANDSHAKE_STEP_TIMEOUT),
             unlocked_peers: LruCache::<PeerIdKey, ()>::with_expiry_duration(HASH_CASH_PROOF_TTL),
             our_challenges: LruCache::<PeerIdKey, VDFChallenge>::with_expiry_duration(
-                HASH_CASH_PROOF_TTL,
+                HASH_CASH_TIMEOUT,
             ),
             solved_vdfs:
                 LruCache::<PeerIdKey, (VDFChallenge, Option<Vec<u8>>)>::with_expiry_duration(
@@ -254,7 +254,11 @@ impl Gatekeeper {
 
         let addresses = self.peers_addresses.get(&peer_id)?;
         let metadata = self.peers_metadata.get(&peer_id)?;
+        if metadata.port == 0 {
+            return None;
+        }
         for addr in addresses {
+            //TODO: Add waiting list.
             let mut multiaddr = Multiaddr::empty();
             multiaddr.push(Protocol::Ip4(addr.clone()));
             multiaddr.push(Protocol::Tcp(metadata.port));
@@ -366,6 +370,28 @@ impl Gatekeeper {
             self.send_new_challenge(peer_id);
         }
     }
+    fn register_metadata(&mut self, peer_id: PeerId, metadata: Option<Metadata>) {
+        let network = metadata
+            .as_ref()
+            .map(|metadata| metadata.network.clone())
+            .unwrap_or(NetworkName::Mainnet.to_string());
+        if let Some(metadata) = metadata {
+            debug!(target: "stegos_network::gatekeeper", "Resolved metadata for peer: peer_id={}, metadata={:?}", peer_id, metadata);
+            self.peers_metadata.insert(peer_id.clone().into(), metadata);
+        }
+        if network != self.my_metadata.network {
+            warn!(target: "stegos_network::gatekeeper", "Peer network not equal to our: peer_id={}, our_network={}, peer_network={}",
+            peer_id,
+                self.my_metadata.network,
+                network
+            );
+
+            self.events.push_back(NetworkBehaviourAction::GenerateEvent(
+                GatekeeperOutEvent::BanPeer { peer_id },
+            ));
+            return;
+        }
+    }
 
     fn handle_challenge_reply(
         &mut self,
@@ -373,13 +399,14 @@ impl Gatekeeper {
         challenge: Vec<u8>,
         difficulty: u64,
         metadata: Option<Metadata>,
-        cid: ConnectionId,
+        _cid: ConnectionId,
     ) {
         debug!(target: "stegos_network::gatekeeper", "received challenge: peer_id={}", peer_id);
         if !self.pending_out_peers.contains_key(&peer_id) {
             debug!(target: "stegos_network::gatekeeper", "challenge from peer we are not going to connect to, ignoring: peer_id={}", peer_id);
             return;
         }
+        self.register_metadata(peer_id.clone(), metadata);
 
         let challenge = VDFChallenge {
             challenge: challenge.clone(),
@@ -553,11 +580,7 @@ impl NetworkBehaviour for Gatekeeper {
         debug!(target: "stegos_network::gatekeeper", "Received a message: {:?}", event);
         match event {
             GatekeeperMessage::UnlockRequest { proof, metadata } => {
-                if let Some(metadata) = metadata {
-                    debug!(target: "stegos_network::gatekeeper", "Resolved metadata for peer: peer_id={}, metadata={:?}", propagation_source, metadata);
-                    self.peers_metadata
-                        .insert(propagation_source.clone().into(), metadata);
-                }
+                self.register_metadata(propagation_source.clone(), metadata);
                 self.handle_unlock_request(propagation_source, proof)
             }
             GatekeeperMessage::ChallengeReply {

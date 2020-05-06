@@ -60,7 +60,7 @@ use std::io;
 use stegos_crypto::utils::u8v_to_hexstr;
 pub mod proto;
 
-use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
+use crate::gatekeeper::{Gatekeeper, GatekeeperOutEvent};
 use crate::old_protos::delivery::{Delivery, DeliveryEvent, DeliveryMessage};
 use crate::old_protos::discovery::{Discovery, DiscoveryOutEvent};
 use crate::old_protos::ncp::{Ncp, NcpOutEvent};
@@ -266,9 +266,12 @@ fn new_service(
 
         loop {
             match swarm.poll_next_unpin(cx) {
-                Poll::Ready(Some(e)) => {
-                    error!("EVENT:{:?}", e);
-                }
+                Poll::Ready(Some(e)) => match e {
+                    BehaviourEvent::BanPeer { peer_id } => {
+                        info!(target: "stegos_network", "Ban peer: peer_id={}", peer_id);
+                        Swarm::ban_peer_id(&mut swarm, peer_id)
+                    }
+                },
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => {
                     if !listening {
@@ -501,7 +504,7 @@ impl Libp2pBehaviour {
     }
 
     fn poll(&mut self,
-        cx: &mut Context,
+        _cx: &mut Context,
         _poll_parameters: &mut impl PollParameters) -> Poll<NetworkBehaviourAction<
         <<<Self as NetworkBehaviour>::ProtocolsHandler as IntoProtocolsHandler>::Handler as ProtocolsHandler>::InEvent, <Self as NetworkBehaviour>::OutEvent>,>
     {

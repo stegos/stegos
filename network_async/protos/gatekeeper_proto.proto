@@ -17,7 +17,7 @@ message UnlockRequest {
     // Optional proof
     VDFProof proof = 1;
 
-    Metadata metadata = 1;
+    Metadata metadata = 2;
 }
 
 message ChallengeReply {

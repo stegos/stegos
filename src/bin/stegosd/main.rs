@@ -587,7 +587,7 @@ async fn run() -> Result<(), Error> {
         let network_clone = network.clone();
         // Start all services when network is ready.
         let network_ready_future = async move {
-            let item = network_clone
+            let _item = network_clone
                 .subscribe(&NETWORK_STATUS_TOPIC)
                 .expect("Cannot subscribe to network status.")
                 .next()

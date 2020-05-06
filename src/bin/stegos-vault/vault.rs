@@ -894,6 +894,7 @@ impl VaultService {
         let (network, network_service, _peer_id, _replication_rx) =
             stegos_network::Libp2pNetwork::new(
                 network_config,
+                stegos_network::NetworkName::from_str(&"dev").expect("Valid network name."),
                 network_skey.clone(),
                 network_pkey.clone(),
             )

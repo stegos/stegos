@@ -48,7 +48,7 @@ impl fmt::Display for NetworkName {
         match self {
             NetworkName::Mainnet => write!(f, "mainnet"),
             NetworkName::Testnet => write!(f, "testnet"),
-            NetworkName::Devnet => write!(f, "devnet"),
+            NetworkName::Devnet => write!(f, "dev"),
         }
     }
 }
@@ -192,7 +192,7 @@ impl Encoder for GatekeeperCodec {
                 proto_msg
             }
             GatekeeperMessage::PublicIpUnlock {} => {
-                let mut msg_typ = gatekeeper_proto::PublicIpUnlock::new();
+                let msg_typ = gatekeeper_proto::PublicIpUnlock::new();
                 let mut proto_msg = gatekeeper_proto::Message::new();
                 proto_msg.set_public_ip_unlock(msg_typ);
                 proto_msg
@@ -287,7 +287,7 @@ impl Decoder for GatekeeperCodec {
                 }))
             }
 
-            Some(Message_oneof_typ::public_ip_unlock(reply_msg)) => {
+            Some(Message_oneof_typ::public_ip_unlock(_)) => {
                 Ok(Some(GatekeeperMessage::PublicIpUnlock {}))
             }
             None => {
@@ -338,15 +338,17 @@ pub enum GatekeeperMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{GatekeeperCodec, GatekeeperMessage, VDFProof};
+    use super::{GatekeeperCodec, GatekeeperMessage, Metadata, VDFProof};
     use async_std::net::{TcpListener, TcpStream};
-    use futures::future;
     use futures::prelude::*;
     use futures_codec::Framed;
 
     #[test]
     fn correct_transfer() {
-        let unlock_request_null = GatekeeperMessage::UnlockRequest { proof: None };
+        let unlock_request_null = GatekeeperMessage::UnlockRequest {
+            proof: None,
+            metadata: None,
+        };
         test_one(unlock_request_null, "127.0.0.1:13644".parse().unwrap());
 
         let proof = VDFProof {
@@ -354,14 +356,36 @@ mod tests {
             difficulty: rand::random::<u64>(),
             proof: rand::random::<[u8; 20]>().to_vec(),
         };
-        let unlock_request_proof = GatekeeperMessage::UnlockRequest { proof: Some(proof) };
+        let unlock_request_proof = GatekeeperMessage::UnlockRequest {
+            proof: Some(proof.clone()),
+            metadata: None,
+        };
         test_one(unlock_request_proof, "127.0.0.1:13641".parse().unwrap());
+
+        let metadata = Metadata {
+            network: "123".to_string(),
+            version: 1,
+            port: 3,
+        };
+        let unlock_request_proof = GatekeeperMessage::UnlockRequest {
+            proof: Some(proof),
+            metadata: Some(metadata.clone()),
+        };
+        test_one(unlock_request_proof, "127.0.0.1:13645".parse().unwrap());
 
         let challenge_reply = GatekeeperMessage::ChallengeReply {
             challenge: random_vec(256),
             difficulty: 16,
+            metadata: None,
         };
         test_one(challenge_reply, "127.0.0.1:13642".parse().unwrap());
+
+        let challenge_reply = GatekeeperMessage::ChallengeReply {
+            challenge: random_vec(256),
+            difficulty: 16,
+            metadata: Some(metadata),
+        };
+        test_one(challenge_reply, "127.0.0.1:13646".parse().unwrap());
 
         let permit_reply = GatekeeperMessage::PermitReply {
             connection_allowed: false,
@@ -376,7 +400,7 @@ mod tests {
 
         let server = Box::pin(async {
             let listener = TcpListener::bind(&listener_addr).await.unwrap();
-            let (client, addr) = listener.accept().await.unwrap();
+            let (client, _) = listener.accept().await.unwrap();
             let mut client = Framed::new(
                 client,
                 GatekeeperCodec {
@@ -396,7 +420,7 @@ mod tests {
                     length_prefix: Default::default(),
                 },
             );
-            s.send(msg_client).await;
+            s.send(msg_client).await.unwrap();
         });
 
         let mut runtime = tokio::runtime::Runtime::new().unwrap();

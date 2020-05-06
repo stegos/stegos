@@ -216,7 +216,10 @@ impl Gatekeeper {
             .push_back(NetworkBehaviourAction::NotifyHandler {
                 peer_id,
                 handler: NotifyHandler::Any,
-                event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest { proof }),
+                event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
+                    proof,
+                    metadata: self.my_metadata.clone().into(),
+                }),
             })
     }
 
@@ -330,7 +333,7 @@ impl Gatekeeper {
                 }
                 None => {
                     let ban = !cfg!(feature = "old_protos");
-                    warn!(target: "stegos_network::gatekeeper", "Skiped back connect procedure, not enough info for peer found. Maybe peer version is old, peer_id={}, banning={}", peer_id, ban);
+                    info!(target: "stegos_network::gatekeeper", "Skiped back connect procedure, not enough info for peer found. Maybe peer version is old, peer_id={}, banning={}", peer_id, ban);
                     if ban {
                         self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                             GatekeeperOutEvent::BanPeer { peer_id },
@@ -378,19 +381,6 @@ impl Gatekeeper {
             return;
         }
 
-        if let Some(metadata) = metadata {
-            debug!(target: "stegos_network::gatekeeper", "Sending hello message with metadata: peer_id={}, peer_version={}", peer_id, metadata.version);
-            self.peers_metadata.insert(peer_id.clone(), metadata);
-            self.events
-                .push_back(NetworkBehaviourAction::NotifyHandler {
-                    peer_id: peer_id.clone(),
-                    handler: NotifyHandler::One(cid.clone()),
-                    event: GatekeeperSendEvent::Send(GatekeeperMessage::Hello {
-                        metadata: self.my_metadata.clone(),
-                    }),
-                });
-        }
-
         let challenge = VDFChallenge {
             challenge: challenge.clone(),
             difficulty,
@@ -409,6 +399,7 @@ impl Gatekeeper {
                         handler: NotifyHandler::Any,
                         event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
                             proof: Some(proof),
+                            metadata: self.my_metadata.clone().into(),
                         }),
                     });
                 self.pending_out_peers
@@ -561,7 +552,12 @@ impl NetworkBehaviour for Gatekeeper {
         // Process received Gatekeeper message (passed from Handler as Custom(message))
         debug!(target: "stegos_network::gatekeeper", "Received a message: {:?}", event);
         match event {
-            GatekeeperMessage::UnlockRequest { proof } => {
+            GatekeeperMessage::UnlockRequest { proof, metadata } => {
+                if let Some(metadata) = metadata {
+                    debug!(target: "stegos_network::gatekeeper", "Resolved metadata for peer: peer_id={}, metadata={:?}", propagation_source, metadata);
+                    self.peers_metadata
+                        .insert(propagation_source.clone().into(), metadata);
+                }
                 self.handle_unlock_request(propagation_source, proof)
             }
             GatekeeperMessage::ChallengeReply {
@@ -595,11 +591,6 @@ impl NetworkBehaviour for Gatekeeper {
                     debug!(target: "stegos_network::gatekeeper", "failed during negotiated VDF handshake: peer_id={}, reason={}", propagation_source, reason);
                 }
             }
-            GatekeeperMessage::Hello { metadata } => {
-                debug!(target: "stegos_network::gatekeeper", "Resolved metadata for peer: peer_id={}, metadata={:?}", propagation_source, metadata);
-                self.peers_metadata
-                    .insert(propagation_source.into(), metadata);
-            }
             GatekeeperMessage::PublicIpUnlock {} => {
                 // send last vdf again
                 let challenge = self
@@ -621,6 +612,7 @@ impl NetworkBehaviour for Gatekeeper {
                         handler: NotifyHandler::Any,
                         event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
                             proof,
+                            metadata: self.my_metadata.clone().into(),
                         }),
                     })
             }
@@ -716,6 +708,7 @@ impl NetworkBehaviour for Gatekeeper {
                                     event: GatekeeperSendEvent::Send(
                                         GatekeeperMessage::UnlockRequest {
                                             proof: Some(vdf_proof),
+                                            metadata: self.my_metadata.clone().into(),
                                         },
                                     ),
                                 })

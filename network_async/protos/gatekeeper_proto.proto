@@ -16,6 +16,8 @@ message VDFProof {
 message UnlockRequest {
     // Optional proof
     VDFProof proof = 1;
+
+    Metadata metadata = 1;
 }
 
 message ChallengeReply {
@@ -42,7 +44,6 @@ message PublicIpUnlock {
 
 message Message {
     oneof typ {
-        Hello hello = 6; // <- First message to exchange metadata
         ChallengeReply challenge_reply = 3; // -> Challaenge from listener
         UnlockRequest unlock_request = 1; // <- Proof Response from dialer
         PermitReply permit_reply = 4; // -> Confirm Response from listener

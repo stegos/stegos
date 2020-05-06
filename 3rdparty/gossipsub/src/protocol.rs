@@ -33,7 +33,6 @@ use prost::Message as ProtobufMessage;
 use std::{borrow::Cow, io, iter, pin::Pin};
 use unsigned_varint::codec;
 
-const PROTOCOL_LABEL: &'static str = "gossipsub";
 
 /// Implementation of the `ConnectionUpgrade` for the Gossipsub protocol.
 #[derive(Debug, Clone)]

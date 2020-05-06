@@ -139,7 +139,7 @@ impl Encoder for GatekeeperCodec {
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
         let proto = match item {
-            GatekeeperMessage::UnlockRequest { proof } => {
+            GatekeeperMessage::UnlockRequest { proof, metadata } => {
                 let mut msg_typ = gatekeeper_proto::UnlockRequest::new();
                 if let Some(proof) = proof {
                     let mut proof_proto = gatekeeper_proto::VDFProof::new();
@@ -148,6 +148,15 @@ impl Encoder for GatekeeperCodec {
                     proof_proto.set_vdf_proof(proof.proof);
                     msg_typ.set_proof(proof_proto);
                 }
+
+                if let Some(metadata) = metadata {
+                    let mut metadata_proto = gatekeeper_proto::Metadata::new();
+                    metadata_proto.set_network(metadata.network);
+                    metadata_proto.set_version(metadata.version);
+                    metadata_proto.set_port(metadata.port as u32);
+                    msg_typ.set_metadata(metadata_proto);
+                }
+
                 let mut proto_msg = gatekeeper_proto::Message::new();
                 proto_msg.set_unlock_request(msg_typ);
                 proto_msg
@@ -180,18 +189,6 @@ impl Encoder for GatekeeperCodec {
                 msg_typ.set_reason(reason);
                 let mut proto_msg = gatekeeper_proto::Message::new();
                 proto_msg.set_permit_reply(msg_typ);
-                proto_msg
-            }
-
-            GatekeeperMessage::Hello { metadata } => {
-                let mut msg_typ = gatekeeper_proto::Hello::new();
-                let mut metadata_proto = gatekeeper_proto::Metadata::new();
-                metadata_proto.set_network(metadata.network);
-                metadata_proto.set_version(metadata.version);
-                metadata_proto.set_port(metadata.port as u32);
-                msg_typ.set_metadata(metadata_proto);
-                let mut proto_msg = gatekeeper_proto::Message::new();
-                proto_msg.set_hello(msg_typ);
                 proto_msg
             }
             GatekeeperMessage::PublicIpUnlock {} => {
@@ -251,7 +248,19 @@ impl Decoder for GatekeeperCodec {
                 } else {
                     None
                 };
-                Ok(Some(GatekeeperMessage::UnlockRequest { proof }))
+
+                let metadata = if unlock_request_msg.has_metadata() {
+                    let metadata_proto = unlock_request_msg.get_metadata();
+                    Some(Metadata {
+                        network: metadata_proto.get_network().to_string(),
+                        version: metadata_proto.get_version(),
+                        port: metadata_proto.get_port() as u16,
+                    })
+                } else {
+                    None
+                };
+
+                Ok(Some(GatekeeperMessage::UnlockRequest { proof, metadata }))
             }
             Some(Message_oneof_typ::challenge_reply(reply_msg)) => {
                 let metadata = if reply_msg.has_metadata() {
@@ -280,17 +289,6 @@ impl Decoder for GatekeeperCodec {
 
             Some(Message_oneof_typ::public_ip_unlock(reply_msg)) => {
                 Ok(Some(GatekeeperMessage::PublicIpUnlock {}))
-            }
-
-            Some(Message_oneof_typ::hello(reply_msg)) => {
-                let metadata_proto = reply_msg.get_metadata();
-                let metadata = Metadata {
-                    network: metadata_proto.get_network().to_string(),
-                    version: metadata_proto.get_version(),
-                    port: metadata_proto.get_port() as u16,
-                };
-
-                Ok(Some(GatekeeperMessage::Hello { metadata }))
             }
             None => {
                 return Err(io::Error::new(
@@ -321,9 +319,6 @@ pub struct Metadata {
 /// Message that we can send to a peer or received from a peer.
 #[derive(Debug, Clone, PartialEq)]
 pub enum GatekeeperMessage {
-    Hello {
-        metadata: Metadata,
-    },
     ChallengeReply {
         challenge: Vec<u8>,
         difficulty: u64,
@@ -331,6 +326,8 @@ pub enum GatekeeperMessage {
     }, // Server challenge
     UnlockRequest {
         proof: Option<VDFProof>,
+
+        metadata: Option<Metadata>,
     }, // Proof from client
     PermitReply {
         connection_allowed: bool,

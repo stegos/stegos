@@ -267,7 +267,7 @@ fn new_service(
         loop {
             match swarm.poll_next_unpin(cx) {
                 Poll::Ready(Some(e)) => {
-                    println!("EVENT:{:?}", e);
+                    error!("EVENT:{:?}", e);
                 }
                 Poll::Ready(None) => return Poll::Ready(()),
                 Poll::Pending => {

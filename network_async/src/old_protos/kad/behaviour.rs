@@ -784,7 +784,7 @@ impl NetworkBehaviour for Kademlia {
                                     self.pending_rpcs.push((node_id.clone(), rpc));
                                     return Poll::Ready(NetworkBehaviourAction::DialPeer {
                                         peer_id: peer_id.clone(),
-                                        condition: DialPeerCondition::NotDialing,
+                                        condition: DialPeerCondition::Disconnected,
                                     });
                                 }
                             } else {

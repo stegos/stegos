@@ -39,6 +39,7 @@ pub use self::replication::{ReplicationEvent, ReplicationVersion};
 pub mod replication;
 
 pub mod utils;
+pub use self::gatekeeper::NetworkName;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::libp2p_network::Multiaddr;
 pub use self::libp2p_network::PeerId;

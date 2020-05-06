@@ -23,7 +23,6 @@
 
 use super::api::PeerInfo;
 use super::protos::{ReplicationRequest, ReplicationResponse};
-use crate::protos::NetworkName;
 use crate::ReplicationRow;
 use futures::channel::mpsc;
 use futures::{
@@ -697,7 +696,6 @@ impl Peer {
         current_offset: u32,
         micro_blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
-        network: NetworkName,
     ) -> Poll<ReplicationRow> {
         match self {
             //--------------------------------------------------------------------------------------
@@ -795,9 +793,8 @@ impl Peer {
                     ReplicationResponse::Subscribed {
                         current_epoch,
                         current_offset,
-                        network,
                     } => {
-                        debug!("[{}] Receiving: network={:?}", peer_id, network);
+                        debug!("[{}] Receiving", peer_id);
                         let now = Instant::now();
                         Peer::Receiving {
                             version,
@@ -924,7 +921,6 @@ impl Peer {
                         let response = ReplicationResponse::Subscribed {
                             current_epoch,
                             current_offset,
-                            network,
                         };
                         trace!("[{}] <- {:?}", peer_id, response);
                         let response = response.into_buffer().unwrap();

@@ -23,40 +23,12 @@
 
 use failure::Error;
 use serde_derive::{Deserialize, Serialize};
-use std::fmt;
 use stegos_blockchain::protos::ProtoError;
 use stegos_blockchain::{Block, LightBlock};
 use stegos_serialization::traits::*;
 // link protobuf dependencies
 use stegos_blockchain::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
-
-#[derive(Copy, Debug, Clone, Serialize, Deserialize)]
-pub enum NetworkName {
-    Mainnet,
-    Testnet,
-    Devnet,
-}
-
-impl fmt::Display for NetworkName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            NetworkName::Mainnet => write!(f, "mainnet"),
-            NetworkName::Testnet => write!(f, "testnet"),
-            NetworkName::Devnet => write!(f, "devnet"),
-        }
-    }
-}
-
-impl<'a> From<&'a str> for NetworkName {
-    fn from(name: &'a str) -> Self {
-        match name {
-            "testnet" => NetworkName::Testnet,
-            "dev" => NetworkName::Testnet,
-            "mainnet" | _ => NetworkName::Mainnet,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) enum ReplicationRequest {
@@ -72,7 +44,6 @@ pub(super) enum ReplicationResponse {
     Subscribed {
         current_epoch: u64,
         current_offset: u32,
-        network: NetworkName,
     },
     Block {
         current_epoch: u64,
@@ -159,12 +130,10 @@ impl ProtoConvert for ReplicationResponse {
             ReplicationResponse::Subscribed {
                 current_epoch,
                 current_offset,
-                network,
             } => {
                 let mut response = replication::Subscribed::new();
                 response.set_current_epoch(*current_epoch);
                 response.set_current_offset(*current_offset);
-                response.set_network(network.to_string());
                 proto.set_subscribed(response);
             }
             ReplicationResponse::Block {
@@ -197,11 +166,9 @@ impl ProtoConvert for ReplicationResponse {
             Some(replication::ReplicationResponse_oneof_response::subscribed(ref subscribed)) => {
                 let current_epoch = subscribed.get_current_epoch();
                 let current_offset = subscribed.get_current_offset();
-                let network = subscribed.get_network().into();
                 let response = ReplicationResponse::Subscribed {
                     current_epoch,
                     current_offset,
-                    network,
                 };
                 Ok(response)
             }

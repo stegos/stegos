@@ -25,6 +25,7 @@ use crate::config::GeneralConfig;
 use clap::{self, App, Arg, ArgMatches};
 use dirs;
 use failure::{format_err, Error};
+use futures::StreamExt;
 use hyper::server::Server;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Request, Response};
@@ -49,7 +50,9 @@ use stegos_blockchain::{
 };
 use stegos_crypto::hash::Hash;
 use stegos_keychain::keyfile::load_network_keys;
-use stegos_network::Libp2pNetwork;
+use stegos_network::NETWORK_STATUS_TOPIC;
+use stegos_network::{Libp2pNetwork, NetworkName};
+
 use stegos_node::NodeService;
 use stegos_wallet::WalletService;
 
@@ -533,6 +536,7 @@ async fn run() -> Result<(), Error> {
     // Initialize network
     let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
         cfg.network.clone(),
+        NetworkName::from_str(&cfg.general.chain).expect("Valid network name."),
         network_skey.clone(),
         network_pkey.clone(),
     )
@@ -580,17 +584,20 @@ async fn run() -> Result<(), Error> {
             replication_rx,
         )?;
 
+        let network_clone = network.clone();
         // Start all services when network is ready.
         let network_ready_future = async move {
-            // let item = network
-            // .subscribe(&NETWORK_STATUS_TOPIC).expect("Cannot subscribe to network status.")
-            // .next().await; //TODO: Ready by default
+            let item = network_clone
+                .subscribe(&NETWORK_STATUS_TOPIC)
+                .expect("Cannot subscribe to network status.")
+                .next()
+                .await;
             // Sic: NetworkReady doesn't wait until unicast networking is initialized.
             // https://github.com/stegos/stegos/issues/1192
             // Fire a timer here to wait until unicast networking is fully initialized.
             // This duration (30 secs) was experimentally found on the real network.
-            let network_grace_period = std::time::Duration::from_secs(0);
-            tokio::time::delay_for(network_grace_period).await;
+            // let network_grace_period = std::time::Duration::from_secs(0);
+            // tokio::time::delay_for(network_grace_period).await;
             info!("Network is ready");
             // TODO: how to handle errors here?
             node_service.init().expect("shit happens");

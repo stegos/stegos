@@ -46,7 +46,7 @@ use smallvec::SmallVec;
 use std::collections::{HashMap, HashSet};
 use stegos_crypto::pbc;
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
 
 use std::future::Future;
 use std::task::{Context, Poll};
@@ -66,8 +66,14 @@ use crate::old_protos::discovery::{Discovery, DiscoveryOutEvent};
 use crate::old_protos::ncp::{Ncp, NcpOutEvent};
 use crate::old_protos::pubsub::{Floodsub, FloodsubEvent};
 
+use crate::gatekeeper::{Metadata, NetworkName};
 use crate::replication::{Replication, ReplicationEvent};
 use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
+use libp2p_swarm::PollParameters;
+use libp2p_swarm::{
+    IntoProtocolsHandler, NetworkBehaviour, NetworkBehaviourAction, ProtocolsHandler,
+};
+use std::collections::VecDeque;
 use std::str::FromStr;
 
 #[derive(Clone, Debug)]
@@ -76,14 +82,21 @@ pub struct Libp2pNetwork {
 }
 
 pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
+pub const VERSION: u64 = 1;
 // Max number of topic for one floodsub message.
 
 pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
 use crate::utils::{encode_unicast, UnicastPayload};
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BehaviourEvent {
+    BanPeer { peer_id: PeerId },
+}
+
 impl Libp2pNetwork {
     pub async fn new(
         mut config: NetworkConfig,
+        network_name: NetworkName,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
     ) -> Result<
@@ -101,7 +114,7 @@ impl Libp2pNetwork {
         );
 
         let (service, control_tx, peer_id, replication_rx) =
-            new_service(&config, network_skey, network_pkey)?;
+            new_service(&config, network_name, network_skey, network_pkey)?;
         let network = Libp2pNetwork { control_tx };
         Ok((Box::new(network), service, peer_id, replication_rx))
     }
@@ -190,6 +203,7 @@ impl NetworkProvider for Libp2pNetwork {
 
 fn new_service(
     config: &NetworkConfig,
+    network_name: NetworkName,
     network_skey: pbc::SecretKey,
     network_pkey: pbc::PublicKey,
 ) -> Result<
@@ -214,6 +228,7 @@ fn new_service(
     // Create a Swarm to manage peers and events
     let behaviour = Libp2pBehaviour::new(
         config,
+        network_name,
         network_skey,
         network_pkey,
         peer_id.clone(),
@@ -221,7 +236,7 @@ fn new_service(
     );
 
     let mut swarm = SwarmBuilder::new(transport, behaviour, peer_id.clone())
-        .peer_connection_limit(1)
+        .peer_connection_limit(2)
         .build();
 
     if config.endpoint != "" {
@@ -273,6 +288,8 @@ fn new_service(
 }
 
 #[derive(NetworkBehaviour)]
+#[behaviour(poll_method = "poll")]
+#[behaviour(out_event = "BehaviourEvent")]
 pub struct Libp2pBehaviour {
     // gossipsub: Gossipsub,
     gatekeeper: Gatekeeper, // handshake
@@ -301,11 +318,15 @@ pub struct Libp2pBehaviour {
     my_skey: pbc::SecretKey,
     #[behaviour(ignore)]
     connected_peers: HashSet<PeerId>,
+
+    #[behaviour(ignore)]
+    events: VecDeque<BehaviourEvent>,
 }
 
 impl Libp2pBehaviour {
     pub fn new(
         config: &NetworkConfig,
+        network_name: NetworkName,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         peer_id: PeerId,
@@ -316,6 +337,17 @@ impl Libp2pBehaviour {
         } else {
             true
         };
+        let mut port = 0;
+        if config.endpoint != "" {
+            let endpoint = SocketAddrV4::from_str(&config.endpoint).expect("Invalid endpoint");
+            port = endpoint.port();
+        }
+        let metadata = Metadata {
+            network: network_name.to_string(),
+            version: VERSION,
+            port,
+        };
+        debug!("Network metadata = {:?}", metadata);
 
         // // To content-address message, we can take the hash of message and use it as an ID.
         // let message_id_fn = |message: &GossipsubMessage| {
@@ -345,24 +377,17 @@ impl Libp2pBehaviour {
             ncp: Ncp::new(config, network_pkey.clone()),
             floodsub: Floodsub::new(relaying),
             floodsub_consumers: HashMap::new(),
-            gatekeeper: Gatekeeper::new(config),
+            gatekeeper: Gatekeeper::new(config, metadata),
             delivery: Delivery::new(),
             discovery: Discovery::new(network_pkey.clone()),
             replication: Replication::new(),
             replication_tx,
             unicast_consumers: HashMap::new(),
+            events: VecDeque::new(),
         };
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
     }
-    // fn is_network_ready(&self) -> bool {
-    //     if self.gatekeeper.is_network_ready() {
-    //         // Err shouldn't happen, since channel is just subscribed
-    //         if let Err(e) = handler.clone().unbounded_send(NETWORK_READY_TOKEN.to_vec()) {
-    //             debug!(target: "stegos_network::gatekeeper", "Error sending Network::Ready event: error={}", e);
-    //         }
-    //     }
-    // }
 
     fn process_event(&mut self, msg: ControlMessage) {
         trace!("Control event: {:#?}", msg);
@@ -473,6 +498,17 @@ impl Libp2pBehaviour {
                 }
             }
         }
+    }
+
+    fn poll(&mut self,
+        cx: &mut Context,
+        _poll_parameters: &mut impl PollParameters) -> Poll<NetworkBehaviourAction<
+        <<<Self as NetworkBehaviour>::ProtocolsHandler as IntoProtocolsHandler>::Handler as ProtocolsHandler>::InEvent, <Self as NetworkBehaviour>::OutEvent>,>
+    {
+        while let Some(event) = self.events.pop_front() {
+            return Poll::Ready(NetworkBehaviourAction::GenerateEvent(event));
+        }
+        Poll::Pending
     }
 
     // fn shutdown(&mut self, peer_id: &PeerId) {
@@ -679,15 +715,14 @@ impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
     fn inject_event(&mut self, event: GatekeeperOutEvent) {
         match event {
             GatekeeperOutEvent::PrepareListener { peer_id } => {
-                self.floodsub.enable_incoming(&peer_id);
-                self.gatekeeper
-                    .notify(PeerEvent::EnabledListener { peer_id });
+                self.gatekeeper.enable_listener(peer_id);
             }
             GatekeeperOutEvent::PrepareDialer { peer_id } => {
+                self.floodsub.enable_incoming(&peer_id);
                 self.floodsub.enable_outgoing(&peer_id);
-                self.gatekeeper.notify(PeerEvent::EnabledDialer { peer_id });
+                self.gatekeeper.enable_dialer(peer_id);
             }
-            GatekeeperOutEvent::Finished { peer_id } => {
+            GatekeeperOutEvent::UnlockedDialer { peer_id } => {
                 self.floodsub.enable_outgoing(&peer_id);
             }
             GatekeeperOutEvent::NetworkReady => {
@@ -698,9 +733,10 @@ impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
                     .or_insert(SmallVec::new());
                 consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
             }
-            GatekeeperOutEvent::Message { .. } => {}
-            GatekeeperOutEvent::Connected { .. } => {}
-            GatekeeperOutEvent::Disconnected { .. } => {}
+
+            GatekeeperOutEvent::BanPeer { peer_id } => {
+                self.events.push_back(BehaviourEvent::BanPeer { peer_id })
+            }
         }
     }
 }

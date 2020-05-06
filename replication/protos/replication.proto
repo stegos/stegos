@@ -19,7 +19,6 @@ message ReplicationRequest {
 message Subscribed {
     uint64 current_epoch = 1;
     uint32 current_offset = 2;
-    string network = 4;
 }
 
 message Block {

@@ -27,7 +27,6 @@ mod protos;
 
 use self::api::*;
 pub use self::peer::MAX_BLOCKS_PER_BATCH;
-use crate::protos::NetworkName;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -67,9 +66,6 @@ pub struct Replication {
     /// A channel with incoming replication events.
     events: mpsc::UnboundedReceiver<ReplicationEvent>,
 
-    // Current network
-    network_name: NetworkName,
-
     /// Network API.
     network: Network,
 }
@@ -96,7 +92,6 @@ impl Replication {
             light,
             events,
             network,
-            network_name: NetworkName::Devnet,
         }
     }
 
@@ -251,7 +246,6 @@ impl Replication {
                 current_offset,
                 micro_blocks_in_epoch,
                 block_reader,
-                self.network_name,
             ) {
                 Poll::Ready(block) => {
                     return Poll::Ready(Some(block));

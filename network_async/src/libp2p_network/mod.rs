@@ -31,8 +31,8 @@ use futures::stream::StreamExt;
 
 use libp2p;
 pub use libp2p::gossipsub::Topic;
+use libp2p::gossipsub::{self, Gossipsub, GossipsubMessage, MessageId};
 use libp2p::gossipsub::{GossipsubEvent, TopicHash};
-// use libp2p::gossipsub::{self, GossipsubMessage, MessageId, Gossipsub};
 pub use libp2p_core::multiaddr::Multiaddr;
 pub use libp2p_core::PeerId;
 use libp2p_core::{identity, transport::TransportError, Transport};
@@ -83,6 +83,7 @@ pub struct Libp2pNetwork {
 
 pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
 pub const VERSION: u64 = 1;
+pub const GOSSIP_VERSION: u64 = 1;
 // Max number of topic for one floodsub message.
 
 pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
@@ -294,6 +295,7 @@ pub struct Libp2pBehaviour {
     // gossipsub: Gossipsub,
     gatekeeper: Gatekeeper, // handshake
     replication: Replication,
+    gossipsub: Gossipsub,
 
     // OLD PROTOS BEGIN
     floodsub: Floodsub,
@@ -349,26 +351,25 @@ impl Libp2pBehaviour {
         };
         debug!("Network metadata = {:?}", metadata);
 
-        // // To content-address message, we can take the hash of message and use it as an ID.
-        // let message_id_fn = |message: &GossipsubMessage| {
-        //     use std::collections::hash_map::DefaultHasher;
-        //     use std::hash::{Hash, Hasher};
-        //     let mut s = DefaultHasher::new();
-        //     message.data.hash(&mut s);
-        //     MessageId(s.finish().to_string())
-        // };
+        // To content-address message, we can take the hash of message and use it as an ID.
+        let message_id_fn = |message: &GossipsubMessage| {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut s = DefaultHasher::new();
+            message.data.hash(&mut s);
+            MessageId(s.finish().to_string())
+        };
 
-        // // set custom gossipsub
-        // let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
-        //     .heartbeat_interval(Duration::from_secs(10))
-        //     .message_id_fn(message_id_fn) // content-address messages. No two messages of the
-        //     .max_transmit_size(2048 * 1024) // 2MB;
-        //     //same content will be propagated.
-        //     .build();
+        // set custom gossipsub
+        let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
+            .heartbeat_interval(Duration::from_secs(10))
+            .message_id_fn(message_id_fn) // content-address messages. No two messages of the
+            .max_transmit_size(2048 * 1024) // 2MB;
+            //same content will be propagated.
+            .build();
 
-        // let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
         let behaviour = Libp2pBehaviour {
-            // gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
+            gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
             gossip_consumers: HashMap::new(),
             my_pkey: network_pkey.clone(),
             my_skey: network_skey.clone(),
@@ -407,7 +408,7 @@ impl Libp2pBehaviour {
                         .entry(topic.clone())
                         .or_insert(SmallVec::new())
                         .push(handler);
-                    // self.gossipsub.subscribe(gossipsub_topic);
+                    self.gossipsub.subscribe(gossipsub_topic);
                     self.floodsub.subscribe(topic);
                     return;
                 }
@@ -418,8 +419,8 @@ impl Libp2pBehaviour {
                     topic,
                     data.len(),
                 );
-                // let gossipsub_topic = Topic::new(topic.clone());
-                // self.gossipsub.publish(&gossipsub_topic, data.clone());
+                let gossipsub_topic = Topic::new(topic.clone());
+                self.gossipsub.publish(&gossipsub_topic, data.clone());
                 self.floodsub.publish(topic, data);
             }
             ControlMessage::ChangeNetworkKeys { new_pkey, new_skey } => {
@@ -481,7 +482,6 @@ impl Libp2pBehaviour {
                         data,
                     };
                     let msg = encode_unicast(payload, &self.my_skey);
-                    // self.floodsub.publish(floodsub_topic, msg);
                     self.discovery.deliver_unicast(&to, msg);
                 }
             }
@@ -717,9 +717,16 @@ impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
             GatekeeperOutEvent::PrepareListener { peer_id } => {
                 self.gatekeeper.enable_listener(peer_id);
             }
-            GatekeeperOutEvent::PrepareDialer { peer_id } => {
-                self.floodsub.enable_incoming(&peer_id);
-                self.floodsub.enable_outgoing(&peer_id);
+            GatekeeperOutEvent::PrepareDialer { peer_id, version } => {
+                if version < GOSSIP_VERSION {
+                    self.floodsub.enable_incoming(&peer_id);
+                    self.floodsub.enable_outgoing(&peer_id);
+                }
+
+                if version >= GOSSIP_VERSION {
+                    self.gossipsub.add_peer_whitelist(peer_id.clone());
+                }
+
                 self.gatekeeper.enable_dialer(peer_id);
             }
             GatekeeperOutEvent::UnlockedDialer { peer_id } => {

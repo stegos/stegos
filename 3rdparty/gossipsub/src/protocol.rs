@@ -208,8 +208,7 @@ impl Encoder for GossipsubCodec {
         rpc.encode(&mut buf)
             .expect("Buffer has sufficient capacity");
         metrics::OUTGOING_TRAFFIC
-            .with_label_values(&[&PROTOCOL_LABEL])
-            .inc_by(buf.len() as i64);
+            .add(buf.len() as i64);
 
         // length prefix the protobuf message, ensuring the max limit is not hit
         self.length_codec.encode(Bytes::from(buf), dst)
@@ -228,8 +227,7 @@ impl Decoder for GossipsubCodec {
         };
 
         metrics::INCOMING_TRAFFIC
-        .with_label_values(&[&PROTOCOL_LABEL])
-        .inc_by(packet.len() as i64);
+        .add(packet.len() as i64);
 
         let rpc = rpc_proto::Rpc::decode(&packet[..])?;
 

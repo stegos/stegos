@@ -23,16 +23,15 @@ use lazy_static::lazy_static;
 use prometheus::*;
 
 lazy_static! {
-    pub static ref INCOMING_TRAFFIC: IntCounterVec = register_int_counter_vec!(
-        "stegos_network_incoming_traffic",
-        "Incoming bytes per protocol",
-        &["protocol"]
+    pub static ref INCOMING_TRAFFIC: IntGauge = register_int_gauge!(
+        "gossip_network_incoming_traffic",
+        "Amount of slots node has in received macroblock."
     )
     .unwrap();
-    pub static ref OUTGOING_TRAFFIC: IntCounterVec = register_int_counter_vec!(
-        "stegos_network_outgoing_traffic",
-        "Outgoing bytes per protocol",
-        &["protocol"]
+
+    pub static ref OUTGOING_TRAFFIC: IntGauge = register_int_gauge!(
+        "gossip_network_outgoing_traffic",
+        "Amount of slots node has in received macroblock."
     )
     .unwrap();
 }

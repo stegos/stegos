@@ -265,12 +265,22 @@ impl Gatekeeper {
     }
 
     fn handle_unlock_request(&mut self, peer_id: PeerId, proof: Option<VDFProof>) {
+        let peer_version = self
+            .peers_metadata
+            .get(&peer_id)
+            .map(|m| m.version)
+            .unwrap_or_default();
+
         if self.unlocked_peers.contains_key(&peer_id.clone().into()) {
             debug!(target: "stegos_network::gatekeeper", "unlock request from already unlocked peer: peer_id={}", peer_id);
             self.pending_in_peers
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
+
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                GatekeeperOutEvent::PrepareDialer { peer_id },
+                GatekeeperOutEvent::PrepareDialer {
+                    peer_id,
+                    version: peer_version,
+                },
             ));
             return;
         }
@@ -280,8 +290,12 @@ impl Gatekeeper {
             self.pending_in_peers
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
             self.unlocked_peers.insert(peer_id.clone().into(), ());
+
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                GatekeeperOutEvent::PrepareDialer { peer_id },
+                GatekeeperOutEvent::PrepareDialer {
+                    peer_id,
+                    version: peer_version,
+                },
             ));
             return;
         }
@@ -333,7 +347,10 @@ impl Gatekeeper {
                 .insert(peer_id.clone(), ListenerPeerState::WaitingDialer);
 
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
-                GatekeeperOutEvent::PrepareDialer { peer_id },
+                GatekeeperOutEvent::PrepareDialer {
+                    peer_id,
+                    version: peer_version,
+                },
             ));
 
             if self.unlocked_peers.len() >= self.readiness_threshold {
@@ -766,7 +783,7 @@ fn generate_challenge(_peer_id: &PeerId) -> Vec<u8> {
 // to be extended?
 #[derive(Debug)]
 pub enum GatekeeperOutEvent {
-    PrepareDialer { peer_id: PeerId },
+    PrepareDialer { peer_id: PeerId, version: u64 },
     PrepareListener { peer_id: PeerId },
     UnlockedDialer { peer_id: PeerId },
     BanPeer { peer_id: PeerId },

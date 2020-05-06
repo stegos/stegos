@@ -89,6 +89,9 @@ pub struct Gossipsub {
 
     /// Heartbeat interval stream.
     heartbeat: Interval,
+
+    // List of peers that allowed to communicate in gossip
+    whitelisted_peers: HashSet<PeerId>,
 }
 
 impl Gossipsub {
@@ -120,7 +123,12 @@ impl Gossipsub {
                 Instant::now() + gs_config.heartbeat_initial_delay,
                 gs_config.heartbeat_interval,
             ),
+            whitelisted_peers: HashSet::new(),
         }
+    }
+
+    pub fn add_peer_whitelist(&mut self, peer_id: PeerId) {
+        self.whitelisted_peers.insert(peer_id);
     }
 
     /// Subscribe to a topic.
@@ -151,6 +159,10 @@ impl Gossipsub {
             let event = fixed_event.expect("event has been initialised");
 
             for peer in peer_list {
+                if !self.whitelisted_peers.contains(peer) {
+                    debug!("Dont send SUBSCRIBE to peer: {:?}", peer);
+                    continue;
+                }
                 debug!("Sending SUBSCRIBE to peer: {:?}", peer);
                 self.events.push_back(NetworkBehaviourAction::NotifyHandler {
                     peer_id: peer.clone(),
@@ -197,6 +209,10 @@ impl Gossipsub {
             let event = fixed_event.expect("event has been initialised");
 
             for peer in peer_list {
+                if !self.whitelisted_peers.contains(peer) {
+                    debug!("Dont send SUBSCRIBE to peer: {:?}", peer);
+                    continue;
+                }
                 debug!("Sending UNSUBSCRIBE to peer: {:?}", peer);
                 self.events.push_back(NetworkBehaviourAction::NotifyHandler {
                     peer_id: peer.clone(),
@@ -259,7 +275,9 @@ impl Gossipsub {
                     let mesh_n = self.config.mesh_n;
                     let new_peers =
                         Self::get_random_peers(&self.topic_peers, &topic_hash, mesh_n, {
-                            |_| true
+                            |peer| {
+                                self.whitelisted_peers.contains(peer)
+                            }
                         });
                     // add the new peers to the fanout and recipient peers
                     self.fanout.insert(topic_hash.clone(), new_peers.clone());
@@ -288,6 +306,7 @@ impl Gossipsub {
         });
         // Send to peers we know are subscribed to the topic.
         for peer_id in recipient_peers.iter() {
+            
             debug!("Sending message to peer: {:?}", peer_id);
             self.events.push_back(NetworkBehaviourAction::NotifyHandler {
                 peer_id: peer_id.clone(),
@@ -363,7 +382,9 @@ impl Gossipsub {
                 &self.topic_peers,
                 topic_hash,
                 self.config.mesh_n - added_peers.len(),
-                |_| true,
+                |peer| {
+                    self.whitelisted_peers.contains(peer)
+                },
             );
             added_peers.extend_from_slice(&new_peers);
             // add them to the mesh
@@ -684,6 +705,7 @@ impl Gossipsub {
         let mut to_graft = HashMap::new();
         let mut to_prune = HashMap::new();
 
+        let whitelisted_peers = &self.whitelisted_peers;
         // maintain the mesh for each topic
         for (topic_hash, peers) in self.mesh.iter_mut() {
             // too little peers - add some
@@ -698,7 +720,10 @@ impl Gossipsub {
                 let desired_peers = self.config.mesh_n - peers.len();
                 let peer_list =
                     Self::get_random_peers(&self.topic_peers, topic_hash, desired_peers, {
-                        |peer| !peers.contains(peer)
+                        |peer| {
+                            whitelisted_peers.contains(peer) &&
+                            !peers.contains(peer)
+                        }
                     });
                 for peer in &peer_list {
                     let current_topic = to_graft.entry(peer.clone()).or_insert_with(|| vec![]);
@@ -749,6 +774,8 @@ impl Gossipsub {
             });
         }
 
+
+        let whitelisted_peers = &self.whitelisted_peers;
         // maintain fanout
         // check if our peers are still a part of the topic
         for (topic_hash, peers) in self.fanout.iter_mut() {
@@ -783,6 +810,7 @@ impl Gossipsub {
                 let needed_peers = self.config.mesh_n - peers.len();
                 let new_peers =
                     Self::get_random_peers(&self.topic_peers, topic_hash, needed_peers, |peer| {
+                        whitelisted_peers.contains(peer) &&
                         !peers.contains(peer)
                     });
                 peers.extend(new_peers);
@@ -819,7 +847,10 @@ impl Gossipsub {
                 &self.topic_peers,
                 &topic_hash,
                 self.config.gossip_lazy,
-                |peer| !peers.contains(peer),
+                |peer| {
+                    self.whitelisted_peers.contains(peer) &&
+                    !peers.contains(peer)
+                },
             );
             for peer in to_msg_peers {
                 // send an IHAVE message
@@ -1084,6 +1115,7 @@ impl NetworkBehaviour for Gossipsub {
                     .map(|peers| peers.retain(|p| p != id));
             }
         }
+        self.whitelisted_peers.remove(id);
 
         // remove peer from peer_topics
         let was_in = self.peer_topics.remove(id);

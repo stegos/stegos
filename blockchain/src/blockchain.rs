@@ -2920,4 +2920,13 @@ impl BlockReader for Blockchain {
     ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error> {
         Ok(Box::new(self.light_blocks_starting(epoch, offset)))
     }
+
+    /// Get full block
+    fn get_block<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<std::borrow::Cow<'a, Block>, Error> {
+        self.block(LSN(epoch, offset)).map_err(From::from)
+    }
 }

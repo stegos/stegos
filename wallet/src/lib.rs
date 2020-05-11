@@ -616,6 +616,9 @@ impl WalletService {
                             error!("Invalid block received from replication: {}", e);
                         }
                     }
+                    Poll::Ready(Some(ReplicationRow::OutputsInfo(_block))) => {
+                        unimplemented!();
+                    }
                     Poll::Ready(Some(ReplicationRow::Block(_block))) => {
                         panic!("The full block received from replication");
                     }
@@ -637,12 +640,21 @@ impl BlockReader for DummyBlockReady {
     ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error> {
         return Err(format_err!("The light node can't be used a an upstream"));
     }
+
     fn light_iter_starting<'a>(
         &'a self,
         _epoch: u64,
         _offset: u32,
     ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error> {
         return Err(format_err!("The light node can't be used a an upstream"));
+    }
+
+    fn get_block<'a>(
+        &'a self,
+        _epoch: u64,
+        _offset: u32,
+    ) -> Result<std::borrow::Cow<'a, Block>, Error> {
+        return Err(format_err!("The light node can't be used as an upstream"));
     }
 }
 

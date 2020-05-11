@@ -606,6 +606,9 @@ impl NodeService {
                     Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
                         panic!("Received the light block from the replication");
                     }
+                    Poll::Ready(Some(ReplicationRow::OutputsInfo(_outputs_info))) => {
+                        panic!("Received the light node outputs info from the replication");
+                    }
                     Poll::Ready(Some(ReplicationRow::Block(block))) => {
                         let event = NodeIncomingEvent::DecodedBlock(block);
                         state.handle_event(event);

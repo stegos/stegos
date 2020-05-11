@@ -22,11 +22,14 @@
 // SOFTWARE.
 
 pub mod api;
+mod downstream;
 mod peer;
 mod protos;
 
 use self::api::*;
+use self::downstream::*;
 pub use self::peer::MAX_BLOCKS_PER_BATCH;
+use crate::protos::OutputsInfo;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -45,6 +48,30 @@ use tokio::time::{self, Delay, Instant};
 pub enum ReplicationRow {
     Block(Block),
     LightBlock(LightBlock),
+    OutputsInfo(OutputsInfo),
+}
+
+pub struct ReplicationConfig {
+    /// How many connections should we maximum have.
+    max_background_connections: usize,
+    /// How many connections should we keep.
+    background_connections_factor: f32,
+}
+
+impl Default for ReplicationConfig {
+    fn default() -> Self {
+        Self {
+            max_background_connections: 4,
+            background_connections_factor: 0.5,
+        }
+    }
+}
+
+impl ReplicationConfig {
+    fn background_connections(&self, peers_count: usize) -> usize {
+        let connections_count = (peers_count - 1) as f32 * self.background_connections_factor;
+        std::cmp::min(connections_count as usize, self.max_background_connections)
+    }
 }
 
 pub struct Replication {
@@ -53,6 +80,9 @@ pub struct Replication {
 
     /// A map of connected peers.
     peers: HashMap<PeerId, Peer>,
+
+    /// A map of accepted peers.
+    downstreams: HashMap<PeerId, Downstream>,
 
     /// A list of banned peers.
     banned_peers: HashSet<PeerId>,
@@ -68,6 +98,9 @@ pub struct Replication {
 
     /// Network API.
     network: Network,
+
+    /// Replication connection config
+    config: ReplicationConfig,
 }
 
 const UPSTREAM_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -83,18 +116,43 @@ impl Replication {
         events: mpsc::UnboundedReceiver<ReplicationEvent>,
     ) -> Self {
         let peers = HashMap::new();
+        let downstreams = HashMap::new();
         let periodic_delay = time::delay_for(UPSTREAM_UPDATE_INTERVAL);
         Self {
             peer_id,
             peers,
+            downstreams,
             banned_peers: HashSet::new(),
             periodic_delay,
             light,
             events,
             network,
+            config: Default::default(),
         }
     }
 
+    /// Returns list of unbanned peers, that is ready to accept our connections.
+    pub fn registered_peers(&self) -> Vec<PeerId> {
+        self.peers
+            .iter()
+            .filter_map(|(peer_id, peer)| match &peer {
+                Peer::Registered { .. } => Some(peer_id),
+                _ => None,
+            })
+            .filter(|peer_id| !self.banned_peers.contains(*peer_id))
+            .cloned()
+            .collect()
+    }
+
+    /// Returns true if we have active upstream.
+    pub fn has_upstream(&self) -> bool {
+        for (_peer_id, peer) in self.peers.iter() {
+            if peer.is_upstream() {
+                return true;
+            }
+        }
+        false
+    }
     //
     // Change the current upstream (if any).
     //
@@ -121,9 +179,9 @@ impl Replication {
         light_block: LightBlock,
         micro_blocks_in_epoch: u32,
     ) {
-        for (_peer_id, peer) in self.peers.iter_mut() {
-            peer.on_block(cx, &block, &light_block, micro_blocks_in_epoch);
-        }
+        self.downstreams.retain(|_peer_id, peer| {
+            peer.on_block(cx, &block, &light_block, micro_blocks_in_epoch)
+        });
     }
 
     ///
@@ -132,6 +190,9 @@ impl Replication {
     pub fn info(&self) -> ReplicationInfo {
         let mut peers = Vec::with_capacity(self.peers.len());
         for (peer_id, peer) in self.peers.iter() {
+            peers.push(peer.info(self.banned_peers.contains(peer_id)));
+        }
+        for (peer_id, peer) in self.downstreams.iter() {
             peers.push(peer.info(self.banned_peers.contains(peer_id)));
         }
         let my_info = PeerInfo::Localhost {
@@ -188,12 +249,12 @@ impl Replication {
                                         }
                                         *version = Some(new_version);
                                     },
-                                    Peer::Connected {ref mut version, ..} | Peer::Accepted {ref mut version, ..} => {
+                                    Peer::Connected {ref mut version, ..} => {
                                         debug!("Change peer registered version, new_version = {}", new_version);
                                         *version = new_version;
                                     }
                                     state => {
-                                        error!("Resolved peer version, when peer at unexpected state: state={:?}", state.info(self.banned_peers.contains(&peer_id)))
+                                        debug!("Resolved peer version, when peer at unexpected state: state={:?}", state.info(self.banned_peers.contains(&peer_id)))
                                     }
                                 }
                             },
@@ -215,18 +276,28 @@ impl Replication {
                     }
                     ReplicationEvent::Connected { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
-
-                        debug!("[{}] Connected.", peer_id);
-                        let peer = self.peers.get_mut(&peer_id).expect("peer is known");
-                        peer.connected(self.light, current_epoch, current_offset, rx, tx);
+                        if !self.has_upstream() {
+                            debug!("[{}] Subscribing.", peer_id);
+                            let peer = self.peers.get_mut(&peer_id).expect("peer is known");
+                            peer.subscribe(self.light, current_epoch, current_offset, rx, tx);
+                        } else {
+                            debug!("[{}] Background.", peer_id);
+                            let peer = self.peers.get_mut(&peer_id).expect("peer is known");
+                            peer.background(rx, tx);
+                        }
                     }
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
-                        let peer = self.peers.get_mut(&peer_id).expect("peer is known");
-                        if let Peer::Connected { .. } = peer {
-                            debug!("[{}] Peer connecting to us, but we already connecting to him, ignoring", peer_id);
+                        if self.downstreams.get(&peer_id).is_some() {
+                            warn!(
+                                "[{}] Already connected to us, ignoring Accepted event",
+                                peer_id
+                            );
                         } else {
-                            peer.accepted(rx, tx);
+                            let peer = self.peers.get_mut(&peer_id).expect("peer is known");
+                            if let Some(downstream) = peer.accept(rx, tx) {
+                                assert!(self.downstreams.insert(peer_id, downstream).is_none());
+                            }
                         }
                     }
                     ReplicationEvent::ConnectionFailed { peer_id, error } => {
@@ -244,8 +315,7 @@ impl Replication {
             }
         }
 
-        let mut has_upstream = false;
-        for (_peer_id, peer) in self.peers.iter_mut() {
+        self.downstreams.retain(|_peer_id, peer| {
             match peer.poll(
                 cx,
                 current_epoch,
@@ -253,6 +323,15 @@ impl Replication {
                 micro_blocks_in_epoch,
                 block_reader,
             ) {
+                Poll::Ready(()) => false,
+                Poll::Pending => true,
+            }
+        });
+
+        let mut has_upstream = false;
+        let mut connecting_nodes = 0;
+        for (_peer_id, peer) in self.peers.iter_mut() {
+            match peer.poll(cx) {
                 Poll::Ready(block) => {
                     return Poll::Ready(Some(block));
                 }
@@ -260,6 +339,9 @@ impl Replication {
             }
             if peer.is_upstream() {
                 has_upstream = true;
+            }
+            if peer.is_connected() {
+                connecting_nodes += 1;
             }
         }
 
@@ -270,54 +352,75 @@ impl Replication {
             trace!("Timer fired");
         }
 
+        // Chose a new upstream from existing connections.
+        if !has_upstream && connecting_nodes > 0 {
+            for (_peer_id, peer) in self.peers.iter_mut() {
+                if peer.is_background() {
+                    peer.promote_background(current_epoch, current_offset, self.light);
+                    has_upstream = true;
+                    connecting_nodes -= 1;
+                    break;
+                }
+            }
+        }
+
+        // If upstream stil missing but we have ongoing connection, it will be marked as upstream.
+        if !has_upstream && connecting_nodes > 0 {
+            has_upstream = true;
+        }
+
         if !has_upstream {
             trace!("Upstream is missing, trying to choose a new one");
             //
             // Choose a new upstream.
             //
-            let new_upstream = {
-                let mut potential_upstreams: Vec<&PeerId> = self
-                    .peers
-                    .iter()
-                    .filter_map(|(peer_id, peer)| match &peer {
-                        Peer::Registered { .. } => Some(peer_id),
-                        _ => None,
-                    })
-                    .filter(|peer_id| !self.banned_peers.contains(*peer_id))
-                    .collect();
 
-                if potential_upstreams.is_empty() && !self.banned_peers.is_empty() {
-                    debug!(
-                        "No unbanned potential upstreams left, give banned peers one more chance."
-                    );
-                    // give banned peers one more chance to replicate
-                    self.banned_peers.clear();
-                    potential_upstreams = self
-                        .peers
-                        .iter()
-                        .filter_map(|(peer_id, peer)| match &peer {
-                            Peer::Registered { .. } => Some(peer_id),
-                            _ => None,
-                        })
-                        .collect();
-                }
+            let mut potential_upstreams: Vec<PeerId> = self.registered_peers();
 
-                let mut rng = thread_rng();
-                potential_upstreams
-                    .as_slice()
-                    .choose(&mut rng)
-                    .map(|x| (*x).clone())
-            };
+            if potential_upstreams.is_empty() && !self.banned_peers.is_empty() {
+                debug!("No unbanned potential upstreams left, give banned peers one more chance.");
+                // give banned peers one more chance to replicate
+                self.banned_peers.clear();
+                potential_upstreams = self.registered_peers();
+            }
 
+            let mut rng = thread_rng();
+            let new_upstream = potential_upstreams.choose(&mut rng);
             if let Some(peer_id) = new_upstream {
                 debug!("Selected upstream is {}", peer_id);
-                let peer = self.peers.get_mut(&peer_id).unwrap();
+                let peer = self.peers.get_mut(peer_id).unwrap();
                 peer.connecting();
                 self.network
                     .replication_connect(peer_id.clone())
                     .expect("network is alive");
             } else {
                 trace!("Can't find a new upstream");
+            }
+        }
+        let needed_connections = self.config.background_connections(self.peers.len()) + 1;
+
+        if connecting_nodes < needed_connections {
+            debug!(
+                "Background connections count is not enought: needed={}, available={}",
+                needed_connections, connecting_nodes
+            );
+            let potential_upstreams: Vec<PeerId> = self.registered_peers();
+
+            let mut rng = thread_rng();
+            debug!(
+                "Creating {} background connections",
+                needed_connections - connecting_nodes
+            );
+            let new_upstreams = potential_upstreams
+                .choose_multiple(&mut rng, needed_connections - connecting_nodes);
+
+            for peer_id in new_upstreams {
+                debug!("Selected peer for background connection is {}", peer_id);
+                let peer = self.peers.get_mut(peer_id).unwrap();
+                peer.connecting();
+                self.network
+                    .replication_connect(peer_id.clone())
+                    .expect("network is alive");
             }
         }
         Poll::Pending

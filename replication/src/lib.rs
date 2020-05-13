@@ -29,7 +29,7 @@ mod protos;
 use self::api::*;
 use self::downstream::*;
 pub use self::peer::MAX_BLOCKS_PER_BATCH;
-use crate::protos::OutputsInfo;
+pub use crate::protos::OutputsInfo;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -185,6 +185,36 @@ impl Replication {
     }
 
     ///
+    /// Request outputs from random background connection.
+    ///
+    pub fn try_request_outputs(
+        &mut self,
+        block_epoch: u64,
+        block_offset: u32,
+        outputs_ids: Vec<u32>,
+    ) -> bool {
+        let mut peers = Vec::new();
+        for (peer_id, peer) in self.peers.iter_mut() {
+            match peer {
+                Peer::Background { .. } => peers.push(peer_id.clone()),
+                _ => {}
+            }
+        }
+        let mut rng = thread_rng();
+        let random_peer = peers.choose(&mut rng);
+
+        if let Some(peer_id) = random_peer {
+            debug!("Selected peer is {}", peer_id);
+            let peer = self.peers.get_mut(peer_id).unwrap();
+            peer.request_outputs(block_epoch, block_offset, outputs_ids);
+            return true;
+        }
+
+        trace!("Can't find a background connection ");
+        false
+    }
+
+    ///
     /// Returns replication status.
     ///
     pub fn info(&self) -> ReplicationInfo {
@@ -289,7 +319,7 @@ impl Replication {
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         if self.downstreams.get(&peer_id).is_some() {
-                            warn!(
+                            info!(
                                 "[{}] Already connected to us, ignoring Accepted event",
                                 peer_id
                             );

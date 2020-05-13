@@ -24,6 +24,7 @@
 use super::api::PeerInfo;
 use super::downstream::Downstream;
 use super::protos::{ReplicationRequest, ReplicationResponse};
+use crate::protos::RequestOutputs;
 use crate::ReplicationRow;
 use futures::channel::mpsc;
 use futures::{
@@ -186,6 +187,73 @@ impl Peer {
     }
 
     ///
+    /// Try send request outputs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current state is not Background.
+    ///
+    pub(super) fn request_outputs(
+        &mut self,
+        block_epoch: u64,
+        block_offset: u32,
+        outputs_ids: Vec<u32>,
+    ) {
+        // take needed fields for disconnect
+        let (peer_id, multiaddr, version) = match self {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone()),
+            _ => {
+                debug!("request_outputs Invalid state ={:?}", self);
+                // Unexpected state - disconnect.
+                return self.disconnected();
+            }
+        };
+
+        let emptry_state = Peer::registered(peer_id, multiaddr, version.into());
+        let this = std::mem::replace(self, emptry_state);
+        let (peer_id, multiaddr, version, rx, mut tx) = match this {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                rx,
+                tx,
+                ..
+            } => (peer_id, multiaddr, version, rx, tx),
+            _ => unreachable!("Handled in previous match"),
+        };
+
+        let request = RequestOutputs {
+            block_epoch,
+            block_offset,
+            outputs_ids,
+        };
+        let request = ReplicationRequest::RequestOutputs(request);
+        trace!("[{}] <- {:?}", peer_id, request);
+        let request = request.into_buffer().unwrap();
+        let new_state = match tx.try_send(request) {
+            Ok(()) => {
+                debug!("[{}] Background", peer_id);
+                Peer::Background {
+                    version,
+                    peer_id,
+                    multiaddr,
+                    last_clock: Instant::now(),
+                    tx,
+                    rx,
+                }
+            }
+            Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
+        };
+        std::mem::replace(self, new_state);
+    }
+
+    ///
     /// Moves to Connected state.
     ///
     /// # Panics
@@ -240,7 +308,14 @@ impl Peer {
 
     pub(super) fn background(&mut self, rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<Vec<u8>>) {
         let (peer_id, multiaddr, version) = match self {
-            Peer::Connecting {
+            Peer::Registered {
+                // in case of multiple connections.
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
+            | Peer::Connecting {
                 peer_id,
                 multiaddr,
                 version,
@@ -611,14 +686,6 @@ impl Peer {
                 last_clock,
                 version,
                 ..
-            }
-            | Peer::Background {
-                peer_id,
-                multiaddr,
-                rx,
-                last_clock,
-                version,
-                ..
             } => {
                 trace!("[{}] Poll Connected", peer_id);
 
@@ -706,9 +773,6 @@ impl Peer {
                             blocks_received: 0,
                         }
                     }
-                    ReplicationResponse::OutputsInfo(outputs_info) => {
-                        return Poll::Ready(ReplicationRow::OutputsInfo(outputs_info));
-                    }
                     response => {
                         let error = format!(
                             "Unexpected response: expected=Subscribed, got={}",
@@ -726,6 +790,90 @@ impl Peer {
                     }
                 };
                 *self = new_state;
+                Poll::Pending
+            }
+
+            //--------------------------------------------------------------------------------------
+            // Background
+            //--------------------------------------------------------------------------------------
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                rx,
+                last_clock,
+                version,
+                ..
+            } => {
+                trace!("[{}] Poll Connected", peer_id);
+
+                //
+                // Read a response.
+                //
+                let response = match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(response)) => response,
+                    Poll::Ready(None) => {
+                        self.disconnected();
+                        return Poll::Pending;
+                    }
+                    Poll::Pending => {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                            debug!("[{}] Peer is not active, disconnecting", peer_id);
+                            self.disconnected();
+                        }
+                        return Poll::Pending;
+                    }
+                };
+
+                //
+                // Parse the response.
+                //
+                trace!("[{}] -> {:?}", peer_id, response);
+                let response = match ReplicationResponse::from_buffer(&response) {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let error = format!(
+                            "Failed to parse response: response={:?}, error={:?}",
+                            response, error
+                        );
+                        error!("[{}] {}", peer_id, error);
+                        let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+                        let new_state = Peer::Failed {
+                            peer_id: peer_id.clone(),
+                            multiaddr: multiaddr.clone(),
+                            last_clock: Instant::now(),
+                            version: version.clone(),
+                            error,
+                        };
+                        std::mem::replace(self, new_state);
+                        return Poll::Pending;
+                    }
+                };
+
+                //
+                // Process the response.
+                //
+                trace!("[{}] -> {:?}", peer_id, response);
+                let new_state = match response {
+                    ReplicationResponse::OutputsInfo(outputs_info) => {
+                        return Poll::Ready(ReplicationRow::OutputsInfo(outputs_info));
+                    }
+                    response => {
+                        let error = format!(
+                            "Unexpected response: expected=OutputsInfo, got={}",
+                            response.name()
+                        );
+                        error!("[{}] {}", peer_id, error);
+                        let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+                        Peer::Failed {
+                            version: version.clone(),
+                            peer_id: peer_id.clone(),
+                            multiaddr: multiaddr.clone(),
+                            last_clock: Instant::now(),
+                            error,
+                        }
+                    }
+                };
+                std::mem::replace(self, new_state);
                 Poll::Pending
             }
 

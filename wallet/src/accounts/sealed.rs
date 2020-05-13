@@ -23,6 +23,7 @@
 
 use super::unsealed::{UnsealedAccountResult, UnsealedAccountService};
 use crate::api::*;
+use crate::ReplicationOutEvent;
 use crate::{Account, AccountEvent};
 use futures::channel::mpsc;
 use futures::prelude::*;
@@ -64,7 +65,7 @@ pub struct SealedAccountService {
     /// Incoming events.
     events: mpsc::UnboundedReceiver<AccountEvent>,
     /// Incoming blocks.
-    chain_notifications: mpsc::Receiver<LightBlock>,
+    chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
 }
 
 impl SealedAccountService {
@@ -77,7 +78,7 @@ impl SealedAccountService {
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
-        chain_notifications: mpsc::Receiver<LightBlock>,
+        chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
     ) -> Result<(Self, Account), KeyError> {
         let account_pkey_file = account_dir.join("account.pkey");
         let account_pkey = load_account_pkey(&account_pkey_file)?;
@@ -113,7 +114,7 @@ impl SealedAccountService {
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
-        chain_notifications: mpsc::Receiver<LightBlock>,
+        chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
     ) -> Self {
         let mut service = SealedAccountService {
             database_dir,

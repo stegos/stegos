@@ -196,6 +196,16 @@ pub enum Canary {
     StakeCanary(StakeCanary),
 }
 
+impl Canary {
+    pub fn is_my(&self, pkey: &PublicKey, skey: &SecretKey) -> bool {
+        match self {
+            Canary::PaymentCanary(p) => p.is_my(pkey, skey),
+            Canary::PublicPaymentCanary(p) => p.is_my(pkey),
+            Canary::StakeCanary(p) => p.is_my(pkey),
+        }
+    }
+}
+
 /// Cloak recipient's public key.
 fn cloak_key(recipient_pkey: &PublicKey, gamma: &Fr) -> Result<(PublicKey, Fr), CryptoError> {
     // h is the digest of the recipients actual public key mixed with a timestamp.

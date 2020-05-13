@@ -30,6 +30,8 @@ use crate::transaction::*;
 
 use crate::AccountEvent;
 
+use crate::CanaryProcessed;
+use crate::ReplicationOutEvent;
 use bit_vec::BitVec;
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
@@ -122,7 +124,7 @@ pub struct UnsealedAccountService {
     /// API Requests.
     pub(super) events: mpsc::UnboundedReceiver<AccountEvent>,
     /// Chain notifications
-    pub(super) chain_notifications: mpsc::Receiver<LightBlock>,
+    pub(super) chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
     /// Incoming transactions from the network.
     /// Sic: this subscription is only needed for outgoing messages.
     /// Floodsub doesn't accept outgoing messages if you are not subscribed
@@ -145,7 +147,7 @@ impl UnsealedAccountService {
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
-        chain_notifications: mpsc::Receiver<LightBlock>,
+        chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
     ) -> Self {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
@@ -556,7 +558,9 @@ impl UnsealedAccountService {
         header: MicroBlockHeader,
         sig: pbc::Signature,
         input_hashes: Vec<Hash>,
-        outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
+        output_hashes: Vec<Hash>,
+        canaries: Vec<Canary>,
+        outputs: Vec<Output>, // TODO: split validate and apply, to validate before applying.
     ) -> Result<(), Error> {
         if header.epoch < self.database.epoch() || header.offset < self.database.offset() {
             let block_hash = Hash::digest(&header);
@@ -587,8 +591,6 @@ impl UnsealedAccountService {
         //
         assert_eq!(header.epoch, self.database.epoch());
         assert_eq!(header.offset, self.database.offset());
-        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
-        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
         self.database.validate_light_micro_block(
             &header,
             &sig,
@@ -623,6 +625,8 @@ impl UnsealedAccountService {
         multisig: pbc::Signature,
         multisigmap: BitVec,
         input_hashes: Vec<Hash>,
+        outputs_hashes: Vec<Hash>,
+        canaries: Vec<Canary>,
         outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
         validators: StakersGroup,
     ) -> Result<(), Error> {
@@ -651,14 +655,12 @@ impl UnsealedAccountService {
         // Validate block.
         //
         assert_eq!(header.epoch, self.database.epoch());
-        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
-        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
         self.database.validate_macro_block(
             &header,
             &multisig,
             &multisigmap,
             &input_hashes,
-            &output_hashes,
+            &outputs_hashes,
             &canaries,
             &validators,
         )?;
@@ -1016,38 +1018,61 @@ impl UnsealedAccountService {
                         }
                     }
                 },
-                block = self.chain_notifications.next() => {
-
+                event = self.chain_notifications.next() => {
                     drop((expire_locked_inputs, pending_tx));
-                    if let Some(block) = block {
-                        let r = match block {
-                            LightBlock::LightMacroBlock(block) => {
-                                debug!("Got a macro block: epoch={}", block.header.epoch);
-                                self.apply_light_macro_block(
-                                    block.header,
-                                    block.multisig,
-                                    block.multisigmap,
-                                    block.input_hashes,
-                                    block.outputs,
-                                    block.validators,
-                                )
+                    match event {
+                        Some(ReplicationOutEvent::CanaryList {canaries, outputs, tx}) => {
+                            debug!("ReplicationOutEvent::CanaryList");
+                            let needed_outputs = canaries.into_iter().zip(outputs).enumerate().filter_map(|(id, (c, hash))|{
+                                if c.is_my(&self.account_pkey, &self.account_skey) {
+                                    info!("Found my output in outputs list: output_hash={}", hash);
+                                    Some((id as u32, hash))
+                                }
+                                else {
+                                    None
+                                }
+                            }).collect();
+                            if let Err(e) = tx.send(CanaryProcessed {
+                                needed_outputs,
+                            }) {
+                                error!("Error during processing oneshot sender = {:?}", e);
                             }
-                            LightBlock::LightMicroBlock(block) => {
-                                debug!(
-                                    "Got a micro block: epoch={}, offset={}",
-                                    block.header.epoch, block.header.offset
-                                );
-                                self.apply_light_micro_block(
-                                    block.header,
-                                    block.sig,
-                                    block.input_hashes,
-                                    block.outputs,
-                                )
-                            }
-                        };
-                        if let Err(e) = r {
-                            self.notify(AccountNotification::UpstreamError(format!("{}", e)));
                         }
+                        Some(ReplicationOutEvent::FullBlock {block, outputs}) => {
+                            let r = match block {
+                                LightBlock::LightMacroBlock(block) => {
+                                    debug!("Got a macro block: epoch={}", block.header.epoch);
+                                    self.apply_light_macro_block(
+                                        block.header,
+                                        block.multisig,
+                                        block.multisigmap,
+                                        block.input_hashes,
+                                        block.output_hashes,
+                                        block.canaries,
+                                        outputs,
+                                        block.validators,
+                                    )
+                                }
+                                LightBlock::LightMicroBlock(block) => {
+                                    debug!(
+                                        "Got a micro block: epoch={}, offset={}",
+                                        block.header.epoch, block.header.offset
+                                    );
+                                    self.apply_light_micro_block(
+                                        block.header,
+                                        block.sig,
+                                        block.input_hashes,
+                                        block.output_hashes,
+                                        block.canaries,
+                                        outputs,
+                                    )
+                                }
+                            };
+                            if let Err(e) = r {
+                                self.notify(AccountNotification::UpstreamError(format!("{}", e)));
+                            }
+                        }
+                        None => unreachable!(),
                     }
                 }
 

@@ -317,6 +317,27 @@ mod tests {
                     offset.hash(state);
                     light.hash(state);
                 }
+                ReplicationRequest::RequestOutputs(request_outputs) => request_outputs.hash(state),
+            }
+        }
+    }
+
+    impl Hashable for OutputsInfo {
+        fn hash(&self, state: &mut Hasher) {
+            self.block_epoch.hash(state);
+            self.block_offset.hash(state);
+            for output in &self.found_outputs {
+                output.hash(state);
+            }
+        }
+    }
+
+    impl Hashable for RequestOutputs {
+        fn hash(&self, state: &mut Hasher) {
+            self.block_epoch.hash(state);
+            self.block_offset.hash(state);
+            for output in &self.outputs_ids {
+                output.hash(state);
             }
         }
     }
@@ -351,6 +372,10 @@ mod tests {
                     current_epoch.hash(state);
                     current_offset.hash(state);
                     block.hash(state);
+                }
+                ReplicationResponse::OutputsInfo(outputs_info) => {
+                    "ReplicationResponse::OutputsInfo".hash(state);
+                    outputs_info.hash(state);
                 }
             }
         }

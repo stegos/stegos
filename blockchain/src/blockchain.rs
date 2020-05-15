@@ -2704,10 +2704,8 @@ pub mod tests {
             LightBlock::LightMacroBlock(block) => {
                 assert_eq!(&block.header, &genesis.header);
                 assert_eq!(&block.input_hashes, &genesis.inputs);
-                assert_eq!(&block.outputs, &genesis.outputs);
                 assert_eq!(&block.multisig, &genesis.multisig);
                 assert_eq!(&block.multisigmap, &genesis.multisigmap);
-                assert_eq!(&block.outputs, &genesis.outputs);
                 let output_hashes: Vec<Hash> = genesis.outputs.iter().map(Hash::digest).collect();
                 assert_eq!(&block.output_hashes, &output_hashes);
                 let canaries: Vec<Canary> = genesis.outputs.iter().map(|o| o.canary()).collect();

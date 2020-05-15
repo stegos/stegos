@@ -816,7 +816,7 @@ impl ReplicationBlockCollector {
                     } else {
                         let deadline = if replication.try_request_outputs(
                             epoch,
-                            offset.unwrap_or(u32::MAX),
+                            offset.unwrap_or(std::u32::MAX),
                             collected_outputs,
                         ) {
                             Instant::now() + REPLICATION_RETRY_REQUEST
@@ -1046,7 +1046,7 @@ impl ReplicationBlockCollector {
                     // Update timers
                     let new_deadline = if replication.try_request_outputs(
                         epoch,
-                        offset.unwrap_or(u32::MAX),
+                        offset.unwrap_or(std::u32::MAX),
                         collected_outputs,
                     ) {
                         Instant::now() + REPLICATION_RETRY_REQUEST
@@ -1084,8 +1084,12 @@ impl ReplicationBlockCollector {
                             assert_eq!(our_epoch + 1, epoch);
                         }
                         let block = BlockState::init(b, active_accounts.clone());
-                        self.broadcast_canary(accounts, canaries, output_hashes, epoch, None)
-                            .await;
+                        if let Err(e) = self
+                            .broadcast_canary(accounts, canaries, output_hashes, epoch, None)
+                            .await
+                        {
+                            error!("Failed to broadcast canary = {}", e);
+                        }
                         self.pending_blocks.push_back(block);
                         self.micro_blocks.clear();
                     }
@@ -1105,14 +1109,18 @@ impl ReplicationBlockCollector {
                                 }
                             }
                         }
-                        self.broadcast_canary(
-                            accounts,
-                            canaries,
-                            output_hashes,
-                            epoch,
-                            Some(offset),
-                        )
-                        .await;
+                        if let Err(e) = self
+                            .broadcast_canary(
+                                accounts,
+                                canaries,
+                                output_hashes,
+                                epoch,
+                                Some(offset),
+                            )
+                            .await
+                        {
+                            error!("Failed to broadcast canary = {}", e);
+                        }
                         debug!("Add micro block epoch = {}, offset = {}", epoch, offset);
                         let block = BlockState::init(b, active_accounts.clone());
                         self.micro_blocks.push_back(block);
@@ -1122,7 +1130,7 @@ impl ReplicationBlockCollector {
             ReplicationInEvent::ReplicationOutputs { outputs_info } => {
                 debug!("Received OutputsInfo");
                 let epoch = outputs_info.block_epoch;
-                let offset = if outputs_info.block_offset == u32::MAX {
+                let offset = if outputs_info.block_offset == std::u32::MAX {
                     None
                 } else {
                     Some(outputs_info.block_offset)
@@ -1143,7 +1151,9 @@ impl ReplicationBlockCollector {
         while let Some(BlockState::BlockReady { .. }) = self.pending_blocks.front() {
             match self.pending_blocks.pop_front() {
                 Some(BlockState::BlockReady { block, outputs }) => {
-                    self.broadcast_block(accounts, block.into(), outputs).await;
+                    if let Err(e) = self.broadcast_block(accounts, block.into(), outputs).await {
+                        error!("Failed to broadcast block = {}", e);
+                    }
                 }
                 s => unreachable!("Wrong state {:?}", s),
             }
@@ -1153,7 +1163,10 @@ impl ReplicationBlockCollector {
             while let Some(BlockState::BlockReady { .. }) = self.micro_blocks.front() {
                 match self.micro_blocks.pop_front() {
                     Some(BlockState::BlockReady { block, outputs }) => {
-                        self.broadcast_block(accounts, block.into(), outputs).await;
+                        if let Err(e) = self.broadcast_block(accounts, block.into(), outputs).await
+                        {
+                            error!("Failed to broadcast block = {}", e);
+                        }
                     }
                     s => unreachable!("Wrong state {:?}", s),
                 }
@@ -1223,7 +1236,7 @@ impl ReplicationBlockCollector {
                 current_epoch = b.block().header.epoch;
                 current_offset = b.block().header.offset + 1;
             } else if let Some(epoch) = self.last_full_epoch() {
-                current_epoch = epoch;
+                current_epoch = epoch + 1;
             }
 
             trace!(

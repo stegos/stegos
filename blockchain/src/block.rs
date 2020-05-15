@@ -127,9 +127,6 @@ pub struct LightMicroBlock {
     pub output_hashes: Vec<Hash>,
     /// Output canaries.
     pub canaries: Vec<Canary>,
-    /// Outputs
-    /// TODO: this transitional member will be removed when the light node is fully finished.
-    pub outputs: Vec<Output>,
 }
 
 impl Hashable for MicroBlockHeader {
@@ -314,16 +311,14 @@ impl Hashable for LightMicroBlock {
 impl MicroBlock {
     pub fn into_light_micro_block(self) -> LightMicroBlock {
         let input_hashes: Vec<Hash> = self.inputs().cloned().collect();
-        let outputs: Vec<Output> = self.outputs().cloned().collect();
-        let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
-        let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
+        let canaries: Vec<Canary> = self.outputs().map(|o| o.canary()).collect();
+        let output_hashes: Vec<Hash> = self.outputs().map(Hash::digest).collect();
         LightMicroBlock {
             header: self.header,
             sig: self.sig,
             input_hashes,
             output_hashes,
             canaries,
-            outputs,
         }
     }
 }
@@ -468,9 +463,6 @@ pub struct LightMacroBlock {
     pub output_hashes: Vec<Hash>,
     /// Output canaries.
     pub canaries: Vec<Canary>,
-    /// Outputs
-    /// TODO: this transitional member will be removed when the light node is fully finished.
-    pub outputs: Vec<Output>,
 }
 
 impl MacroBlock {
@@ -666,7 +658,6 @@ impl MacroBlock {
             input_hashes,
             output_hashes,
             canaries,
-            outputs,
         }
     }
 }

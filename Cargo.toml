@@ -22,8 +22,7 @@ members = [
     "consensus",
     "crypto",
     "keychain",
-    # "network",
-    "network_async",
+    "network",
     "node",
     "txpool",
     "replication",
@@ -38,7 +37,7 @@ stegos_blockchain = { version = "1.0.0", path = "./blockchain" }
 stegos_consensus = { version = "1.0.0", path = "./consensus" }
 stegos_crypto = { version = "1.0.0", path = "./crypto" }
 stegos_keychain = { version = "1.0.0", path = "./keychain" }
-stegos_network = { version = "1.0.0", path = "./network_async", package="stegos_network_async"}
+stegos_network = { version = "1.0.0", path = "./network"}
 stegos_replication = { version = "1.0.0", path = "./replication" }
 stegos_node = { version = "1.0.0", path = "./node" }
 stegos_serialization = { version = "1.0.0", path = "./serialization" }

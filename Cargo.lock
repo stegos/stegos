@@ -3151,7 +3151,7 @@ dependencies = [
  "stegos_consensus",
  "stegos_crypto",
  "stegos_keychain",
- "stegos_network_async",
+ "stegos_network",
  "stegos_node",
  "stegos_replication",
  "stegos_serialization",
@@ -3180,7 +3180,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "stegos_crypto",
- "stegos_network_async",
+ "stegos_network",
  "stegos_node",
  "stegos_wallet",
  "tokio",
@@ -3289,7 +3289,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "stegos_network_async"
+name = "stegos_network"
 version = "1.0.0"
 dependencies = [
  "arrayvec 0.4.12",
@@ -3363,7 +3363,7 @@ dependencies = [
  "stegos_blockchain",
  "stegos_consensus",
  "stegos_crypto",
- "stegos_network_async",
+ "stegos_network",
  "stegos_replication",
  "stegos_serialization",
  "stegos_txpool",
@@ -3388,7 +3388,7 @@ dependencies = [
  "simple_logger",
  "stegos_blockchain",
  "stegos_crypto",
- "stegos_network_async",
+ "stegos_network",
  "stegos_serialization",
  "tokio",
 ]
@@ -3418,7 +3418,7 @@ dependencies = [
  "simple_logger",
  "stegos_blockchain",
  "stegos_crypto",
- "stegos_network_async",
+ "stegos_network",
  "stegos_serialization",
  "tokio",
 ]
@@ -3448,7 +3448,7 @@ dependencies = [
  "stegos_blockchain",
  "stegos_crypto",
  "stegos_keychain",
- "stegos_network_async",
+ "stegos_network",
  "stegos_replication",
  "stegos_serialization",
  "stegos_txpool",

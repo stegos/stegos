@@ -1,5 +1,5 @@
 [package]
-name = "stegos_network_async"
+name = "stegos_network"
 version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
@@ -8,7 +8,7 @@ edition = "2018"
 homepage = "https://stegos.com"
 keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
 license = "MIT"
-links = "stegos_network_async"
+links = "stegos_network"
 repository = "https://github.com/stegos/stegos"
 description = "Stegos - Network Library"
 

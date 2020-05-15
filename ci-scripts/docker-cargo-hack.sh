@@ -6,7 +6,7 @@
 
 echo "fn main() {println!(\"if you see this, the build broke\")}" > build.rs
 
-for lib in api blockchain consensus crypto keychain network_async node txpool replication serialization wallet crypto/stubs/vdf_field 3rdparty/gossipsub; do
+for lib in api blockchain consensus crypto keychain network node txpool replication serialization wallet crypto/stubs/vdf_field 3rdparty/gossipsub; do
     mkdir -p $PWD/${lib}/src
     echo "pub fn main() {println!(\"if you see this, the build broke\")}" > $PWD/${lib}/src/lib.rs
     echo "fn main() {println!(\"if you see this, the build broke\")}" > $PWD/${lib}/build.rs

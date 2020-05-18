@@ -366,6 +366,7 @@ impl Libp2pBehaviour {
         // set custom gossipsub
         let gossipsub_config = gossipsub::GossipsubConfigBuilder::new()
             .heartbeat_interval(Duration::from_secs(10))
+            .public_topics(vec![Topic::new("tx".to_string())]) // TODO: use config based aproach
             .message_id_fn(message_id_fn) // content-address messages. No two messages of the
             .max_transmit_size(2048 * 1024) // 2MB;
             //same content will be propagated.

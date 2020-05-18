@@ -21,6 +21,7 @@
 use crate::protocol::{GossipsubMessage, MessageId};
 use std::borrow::Cow;
 use std::time::Duration;
+use super::topic::Topic;
 
 /// If the `no_source_id` flag is set, the IDENTITY_SOURCE value is used as the source of the
 /// packet.
@@ -75,6 +76,8 @@ pub struct GossipsubConfig {
     /// true, the user must manually call `propagate_message()` on the behaviour to forward message
     /// once validated (default is false).
     pub manual_propagation: bool,
+    
+    pub public_topics: Vec<Topic>,
 
     /// A user-defined function allowing the user to specify the message id of a gossipsub message.
     /// The default value is to concatenate the source peer id with a sequence number. Setting this
@@ -104,6 +107,7 @@ impl Default for GossipsubConfig {
             hash_topics: false, // default compatibility with floodsub
             no_source_id: false,
             manual_propagation: false,
+            public_topics: vec![],
             message_id_fn: |message| {
                 // default message id is: source + sequence number
                 let mut source_string = message.source.to_base58();
@@ -134,6 +138,10 @@ impl GossipsubConfigBuilder {
 
     pub fn protocol_id(&mut self, protocol_id: impl Into<Cow<'static, [u8]>>) -> &mut Self {
         self.config.protocol_id = protocol_id.into();
+        self
+    }
+    pub fn public_topics(&mut self, public_topics: Vec<Topic>) -> &mut Self {
+        self.config.public_topics = public_topics;
         self
     }
 

@@ -106,5 +106,5 @@ debug-assertions = true
 overflow-checks = false
 
 [patch.crates-io]
-cc = { git = 'https://github.com/vldm/cc-rs.git', branch="vm-fix-mingw" }
+cc = { git = 'https://github.com/stegos/cc-rs.git'}
 libp2p-gossipsub = { path = './3rdparty/gossipsub' }

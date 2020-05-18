@@ -323,8 +323,7 @@ impl Peer {
             } if version.is_some() => (peer_id.clone(), multiaddr.clone(), version.clone()),
             _ => {
                 debug!("Background Invalid state ={:?}", self);
-                // Unexpected state - disconnect.
-                return self.disconnected();
+                return;
             }
         };
         debug!("[{}] Background", peer_id);

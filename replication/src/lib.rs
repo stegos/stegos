@@ -69,7 +69,11 @@ impl Default for ReplicationConfig {
 
 impl ReplicationConfig {
     fn background_connections(&self, peers_count: usize) -> usize {
-        let connections_count = (peers_count - 1) as f32 * self.background_connections_factor;
+        let connections_count = if peers_count != 0 {
+            (peers_count - 1) as f32 * self.background_connections_factor
+        } else {
+            0.
+        };
         std::cmp::min(connections_count as usize, self.max_background_connections)
     }
 }
@@ -319,7 +323,7 @@ impl Replication {
                     ReplicationEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         if self.downstreams.get(&peer_id).is_some() {
-                            info!(
+                            debug!(
                                 "[{}] Already connected to us, ignoring Accepted event",
                                 peer_id
                             );
@@ -427,9 +431,9 @@ impl Replication {
                 trace!("Can't find a new upstream");
             }
         }
-        let needed_connections = self.config.background_connections(self.peers.len()) + 1;
+        let needed_connections = self.config.background_connections(self.peers.len());
 
-        if connecting_nodes < needed_connections {
+        if connecting_nodes < needed_connections + 1 {
             debug!(
                 "Background connections count is not enought: needed={}, available={}",
                 needed_connections, connecting_nodes

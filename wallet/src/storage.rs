@@ -460,9 +460,12 @@ impl LightDatabase {
         }
 
         for input_hash in inputs_iter {
+
+            trace!("Process input inputs={}", input_hash);
             if let Some(_o) = my_outputs.remove(&input_hash) {
                 continue; // annihilate this input with an output
             }
+
             let _input = match self.output_by_hash(&input_hash) {
                 Some(_o) => {
                     my_inputs.insert(*input_hash);
@@ -488,6 +491,7 @@ impl LightDatabase {
         input_hashes: Vec<Hash>,
         outputs: Vec<OutputValue>,
     ) -> HashMap<Hash, TransactionStatus> {
+        trace!("Register inputs and outputs: inputs={:?}", input_hashes);
         //
         // Process inputs.
         //

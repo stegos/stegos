@@ -250,7 +250,7 @@ impl Peer {
             }
             Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
         };
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     ///
@@ -335,7 +335,7 @@ impl Peer {
             tx,
             rx,
         };
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     // Promote background connection to foreground.
@@ -391,7 +391,7 @@ impl Peer {
             }
             Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
         };
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     ///
@@ -843,7 +843,7 @@ impl Peer {
                             version: version.clone(),
                             error,
                         };
-                        std::mem::replace(self, new_state);
+                        *self = new_state;
                         return Poll::Pending;
                     }
                 };
@@ -872,7 +872,7 @@ impl Peer {
                         }
                     }
                 };
-                std::mem::replace(self, new_state);
+                *self = new_state;
                 Poll::Pending
             }
 

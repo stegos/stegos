@@ -3305,6 +3305,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stegos_lib_test"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "stegos_network"
 version = "1.0.0"
 dependencies = [

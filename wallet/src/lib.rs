@@ -499,7 +499,10 @@ impl WalletService {
             select! {
                 // _ = dead_timer.tick().fuse() => {},
                 event = self.events.next() => {
-                    let (request, tx) = event.unwrap();
+                    let (request, tx) = match event {
+                        Some((request, tx)) => (request, tx),
+                        None => return,
+                    };
                     match request {
                         // process DeleteAccount seperately, because we need to end account future before.
                         WalletRequest::WalletControlRequest(

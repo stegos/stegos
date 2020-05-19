@@ -1041,7 +1041,7 @@ impl UnsealedAccountService {
                         Some(ReplicationOutEvent::FullBlock {block, outputs}) => {
                             let r = match block {
                                 LightBlock::LightMacroBlock(block) => {
-                                    debug!("Got a macro block: epoch={}", block.header.epoch);
+                                    debug!("Got a macro block: epoch={}, inputs={:?}", block.header.epoch, block.input_hashes);
                                     self.apply_light_macro_block(
                                         block.header,
                                         block.multisig,
@@ -1055,8 +1055,8 @@ impl UnsealedAccountService {
                                 }
                                 LightBlock::LightMicroBlock(block) => {
                                     debug!(
-                                        "Got a micro block: epoch={}, offset={}",
-                                        block.header.epoch, block.header.offset
+                                        "Got a micro block: epoch={}, offset={}, inputs={:?}",
+                                        block.header.epoch, block.header.offset, block.input_hashes
                                     );
                                     self.apply_light_micro_block(
                                         block.header,

@@ -269,7 +269,7 @@ impl Downstream {
                                     bytes_sent: 0,
                                     blocks_sent: 0,
                                 };
-                                std::mem::replace(self, new_state);
+                                *self = new_state;
                             }
                             Err(mpsc::TrySendError { .. }) => {
                                 return Poll::Ready(());
@@ -476,7 +476,7 @@ impl Downstream {
                 }
             }
         }
-        std::mem::replace(clock, Instant::now());
+        *clock = Instant::now();
         true
     }
     // Called when a new block is registered.

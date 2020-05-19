@@ -28,6 +28,7 @@ members = [
     "replication",
     "serialization",
     "wallet",
+    "stegos_lib_test",
     "crypto/stubs/vdf_field",
 ]
 
@@ -89,7 +90,7 @@ chrono = "0.4"
 lazy_static = "1.4.0"
 
 [profile.release]
-# panic = "abort"
+panic = "abort"
 debug = 2
 
 [profile.dev]

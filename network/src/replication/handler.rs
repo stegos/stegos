@@ -106,7 +106,7 @@ impl SubstreamState {
     fn poll_unpin(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<Result<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>), io::Error>> {
+    ) -> Poll<(mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)> {
         match self {
             SubstreamState::Registered
             | SubstreamState::Disconnected
@@ -137,7 +137,7 @@ impl SubstreamState {
                     tx_forward,
                 };
                 *self = state;
-                Poll::Ready(Ok((tx, rx)))
+                Poll::Ready((tx, rx))
             }
             SubstreamState::Forwarding {
                 tx_forward,
@@ -323,7 +323,7 @@ impl ProtocolsHandler for ReplicationHandler {
         }
 
         if let Poll::Ready(r) = self.upstream.poll_unpin(cx) {
-            let (tx, rx) = r.unwrap();
+            let (tx, rx) = r;
             return Poll::Ready(ProtocolsHandlerEvent::Custom(HandlerOutEvent::Connected {
                 rx,
                 tx,
@@ -331,7 +331,7 @@ impl ProtocolsHandler for ReplicationHandler {
         }
 
         if let Poll::Ready(r) = self.downstream.poll_unpin(cx) {
-            let (tx, rx) = r.unwrap();
+            let (tx, rx) = r;
             return Poll::Ready(ProtocolsHandlerEvent::Custom(HandlerOutEvent::Accepted {
                 rx,
                 tx,

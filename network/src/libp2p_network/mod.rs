@@ -326,6 +326,9 @@ pub struct Libp2pBehaviour {
 
     #[behaviour(ignore)]
     events: VecDeque<BehaviourEvent>,
+
+    #[behaviour(ignore)]
+    banned_peers: HashSet<PeerId>,
 }
 
 impl Libp2pBehaviour {
@@ -389,6 +392,7 @@ impl Libp2pBehaviour {
             replication_tx,
             unicast_consumers: HashMap::new(),
             events: VecDeque::new(),
+            banned_peers: HashSet::new(),
         };
         debug!(target: "stegos_network::delivery", "Network endpoints: node_id={}, peer_id={}", network_pkey, peer_id);
         behaviour
@@ -682,7 +686,12 @@ impl NetworkBehaviourEventProcess<NcpOutEvent> for Libp2pBehaviour {
                 self.gatekeeper.dial_address(address);
             }
             NcpOutEvent::DialPeer { peer_id } => {
-                self.gatekeeper.dial_peer(peer_id);
+                debug!(target: "stegos_network::ncp", "ncp request connect to peer: {}", peer_id);
+                if self.banned_peers.contains(&peer_id) {
+                    debug!(target: "stegos_network::ncp", "peer banned, dont connect: {}", peer_id);
+                } else {
+                    self.gatekeeper.dial_peer(peer_id);
+                }
             }
             NcpOutEvent::Connected { peer_id } => {
                 self.connected_peers.insert(peer_id);
@@ -757,7 +766,11 @@ impl NetworkBehaviourEventProcess<DiscoveryOutEvent> for Libp2pBehaviour {
         match event {
             DiscoveryOutEvent::DialPeer { peer_id } => {
                 debug!(target: "stegos_network::kad", "connecting to closest peer: {}", peer_id);
-                self.gatekeeper.dial_peer(peer_id);
+                if self.banned_peers.contains(&peer_id) {
+                    debug!(target: "stegos_network::kad", "peer banned, dont connect: {}", peer_id);
+                } else {
+                    self.gatekeeper.dial_peer(peer_id);
+                }
             }
             DiscoveryOutEvent::Route { next_hop, message } => {
                 debug!(target: "stegos_network::delivery", "delivering paylod: node_id={}, peer_id={}", message.to, next_hop);

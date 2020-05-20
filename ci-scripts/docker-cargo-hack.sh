@@ -17,6 +17,9 @@ for bin in stegosd stegos stegos-vault; do
     echo "fn main() {println!(\"if you see this, the build broke\")}" > src/bin/${bin}/main.rs
 done
 
+mkdir -p $PWD/stegos_lib_test/src
+echo "fn main() {println!(\"if you see this, the build broke\")}" > $PWD/stegos_lib_test/src/main.rs
+
 mkdir -p crypto/benches
 for bin in crypto/benches/bulletproofs.rs crypto/benches/scc.rs crypto/benches/pbc.rs ; do
     echo "fn main() {println!(\"if you see this, the build broke\")}" > ${bin}

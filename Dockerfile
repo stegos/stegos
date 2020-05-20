@@ -20,6 +20,7 @@ COPY ./txpool/Cargo.toml ./txpool/Cargo.toml
 COPY ./replication/Cargo.toml ./replication/Cargo.toml
 COPY ./serialization/Cargo.toml ./serialization/Cargo.toml
 COPY ./wallet/Cargo.toml ./wallet/Cargo.toml
+COPY ./stegos_lib_test/Cargo.toml ./stegos_lib_test/Cargo.toml
 COPY ./3rdparty/gossipsub/Cargo.toml ./3rdparty/gossipsub/Cargo.toml
 
 

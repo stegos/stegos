@@ -253,15 +253,14 @@ fn init_sync(
     let mut runtime = runtime.basic_scheduler();
     runtime = runtime.threaded_scheduler();
     runtime
-    .enable_all()
-    .build()?
-    .block_on(async move { init(chain_name, data_dir, api_token, api_endpoint).await })?;
+        .enable_all()
+        .build()?
+        .block_on(async move { init(chain_name, data_dir, api_token, api_endpoint).await })?;
     Ok(())
 }
 
 #[no_mangle]
-pub extern "system" fn init_rust(
-) -> u32 {
+pub extern "system" fn init_rust() -> u32 {
     let _log = load_logger_configuration();
     let chain: String = "testnet".into();
     let data_dir: String = "../data".into();

@@ -91,18 +91,6 @@ impl GatekeeperHandler {
     }
 }
 
-impl SubstreamState {
-    /// Consumes this state and produces the substream.
-    fn into_substream(self) -> Framed<NegotiatedSubstream, GatekeeperCodec> {
-        match self {
-            SubstreamState::WaitingInput(substream) => substream,
-            SubstreamState::PendingSend(substream, _) => substream,
-            SubstreamState::PendingFlush(substream) => substream,
-            SubstreamState::Closing(substream) => substream,
-        }
-    }
-}
-
 impl ProtocolsHandler for GatekeeperHandler {
     type InEvent = GatekeeperSendEvent;
     type OutEvent = GatekeeperMessage;

@@ -88,7 +88,7 @@ impl Delivery {
             self.dial_queue.insert(next_hop.clone(), ());
             self.events.push_back(NetworkBehaviourAction::DialPeer {
                 peer_id: next_hop.clone(),
-                condition: DialPeerCondition::NotDialing,
+                condition: DialPeerCondition::Disconnected,
             });
         }
         self.send_queue

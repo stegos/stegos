@@ -19,7 +19,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use protobuf_codegen_pure::{Args, Customize};
+use protobuf_codegen_pure::Codegen;
 use std::{
     env,
     fs::{self, File},
@@ -122,17 +122,13 @@ pub fn build_protobuf(input_path: &str, out_prefix: &str, deps: &[&str]) {
         .unwrap();
 
     let includes_str: Vec<_> = includes.iter().map(String::as_str).collect();
-
     // Execute protoc.
-    protobuf_codegen_pure::run(Args {
-        out_dir: &out_dir_str,
-        input: &protos_str,
-        includes: &includes_str,
-        customize: Customize {
-            ..Default::default()
-        },
-    })
-    .expect("protoc");
+    Codegen::new()
+        .out_dir(&out_dir_str)
+        .includes(&includes_str)
+        .inputs(&protos_str)
+        .run()
+        .expect("protoc");
 
     // Set cargo to rerun build.rs if proto files was changed.
     println!("cargo:rerun-if-changed={}", input_path);

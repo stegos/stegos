@@ -1,5 +1,4 @@
 *~
-/ci-scripts/
 /.gitlab-ci.yml
 /Dockerfile
 /start-cluster.sh

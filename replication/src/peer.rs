@@ -33,7 +33,7 @@ use log::*;
 use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock, MacroBlockHeader, MicroBlockHeader};
-use stegos_network::{Multiaddr, PeerId};
+use stegos_network::{Multiaddr, PeerId, ReplicationVersion};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::time::Instant;
 
@@ -48,20 +48,23 @@ const MAX_BYTES_PER_BATCH: u64 = 10 * 1024 * 1024; // 10Mb.
 
 /// Replication Peer.
 pub(super) enum Peer {
-    /// Peer has been discovered by libp2p.
+    /// Replication protocol resolved.
     Registered {
+        version: Option<ReplicationVersion>,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer is connecting to a remote side.
     Connecting {
+        version: Option<ReplicationVersion>,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer has been connected to a remote side.
     Connected {
+        version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -71,6 +74,7 @@ pub(super) enum Peer {
     },
     /// Peer
     Accepted {
+        version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
@@ -78,6 +82,7 @@ pub(super) enum Peer {
         rx: mpsc::Receiver<Vec<u8>>,
     },
     Receiving {
+        version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -92,6 +97,7 @@ pub(super) enum Peer {
         bytes_received: u64,
     },
     Sending {
+        version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -105,6 +111,7 @@ pub(super) enum Peer {
         bytes_sent: u64,
     },
     Failed {
+        version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
@@ -204,6 +211,7 @@ impl Peer {
         };
         multiaddr.insert(addr, true).is_some()
     }
+
     pub(super) fn remove_addr(&mut self, addr: Multiaddr) {
         trace!("Remove addr = {}", addr.to_string());
         let multiaddr = match self {
@@ -222,7 +230,11 @@ impl Peer {
     ///
     /// Create a new peer in Registered state.
     ///
-    pub(super) fn registered<H>(peer_id: PeerId, multiaddr: H) -> Self
+    pub(super) fn registered<H>(
+        peer_id: PeerId,
+        multiaddr: H,
+        version: Option<ReplicationVersion>,
+    ) -> Self
     where
         H: IntoIterator<Item = (Multiaddr, bool)>,
     {
@@ -232,6 +244,7 @@ impl Peer {
             peer_id,
             multiaddr,
             last_clock: Instant::now(),
+            version,
         }
     }
 
@@ -243,10 +256,13 @@ impl Peer {
     /// Panics if the current state is not Registered.
     ///
     pub(super) fn connecting(&mut self) {
-        let (peer_id, multiaddr) = match self {
+        let (peer_id, multiaddr, version) = match self {
             Peer::Registered {
-                peer_id, multiaddr, ..
-            } => (peer_id.clone(), multiaddr.clone()),
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone()),
             _ => {
                 // Unexpected state - disconnect.
                 return self.disconnected();
@@ -254,6 +270,7 @@ impl Peer {
         };
         debug!("[{}] Connecting", peer_id);
         let new_state = Peer::Connecting {
+            version,
             peer_id,
             multiaddr,
             last_clock: Instant::now(),
@@ -276,10 +293,13 @@ impl Peer {
         rx: mpsc::Receiver<Vec<u8>>,
         mut tx: mpsc::Sender<Vec<u8>>,
     ) {
-        let (peer_id, multiaddr) = match self {
+        let (peer_id, multiaddr, version) = match self {
             Peer::Connecting {
-                peer_id, multiaddr, ..
-            } => (peer_id.clone(), multiaddr.clone()),
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } if version.is_some() => (peer_id.clone(), multiaddr.clone(), version.clone()),
             _ => {
                 // Unexpected state - disconnect.
                 return self.disconnected();
@@ -296,6 +316,7 @@ impl Peer {
             Ok(()) => {
                 debug!("[{}] Connected", peer_id);
                 Peer::Connected {
+                    version: version.expect("is_some is handled in match"),
                     peer_id,
                     multiaddr,
                     light,
@@ -304,7 +325,7 @@ impl Peer {
                     rx,
                 }
             }
-            Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr),
+            Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
         };
         std::mem::replace(self, new_state);
     }
@@ -315,30 +336,52 @@ impl Peer {
     /// # Panics
     ///
     pub(super) fn disconnected(&mut self) {
-        let (peer_id, multiaddr) = match self {
+        let (peer_id, multiaddr, version) = match self {
             Peer::Registered {
-                peer_id, multiaddr, ..
+                peer_id,
+                multiaddr,
+                version,
+                ..
             }
             | Peer::Connecting {
-                peer_id, multiaddr, ..
-            }
-            | Peer::Connected {
-                peer_id, multiaddr, ..
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone()),
+            Peer::Connected {
+                peer_id,
+                multiaddr,
+                version,
+                ..
             }
             | Peer::Receiving {
-                peer_id, multiaddr, ..
+                peer_id,
+                multiaddr,
+                version,
+                ..
             }
             | Peer::Accepted {
-                peer_id, multiaddr, ..
+                peer_id,
+                multiaddr,
+                version,
+                ..
             }
             | Peer::Sending {
-                peer_id, multiaddr, ..
+                peer_id,
+                multiaddr,
+                version,
+                ..
             }
             | Peer::Failed {
-                peer_id, multiaddr, ..
-            } => (peer_id.clone(), multiaddr.clone()),
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone().into()),
         };
-        let new_state = Peer::registered(peer_id, multiaddr);
+
+        let new_state = Peer::registered(peer_id, multiaddr, version);
         std::mem::replace(self, new_state);
     }
 
@@ -348,17 +391,24 @@ impl Peer {
     pub(super) fn accepted(&mut self, rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<Vec<u8>>) {
         match self {
             Peer::Registered {
-                peer_id, multiaddr, ..
-            } => {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } if version.is_some() => {
                 debug!("[{}] Accepted", peer_id);
                 let new_state = Peer::Accepted {
                     peer_id: peer_id.clone(),
                     multiaddr: multiaddr.clone(),
+                    version: version.clone().expect("is_some is handled in match"),
                     rx,
                     tx,
                     last_clock: Instant::now(),
                 };
                 std::mem::replace(self, new_state);
+            }
+            Peer::Registered { peer_id, .. } => {
+                debug!("[{}] Rejected version not resolved", peer_id)
             }
             Peer::Connecting { peer_id, .. }
             | Peer::Connected { peer_id, .. }
@@ -387,8 +437,10 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                version,
                 ..
             } => PeerInfo::Discovered {
+                version: version.map(|c| c.to_string()).unwrap_or("".to_string()),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -398,8 +450,10 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                version,
                 ..
             } => PeerInfo::Connecting {
+                version: version.map(|c| c.to_string()).unwrap_or("".to_string()),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -409,8 +463,10 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                version,
                 ..
             } => PeerInfo::Connected {
+                version: version.to_string(),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -424,8 +480,10 @@ impl Peer {
                 offset,
                 bytes_received,
                 blocks_received,
+                version,
                 ..
             } => PeerInfo::Receiving {
+                version: version.to_string(),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -439,8 +497,10 @@ impl Peer {
                 peer_id,
                 multiaddr,
                 last_clock,
+                version,
                 ..
             } => PeerInfo::Accepted {
+                version: version.to_string(),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -454,8 +514,10 @@ impl Peer {
                 offset,
                 bytes_sent,
                 blocks_sent,
+                version,
                 ..
             } => PeerInfo::Sending {
+                version: version.to_string(),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -470,8 +532,10 @@ impl Peer {
                 multiaddr,
                 last_clock,
                 error,
+                version,
                 ..
             } => PeerInfo::Failed {
+                version: version.to_string(),
                 peer_id: peer_id.to_base58(),
                 multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
                 idle: Instant::now().duration_since(*last_clock).into(),
@@ -635,7 +699,7 @@ impl Peer {
     ) -> Poll<ReplicationRow> {
         match self {
             //--------------------------------------------------------------------------------------
-            // Discovered
+            // Registered
             //--------------------------------------------------------------------------------------
             Peer::Registered { peer_id, .. } => {
                 trace!("[{}] Poll Registered", peer_id);
@@ -658,6 +722,7 @@ impl Peer {
                 multiaddr,
                 rx,
                 last_clock,
+                version,
                 ..
             } => {
                 trace!("[{}] Poll Connected", peer_id);
@@ -697,6 +762,7 @@ impl Peer {
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
                             last_clock: Instant::now(),
+                            version: version.clone(),
                             error,
                         };
                         std::mem::replace(self, new_state);
@@ -708,18 +774,21 @@ impl Peer {
                 // Process the response.
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
-                let tmp_state = Self::registered(peer_id.clone(), multiaddr.clone());
-                let (peer_id, multiaddr, light, rx, tx) = match std::mem::replace(self, tmp_state) {
-                    Peer::Connected {
-                        peer_id,
-                        multiaddr,
-                        rx,
-                        tx,
-                        light,
-                        ..
-                    } => (peer_id, multiaddr, light, rx, tx),
-                    _ => unreachable!("Expected Connected state"),
-                };
+                let tmp_state =
+                    Self::registered(peer_id.clone(), multiaddr.clone(), version.clone().into());
+                let (peer_id, multiaddr, light, version, rx, tx) =
+                    match std::mem::replace(self, tmp_state) {
+                        Peer::Connected {
+                            peer_id,
+                            multiaddr,
+                            rx,
+                            tx,
+                            light,
+                            version,
+                            ..
+                        } => (peer_id, multiaddr, light, version, rx, tx),
+                        _ => unreachable!("Expected Connected state"),
+                    };
                 let new_state = match response {
                     ReplicationResponse::Subscribed {
                         current_epoch,
@@ -728,6 +797,7 @@ impl Peer {
                         debug!("[{}] Receiving", peer_id);
                         let now = Instant::now();
                         Peer::Receiving {
+                            version,
                             peer_id,
                             multiaddr,
                             light,
@@ -749,6 +819,7 @@ impl Peer {
                         error!("[{}] {}", peer_id, error);
                         let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                         Peer::Failed {
+                            version,
                             peer_id,
                             multiaddr,
                             last_clock: Instant::now(),
@@ -768,6 +839,7 @@ impl Peer {
                 multiaddr,
                 rx,
                 last_clock,
+                version,
                 ..
             } => {
                 trace!("[{}] Poll Accepted", peer_id);
@@ -804,6 +876,7 @@ impl Peer {
                         error!("[{}] {}", peer_id, error);
                         let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                         let new_state = Peer::Failed {
+                            version: version.clone(),
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
                             last_clock: Instant::now(),
@@ -818,17 +891,20 @@ impl Peer {
                 // Process the request.
                 //
                 trace!("[{}] -> {:?}", peer_id, request);
-                let tmp_state = Self::registered(peer_id.clone(), multiaddr.clone());
-                let (peer_id, multiaddr, rx, mut tx) = match std::mem::replace(self, tmp_state) {
-                    Peer::Accepted {
-                        peer_id,
-                        multiaddr,
-                        rx,
-                        tx,
-                        ..
-                    } => (peer_id, multiaddr, rx, tx),
-                    _ => unreachable!("Expected Accepted state"),
-                };
+                let tmp_state =
+                    Self::registered(peer_id.clone(), multiaddr.clone(), version.clone().into());
+                let (peer_id, multiaddr, version, rx, mut tx) =
+                    match std::mem::replace(self, tmp_state) {
+                        Peer::Accepted {
+                            peer_id,
+                            multiaddr,
+                            rx,
+                            tx,
+                            version,
+                            ..
+                        } => (peer_id, multiaddr, version, rx, tx),
+                        _ => unreachable!("Expected Accepted state"),
+                    };
                 match request {
                     ReplicationRequest::Subscribe {
                         epoch,
@@ -838,7 +914,7 @@ impl Peer {
                         if epoch > current_epoch {
                             trace!("[{}] Subscribe from the future: epoch={}, offset={}, local_epoch={}, local_offset={}",
                                    peer_id, epoch, offset, current_epoch, current_offset);
-                            let new_state = Self::registered(peer_id, multiaddr);
+                            let new_state = Self::registered(peer_id, multiaddr, version.into());
                             std::mem::replace(self, new_state);
                             return Poll::Pending;
                         }
@@ -852,6 +928,7 @@ impl Peer {
                             Ok(()) => {
                                 debug!("[{}] Sending", peer_id);
                                 let new_state = Peer::Sending {
+                                    version,
                                     peer_id,
                                     multiaddr,
                                     light,
@@ -867,7 +944,8 @@ impl Peer {
                                 std::mem::replace(self, new_state);
                             }
                             Err(mpsc::TrySendError { .. }) => {
-                                let new_state = Self::registered(peer_id, multiaddr);
+                                let new_state =
+                                    Self::registered(peer_id, multiaddr, version.into());
                                 std::mem::replace(self, new_state);
                                 return Poll::Pending;
                             }
@@ -881,6 +959,7 @@ impl Peer {
             // Receiving
             //--------------------------------------------------------------------------------------
             Peer::Receiving {
+                version,
                 peer_id,
                 multiaddr,
                 light,
@@ -923,6 +1002,7 @@ impl Peer {
                                     let error =
                                         std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                                     let new_state = Peer::Failed {
+                                        version: version.clone(),
                                         peer_id: peer_id.clone(),
                                         multiaddr: multiaddr.clone(),
                                         last_clock: Instant::now(),
@@ -999,6 +1079,7 @@ impl Peer {
                                     let error =
                                         std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                                     let new_state = Peer::Failed {
+                                        version: version.clone(),
                                         peer_id: peer_id.clone(),
                                         multiaddr: multiaddr.clone(),
                                         last_clock: Instant::now(),
@@ -1029,6 +1110,7 @@ impl Peer {
             // Sending
             //--------------------------------------------------------------------------------------
             Peer::Sending {
+                version,
                 peer_id,
                 multiaddr,
                 light,
@@ -1059,6 +1141,7 @@ impl Peer {
                         error!("[{}] {}", peer_id, error);
                         let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                         let new_state = Peer::Failed {
+                            version: version.clone(),
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
                             last_clock: Instant::now(),

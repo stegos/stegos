@@ -28,14 +28,18 @@ use futures::channel::{mpsc, oneshot};
 use std::fmt;
 use stegos_crypto::pbc;
 
+pub mod gatekeeper;
 mod libp2p_network;
 pub mod metrics;
 mod old_protos;
 mod proto;
-
 pub use old_protos::*;
 
+pub use self::replication::{ReplicationEvent, ReplicationVersion};
+pub mod replication;
+
 pub mod utils;
+pub use self::gatekeeper::NetworkName;
 pub use self::libp2p_network::Libp2pNetwork;
 pub use self::libp2p_network::Multiaddr;
 pub use self::libp2p_network::PeerId;

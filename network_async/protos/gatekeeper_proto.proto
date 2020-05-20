@@ -1,6 +1,12 @@
 syntax = "proto3";
 package gatekeeper.pb;
 
+message Metadata {
+    string network = 1;
+    uint64 version = 2;
+    uint32 port = 3;
+}
+
 message VDFProof {
     bytes challenge = 1;
     uint64 difficulty = 2;
@@ -10,6 +16,8 @@ message VDFProof {
 message UnlockRequest {
     // Optional proof
     VDFProof proof = 1;
+
+    Metadata metadata = 2;
 }
 
 message ChallengeReply {
@@ -17,16 +25,29 @@ message ChallengeReply {
     bytes challenge = 1;
     // Number of bits to calculate
     uint64 difficulty = 2;
+
+    Metadata metadata = 3;
 }
 
 message PermitReply {
     bool connection_allowed = 1;
+    string reason = 2;
+}
+
+message Hello {
+    Metadata metadata = 1;
+}
+
+message PublicIpUnlock {
+
 }
 
 message Message {
     oneof typ {
-        UnlockRequest unlock_request = 1;
-        ChallengeReply challenge_reply = 3;
-        PermitReply permit_reply = 4;
+        ChallengeReply challenge_reply = 3; // -> Challaenge from listener
+        UnlockRequest unlock_request = 1; // <- Proof Response from dialer
+        PermitReply permit_reply = 4; // -> Confirm Response from listener
+        PublicIpUnlock public_ip_unlock = 5; // -> Check that at this address real public user (UnlockRequest should be repited)
+
     }
 }

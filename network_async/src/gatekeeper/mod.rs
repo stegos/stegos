@@ -27,3 +27,4 @@ mod proto;
 mod protocol;
 
 pub use behavior::{Gatekeeper, GatekeeperOutEvent, PeerEvent};
+pub use protocol::{Metadata, NetworkName};

@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use super::handler::{HandlerInEvent, HandlerOutEvent, ReplicationHandler};
+use super::protocol::ReplicationVersion;
 use futures::channel::mpsc;
 use futures::task::{Context, Poll};
 use libp2p_core::connection::ConnectionId;
@@ -34,6 +35,10 @@ use std::collections::VecDeque;
 /// Replication event.
 #[derive(Debug)]
 pub enum ReplicationEvent {
+    ResolvedVersion {
+        peer_id: PeerId,
+        version: ReplicationVersion,
+    },
     Registered {
         peer_id: PeerId,
         multiaddr: Multiaddr,
@@ -161,6 +166,9 @@ impl NetworkBehaviour for Replication {
     /// Called on incoming events from handler.
     fn inject_event(&mut self, peer_id: PeerId, _: ConnectionId, event: HandlerOutEvent) {
         let event = match event {
+            HandlerOutEvent::ResolvedVersion { version } => {
+                ReplicationEvent::ResolvedVersion { version, peer_id }
+            }
             HandlerOutEvent::Connected { tx, rx } => {
                 ReplicationEvent::Connected { peer_id, tx, rx }
             }

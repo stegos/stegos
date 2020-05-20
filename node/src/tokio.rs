@@ -34,7 +34,7 @@ use futures::{
     future::{self, Fuse, OptionFuture},
     stream,
 };
-use futures::{select, task::Poll, FutureExt, Stream, StreamExt};
+use futures::{select, task::Poll, FutureExt, SinkExt, Stream, StreamExt};
 use log::*;
 use pin_utils::pin_mut;
 use std::pin::Pin;
@@ -179,6 +179,9 @@ pub struct NodeService {
     /// Txpool
     txpool_service: Option<TransactionPoolService>,
 
+    replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
+    replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+
     /// Replication
     replication: Replication,
 }
@@ -256,9 +259,10 @@ impl NodeService {
             outbox,
             network: network.clone(),
         };
+        let (replication_tx, proxy_rx) = mpsc::unbounded();
         let txpool_service = None;
         let light = false;
-        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
+        let replication = Replication::new(peer_id, network.clone(), light, proxy_rx);
 
         let service = NodeService {
             state,
@@ -268,6 +272,8 @@ impl NodeService {
             events: streams,
             txpool_service,
             replication,
+            replication_rx,
+            replication_tx,
             status_subscribers,
         };
 
@@ -479,9 +485,13 @@ impl NodeService {
         let mut check_sync = self.check_sync;
         let mut network = self.network;
 
+        let mut replication_rx = self.replication_rx;
+        let mut replication_tx = self.replication_tx;
+
         loop {
             // handle events, then flush responses.
             select! {
+                ev = replication_rx.next().fuse() => {let _ = replication_tx.send(ev.unwrap()).await;}
                 // poll timers
                 _ = macro_block_propose_timer => {
                     let event = NodeIncomingEvent::MacroBlockProposeTimer;

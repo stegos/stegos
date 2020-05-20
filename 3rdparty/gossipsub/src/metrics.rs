@@ -19,9 +19,19 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-pub mod handler;
-pub mod protocol;
+use lazy_static::lazy_static;
+use prometheus::*;
 
-mod behavior;
+lazy_static! {
+    pub static ref INCOMING_TRAFFIC: IntGauge = register_int_gauge!(
+        "gossip_network_incoming_traffic",
+        "Amount of slots node has in received macroblock."
+    )
+    .unwrap();
 
-pub use self::behavior::{Replication, ReplicationEvent};
+    pub static ref OUTGOING_TRAFFIC: IntGauge = register_int_gauge!(
+        "gossip_network_outgoing_traffic",
+        "Amount of slots node has in received macroblock."
+    )
+    .unwrap();
+}

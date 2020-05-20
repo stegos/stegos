@@ -1,6 +1,6 @@
 [package]
 name = "stegos"
-version = "0.13.0-pre"
+version = "1.3.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
 categories = ["cryptography", "database-implementations", "command-line-utilities"]
@@ -108,3 +108,4 @@ overflow-checks = false
 
 [patch.crates-io]
 cc = { git = 'https://github.com/vldm/cc-rs.git', branch="vm-fix-mingw" }
+libp2p-gossipsub = { path = './3rdparty/gossipsub' }

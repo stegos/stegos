@@ -77,6 +77,14 @@ where
         }
     }
 
+    pub fn get(&mut self, key: &K) -> Option<&V> {
+        if let Some((_, v)) = self.entries.get(key) {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
     pub fn remove(&mut self, key: &K) -> Option<V> {
         if let Some((cache_key, v)) = self.entries.remove(key) {
             self.expirations.remove(&cache_key);

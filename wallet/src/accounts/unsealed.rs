@@ -627,7 +627,7 @@ impl UnsealedAccountService {
         input_hashes: Vec<Hash>,
         outputs_hashes: Vec<Hash>,
         canaries: Vec<Canary>,
-        outputs: Vec<Output>, // TODO: replace by outputs_hashes + canaries.
+        outputs: Vec<Output>, // TODO: split validate and apply methods.
         validators: StakersGroup,
     ) -> Result<(), Error> {
         if header.epoch < self.database.epoch() {
@@ -768,7 +768,17 @@ impl UnsealedAccountService {
         let txs: Vec<_> = self.database.pending_txs().collect();
         for tx in txs {
             match tx {
-                Ok(tx) => {
+                Ok((tx_hash, tx_timestamp, tx)) => {
+                    if tx_timestamp + PENDING_UTXO_TIME < Timestamp::now() {
+                        trace!("Found transaction that is too old, mark as rejected.");
+                        self.on_tx_status(
+                            &tx_hash,
+                            &TransactionStatus::Rejected {
+                                error: String::from("Removed from pending list."),
+                            },
+                        );
+                        continue;
+                    }
                     debug!(
                         "Found pending transaction for resending: tx_hash = {}, status = {:?}",
                         Hash::digest(&tx.tx),

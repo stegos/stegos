@@ -460,11 +460,8 @@ impl LightDatabase {
         }
 
         for input_hash in inputs_iter {
-
             trace!("Process input inputs={}", input_hash);
-            if let Some(_o) = my_outputs.remove(&input_hash) {
-                continue; // annihilate this input with an output
-            }
+            let _ = my_outputs.remove(&input_hash); // anihilate this output
 
             let _input = match self.output_by_hash(&input_hash) {
                 Some(_o) => {
@@ -923,9 +920,6 @@ impl LightDatabase {
         assert_eq!(self.epoch, header.epoch, "block order");
         let epoch = header.epoch;
 
-        let (my_inputs, my_outputs) =
-            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
-
         //
         // Revert micro blocks.
         //
@@ -935,6 +929,9 @@ impl LightDatabase {
                 transaction_statuses.insert(tx_hash, tx_status);
             }
         }
+
+        let (my_inputs, my_outputs) =
+            self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
         assert!(self.micro_blocks.is_empty(), "micro blocks are removed");
         let block_hash = Hash::digest(&header);
         let lsn = LSN(epoch, MACRO_BLOCK_OFFSET);
@@ -1100,6 +1097,17 @@ impl LightDatabase {
                 ),
             }
 
+            for utxo in tx.outputs.iter() {
+                let utxo_hash = Hash::digest(&utxo.to_output());
+                if utxo.is_change() {
+                    self.known_changes.insert(utxo_hash);
+                }
+                self.outputs.insert(utxo_hash, *tx_hash);
+            }
+            for txin in tx.tx.txins.iter() {
+                self.inputs.insert(*txin, *tx_hash);
+            }
+
             info!("Recovered transaction: hash={}", tx_hash);
             assert!(txs.insert(*tx_hash, tx).is_none());
         }
@@ -1196,23 +1204,11 @@ impl LightDatabase {
             let mut full = true;
             for input_hash in &tx.tx.txins {
                 if !input_hashes.contains(input_hash) {
+                    debug!("Input hash not found: tx={}, hash={}", hash, input_hash);
                     full = false;
                     break;
                 }
             }
-            // Sic: the light node has only its own outputs, threfore
-            // there is no way to check that all txouts have been pruned.
-            /*
-            if full {
-                for output in &tx.tx.txouts {
-                    let output_hash = Hash::digest(output);
-                    if !output_hashes.contains(&output_hash) {
-                        full = false;
-                        break;
-                    }
-                }
-            }
-            */
 
             info!("Removing transaction: hash={}, full={}", hash, full);
             assert!(statuses.insert(hash, (tx, full)).is_none());
@@ -1266,7 +1262,9 @@ impl LightDatabase {
     }
 
     /// Return iterator over transactions
-    pub fn pending_txs<'a>(&'a self) -> impl Iterator<Item = Result<TransactionValue, Error>> + 'a {
+    pub fn pending_txs<'a>(
+        &'a self,
+    ) -> impl Iterator<Item = Result<(Hash, Timestamp, TransactionValue), Error>> + 'a {
         let cf = self.database.cf_handle(HISTORY).expect("cf created");
         self.pending_txs.iter().map(move |tx_hash| {
             let tx_key = self
@@ -1280,7 +1278,7 @@ impl LightDatabase {
                 .expect("Log entry not found.");
             let entry = LogEntry::from_buffer(&value)?;
             Ok(match entry {
-                LogEntry::Outgoing { tx } => tx,
+                LogEntry::Outgoing { tx } => (*tx_hash, *tx_key, tx),
                 _ => panic!("Found link to incomming entry, in transaaction list."),
             })
         })
@@ -1450,10 +1448,8 @@ impl LightDatabase {
             .expect("Log entry not found.");
         let entry = LogEntry::from_buffer(&value)?;
 
-        //trace!("Entry before = {:?}", entry);
         let entry = func(entry)?;
 
-        //trace!("Entry after = {:?}", entry);
         let data = entry.into_buffer().expect("couldn't serialize block.");
 
         let mut batch = WriteBatch::default();

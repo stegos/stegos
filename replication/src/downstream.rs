@@ -66,7 +66,7 @@ impl NextEpochOffset for MacroBlockHeader {
 impl NextEpochOffset for MicroBlockHeader {
     fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
         if self.offset + 1 >= micro_blocks_in_epoch {
-            (self.epoch + 1, 0)
+            (self.epoch, micro_blocks_in_epoch)
         } else {
             (self.epoch, self.offset + 1)
         }
@@ -488,7 +488,7 @@ impl Downstream {
         micro_blocks_in_epoch: u32,
     ) -> bool {
         let (current_epoch, current_offset) = match &block {
-            Block::MacroBlock(block) => (block.header.epoch, 0),
+            Block::MacroBlock(block) => (block.header.epoch, micro_blocks_in_epoch),
             Block::MicroBlock(block) => (block.header.epoch, block.header.offset),
         };
         match self {

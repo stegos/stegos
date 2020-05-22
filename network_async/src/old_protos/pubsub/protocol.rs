@@ -36,10 +36,10 @@ use std::{io, iter};
 use unsigned_varint::codec;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &'static str = "pubsub";
+const PROTOCOL_LABEL: &str = "pubsub";
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct FloodsubConfig {}
 
 impl FloodsubConfig {

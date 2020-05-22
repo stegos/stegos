@@ -45,7 +45,7 @@ use trust_dns_resolver::config::{NameServerConfig, Protocol};
 
 pub type FutureResult<I, E> = futures::future::Ready<Result<I, E>>;
 
-const IBE_ID: &'static [u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
+const IBE_ID: &[u8] = &[105u8, 13, 185, 148, 68, 76, 69, 155];
 
 pub async fn resolve_seed_nodes(
     seed_pool: &str,
@@ -61,7 +61,7 @@ pub async fn resolve_seed_nodes(
         .map(|d| {
             let addr = d.parse::<SocketAddr>()?;
             Ok(NameServerConfig {
-                socket_addr: addr.into(),
+                socket_addr: addr,
                 protocol: Protocol::Tcp,
                 tls_dns_name: None,
             })

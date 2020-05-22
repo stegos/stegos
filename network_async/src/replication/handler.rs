@@ -123,7 +123,7 @@ impl SubstreamState {
                 let (tx, node_rx) = mpsc::channel::<Vec<u8>>(OUTPUT_BUFFER_SIZE);
                 let node_tx =
                     node_tx.sink_map_err(|_e| io::Error::new(ErrorKind::Other, "forward error"));
-                let node_rx = node_rx.map(|e| Ok(e));
+                let node_rx = node_rx.map(Ok);
                 let rx_forward = Box::pin(net_rx.forward(node_tx));
                 let tx_forward = Box::pin(node_rx.forward(net_tx));
 
@@ -191,6 +191,12 @@ impl ReplicationHandler {
             downstream: SubstreamState::Registered,
             resolved_version: None,
         }
+    }
+}
+
+impl Default for ReplicationHandler {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

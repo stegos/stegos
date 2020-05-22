@@ -36,7 +36,7 @@ use unsigned_varint::codec;
 use libp2p_core::ProtocolName;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &'static str = "replication";
+const PROTOCOL_LABEL: &str = "replication";
 
 #[derive(Debug, Clone, Copy)]
 pub enum ReplicationVersion {
@@ -68,7 +68,7 @@ impl ProtocolName for ReplicationVersion {
 }
 
 /// Implementation of `ConnectionUpgrade` for the replication protocol.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct ReplicationConfig {}
 
 impl ReplicationConfig {

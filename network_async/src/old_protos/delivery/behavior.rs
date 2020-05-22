@@ -70,6 +70,12 @@ impl Delivery {
     }
 }
 
+impl Default for Delivery {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Delivery {
     pub fn deliver_unicast(&mut self, next_hop: &PeerId, message: Unicast) {
         if self.connected_peers.contains(next_hop) {
@@ -93,7 +99,7 @@ impl Delivery {
         }
         self.send_queue
             .entry(next_hop.clone())
-            .or_insert(SmallVec::new())
+            .or_insert_with(SmallVec::new)
             .push(DeliveryMessage::UnicastMessage(message));
     }
 }

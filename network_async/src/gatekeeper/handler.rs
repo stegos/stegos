@@ -91,6 +91,12 @@ impl GatekeeperHandler {
     }
 }
 
+impl Default for GatekeeperHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtocolsHandler for GatekeeperHandler {
     type InEvent = GatekeeperSendEvent;
     type OutEvent = GatekeeperMessage;

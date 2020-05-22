@@ -249,7 +249,7 @@ impl NetworkBehaviour for Floodsub {
     ) {
         self.incoming_rates
             .entry(propagation_source.clone())
-            .or_insert(RollingRateCounter::new(PUBSUB_SAMPLES))
+            .or_insert_with(|| RollingRateCounter::new(PUBSUB_SAMPLES))
             .update();
 
         if !self.allowed_remotes.contains(&propagation_source) {
@@ -264,7 +264,7 @@ impl NetworkBehaviour for Floodsub {
                     let remote_peer_topics = self
                         .unlocked_remotes
                         .entry(propagation_source.clone())
-                        .or_insert(SmallVec::new());
+                        .or_insert_with(SmallVec::new);
                     match subscription.action {
                         FloodsubSubscriptionAction::Subscribe => {
                             if !remote_peer_topics.contains(&subscription.topic) {
@@ -369,19 +369,14 @@ impl NetworkBehaviour for Floodsub {
             Self::OutEvent,
         >,
     > {
-        loop {
-            match self.metrics_update_delay.poll_unpin(cx) {
-                Poll::Ready(_) => {
-                    for (peer_id, counter) in self.incoming_rates.iter() {
-                        metrics::INCOMING_RATES
-                            .with_label_values(&[&peer_id.clone().to_base58()])
-                            .set(counter.rate());
-                    }
-                    self.metrics_update_delay
-                        .reset(Instant::now() + METRICS_UPDATE_INTERVAL);
-                }
-                Poll::Pending => break,
+        while let Poll::Ready(_) = self.metrics_update_delay.poll_unpin(cx) {
+            for (peer_id, counter) in self.incoming_rates.iter() {
+                metrics::INCOMING_RATES
+                    .with_label_values(&[&peer_id.clone().to_base58()])
+                    .set(counter.rate());
             }
+            self.metrics_update_delay
+                .reset(Instant::now() + METRICS_UPDATE_INTERVAL);
         }
 
         if let Some(event) = self.events.pop_front() {

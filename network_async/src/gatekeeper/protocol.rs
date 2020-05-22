@@ -34,6 +34,8 @@ use protobuf::Message as ProtobufMessage;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::{io, iter};
+use std::str::FromStr;
+use std::error::Error;
 use unsigned_varint::codec;
 
 #[derive(Copy, Debug, Clone, Serialize, Deserialize)]
@@ -53,13 +55,30 @@ impl fmt::Display for NetworkName {
     }
 }
 
-impl NetworkName {
-    pub fn from_str(name: &str) -> Option<Self> {
+#[derive(Debug)]
+pub struct NetworkNameParseError(());
+
+impl fmt::Display for NetworkNameParseError {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.write_str("Invalid network name")
+    }
+}
+
+impl Error for NetworkNameParseError {
+    fn description(&self) -> &str {
+        "invalid network name"
+    }
+}
+
+impl FromStr for NetworkName {
+    type Err = NetworkNameParseError;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
-            "testnet" => NetworkName::Testnet.into(),
-            "dev" => NetworkName::Devnet.into(),
-            "mainnet" => NetworkName::Mainnet.into(),
-            _ => None,
+            "testnet" => Ok(NetworkName::Testnet),
+            "dev" => Ok(NetworkName::Devnet),
+            "mainnet" => Ok(NetworkName::Mainnet),
+            _ => Err(NetworkNameParseError(())),
         }
     }
 }
@@ -67,7 +86,7 @@ impl NetworkName {
 use super::proto::gatekeeper_proto::{self, Message, Message_oneof_typ};
 
 // Prtocol label for metrics
-const PROTOCOL_LABEL: &'static str = "gatekeeper";
+const PROTOCOL_LABEL: &str = "gatekeeper";
 
 /// Implementation of `ConnectionUpgrade` for the Gatekeeper protocol.
 #[derive(Debug, Clone, Default)]
@@ -291,10 +310,10 @@ impl Decoder for GatekeeperCodec {
                 Ok(Some(GatekeeperMessage::PublicIpUnlock {}))
             }
             None => {
-                return Err(io::Error::new(
+                Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "bad protobuf encoding",
-                ));
+                ))
             }
         }
     }

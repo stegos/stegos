@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use futures::select;
 use futures::stream::SelectAll;
@@ -894,7 +895,7 @@ impl VaultService {
         let (network, network_service, _peer_id, _replication_rx) =
             stegos_network::Libp2pNetwork::new(
                 network_config,
-                stegos_network::NetworkName::from_str(&"dev").expect("Valid network name."),
+                stegos_network::NetworkName::from_str("dev").unwrap(),
                 network_skey.clone(),
                 network_pkey.clone(),
             )

@@ -100,6 +100,12 @@ impl DeliveryHandler {
     }
 }
 
+impl Default for DeliveryHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtocolsHandler for DeliveryHandler {
     type InEvent = DeliverySendEvent;
     type OutEvent = DeliveryRecvEvent;

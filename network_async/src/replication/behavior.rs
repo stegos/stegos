@@ -67,6 +67,7 @@ pub enum ReplicationEvent {
 }
 
 /// Replication protocol.
+#[derive(Default)]
 pub struct Replication {
     /// Events that need to be yielded to the outside when polling.
     events: VecDeque<NetworkBehaviourAction<HandlerInEvent, ReplicationEvent>>,

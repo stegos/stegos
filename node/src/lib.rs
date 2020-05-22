@@ -173,12 +173,7 @@ pub enum NodeOutgoingEvent {
         offset: u32,
     },
 }
-#[derive(Debug)]
-enum MicroBlockTimer {
-    None,
-    Propose,
-    ViewChange,
-}
+
 #[derive(Debug)]
 enum MacroBlockTimer {
     None,
@@ -192,8 +187,6 @@ enum Validation {
     MicroBlockValidator {
         /// Collector of view change.
         view_change_collector: ViewChangeCollector,
-        /// Propose or View Change timer
-        block_timer: MicroBlockTimer,
         /// A queue of consensus message from the future epoch.
         // TODO: Resolve unknown blocks using requests-responses.
         future_consensus_messages: Vec<ConsensusMessage>,
@@ -1254,11 +1247,6 @@ impl NodeState {
 
     /// Called when a leader for the next micro block has changed.
     fn on_micro_block_leader_changed(&mut self) {
-        let block_timer = match &mut self.validation {
-            MicroBlockValidator { block_timer, .. } => block_timer,
-            _ => panic!("Expected MicroBlockValidator State"),
-        };
-
         let leader = self.chain.leader();
         if leader == self.network_pkey {
             sinfo!(self,
@@ -1270,7 +1258,6 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
-            std::mem::replace(block_timer, MicroBlockTimer::Propose);
             self.outgoing
                 .push(NodeOutgoingEvent::MicroBlockProposeTimer {
                     random: self.chain.last_random(),
@@ -1289,7 +1276,6 @@ impl NodeState {
 
             self.outgoing
                 .push(NodeOutgoingEvent::MicroBlockProposeTimerCancel);
-            std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
         };
 
         self.outgoing
@@ -1387,7 +1373,6 @@ impl NodeState {
 
             self.validation = MicroBlockValidator {
                 view_change_collector,
-                block_timer: MicroBlockTimer::None,
                 future_consensus_messages: Vec::new(),
             };
             self.on_micro_block_leader_changed();
@@ -1546,12 +1531,11 @@ impl NodeState {
     /// Propose a new macro block.
     fn propose_macro_block(&mut self) -> Result<(), Error> {
         let timestamp = self.next_block_timestamp();
-        let (block_timer, consensus) = match &mut self.validation {
+        let consensus = match &mut self.validation {
             MacroBlockValidator {
-                block_timer,
                 consensus,
                 ..
-            } => (block_timer, consensus),
+            } => consensus,
             _ => panic!("Expected MacroBlockValidator state"),
         };
         assert!(self.chain.is_epoch_full());
@@ -1562,7 +1546,6 @@ impl NodeState {
         let duration = relevant_round * self.cfg.macro_block_timeout;
         self.outgoing
             .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
-        std::mem::replace(block_timer, MacroBlockTimer::ViewChange);
         sdebug!(
             self,
             "Creating a new macro block proposal: epoch={}, view_change={}",
@@ -1757,12 +1740,11 @@ impl NodeState {
         );
 
         // Check state.
-        let (view_change_collector, block_timer) = match &mut self.validation {
+        let view_change_collector = match &mut self.validation {
             MicroBlockValidator {
                 view_change_collector,
-                block_timer,
                 ..
-            } => (view_change_collector, block_timer),
+            } => view_change_collector,
             s => panic!("Invalid state = {:?}", s),
         };
 
@@ -1770,7 +1752,7 @@ impl NodeState {
         let duration = self.cfg.micro_block_timeout;
         self.outgoing
             .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(duration));
-        std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
+        //std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
 
         // Send a view_change message.
         let chain_info = ChainInfo::from_blockchain(&self.chain);

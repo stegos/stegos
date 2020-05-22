@@ -264,6 +264,15 @@ impl Gatekeeper {
             multiaddr.push(Protocol::Tcp(metadata.port));
             debug!(target: "stegos_network::gatekeeper", "trying to back-connect: peer_id={}, addr={}", peer_id, multiaddr);
             self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer_id.clone(),
+                    handler: NotifyHandler::Any,
+                    event: GatekeeperSendEvent::Send(GatekeeperMessage::PermitReply {
+                        connection_allowed: false,
+                        reason: String::from("Trying to back-connect, only public topics allowed."),
+                    }),
+                });
+            self.events
                 .push_back(NetworkBehaviourAction::DialAddress { address: multiaddr });
         }
         self.pending_in_peers
@@ -339,6 +348,15 @@ impl Gatekeeper {
                     let ban = !cfg!(feature = "old_protos");
                     info!(target: "stegos_network::gatekeeper", "Skiped back connect procedure, not enough info for peer found. Maybe peer version is old, peer_id={}, banning={}", peer_id, ban);
                     if ban {
+                        self.events
+                            .push_back(NetworkBehaviourAction::NotifyHandler {
+                                peer_id: peer_id.clone(),
+                                handler: NotifyHandler::Any,
+                                event: GatekeeperSendEvent::Send(GatekeeperMessage::PermitReply {
+                                    connection_allowed: false,
+                                    reason: String::from("Old protos is not supported."),
+                                }),
+                            });
                         self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                             GatekeeperOutEvent::BanPeer { peer_id },
                         ));
@@ -385,7 +403,18 @@ impl Gatekeeper {
                 self.my_metadata.network,
                 network
             );
-
+            self.events
+                .push_back(NetworkBehaviourAction::NotifyHandler {
+                    peer_id: peer_id.clone(),
+                    handler: NotifyHandler::Any,
+                    event: GatekeeperSendEvent::Send(GatekeeperMessage::PermitReply {
+                        connection_allowed: false,
+                        reason: format!(
+                            "Network is different from other, expected={}, got={}.",
+                            self.my_metadata.network, network
+                        ),
+                    }),
+                });
             self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                 GatekeeperOutEvent::BanPeer { peer_id },
             ));
@@ -611,7 +640,7 @@ impl NetworkBehaviour for Gatekeeper {
                         ));
                     }
                 } else {
-                    debug!(target: "stegos_network::gatekeeper", "failed during negotiated VDF handshake: peer_id={}, reason={}", propagation_source, reason);
+                    info!(target: "stegos_network::gatekeeper", "Received permit reply that disallow connection: peer_id={}, reason={}", propagation_source, reason);
                 }
             }
             GatekeeperMessage::PublicIpUnlock {} => {

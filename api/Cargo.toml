@@ -22,7 +22,7 @@ serde_derive = "1.0"
 serde_json = "1.0"
 anymap="0.12"
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
-stegos_network = { version = "1.0.0", path = "../network_async", package="stegos_network_async"}
+stegos_network = { version = "1.0.0", path = "../network"}
 stegos_node = { version = "1.0.0", path = "../node" }
 stegos_wallet = { version = "1.0.0", path = "../wallet" }
 tokio = { version = "0.2.11", default-features = false, features = []}

@@ -1007,9 +1007,6 @@ impl ProtoConvert for LightMicroBlock {
         for canary in &self.canaries {
             proto.canaries.push(canary.into_proto());
         }
-        for output in &self.outputs {
-            proto.outputs.push(output.into_proto());
-        }
         proto
     }
 
@@ -1028,17 +1025,12 @@ impl ProtoConvert for LightMicroBlock {
         for canary in proto.canaries.iter() {
             canaries.push(Canary::from_proto(canary)?);
         }
-        let mut outputs = Vec::with_capacity(proto.outputs.len());
-        for output in proto.outputs.iter() {
-            outputs.push(Output::from_proto(output)?);
-        }
         Ok(LightMicroBlock {
             header,
             sig,
             input_hashes,
             output_hashes,
             canaries,
-            outputs,
         })
     }
 }
@@ -1177,9 +1169,6 @@ impl ProtoConvert for LightMacroBlock {
         for canary in &self.canaries {
             proto.canaries.push(canary.into_proto());
         }
-        for output in &self.outputs {
-            proto.outputs.push(output.into_proto());
-        }
         proto
     }
 
@@ -1210,10 +1199,6 @@ impl ProtoConvert for LightMacroBlock {
         for canary in proto.canaries.iter() {
             canaries.push(Canary::from_proto(canary)?);
         }
-        let mut outputs = Vec::with_capacity(proto.outputs.len());
-        for output in proto.outputs.iter() {
-            outputs.push(Output::from_proto(output)?);
-        }
         Ok(LightMacroBlock {
             header,
             multisig,
@@ -1222,7 +1207,6 @@ impl ProtoConvert for LightMacroBlock {
             input_hashes,
             output_hashes,
             canaries,
-            outputs,
         })
     }
 }

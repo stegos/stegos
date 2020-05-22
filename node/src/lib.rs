@@ -1752,8 +1752,6 @@ impl NodeState {
         let duration = self.cfg.micro_block_timeout;
         self.outgoing
             .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(duration));
-        //std::mem::replace(block_timer, MicroBlockTimer::ViewChange);
-
         // Send a view_change message.
         let chain_info = ChainInfo::from_blockchain(&self.chain);
         let msg = view_change_collector.handle_timeout(chain_info);

@@ -40,6 +40,6 @@ class Stegos {
 
     public static void main(String[] args) {
         Stegos.init("testnet", System.getProperty("user.home") + "/.local/share/stegos/testnet",
-                "iUNtuwIDfPheI6BBqOin6A==", "127.0.0.1:3145");
+                "iUNtuwIDfPheI6BBqOin6A==", "127.0.0.1:4145");
     }
 }

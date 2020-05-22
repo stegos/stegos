@@ -660,7 +660,6 @@ mod tests {
     use simple_logger;
     use std::ffi::OsStr;
     use tempdir::TempDir;
-    // use pretty_assertions::assert_eq;
 
     #[test]
     #[ignore]

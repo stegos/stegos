@@ -363,6 +363,7 @@ impl ConsoleService {
         eprintln!("subscribe chain EPOCH [OFFSET] - subscribe for blockchain changes");
         eprintln!("show status - show general information about node status");
         eprintln!("subscribe status - subscribe for status changes");
+        eprintln!("subscribe wallet - subscribe for wallet updates");
         eprintln!("net publish TOPIC MESSAGE - publish a network message via floodsub");
         eprintln!("net send NETWORK_ADDRESS TOPIC MESSAGE - send a network message via unicast");
         eprintln!("net peers - show connected peers");
@@ -992,6 +993,9 @@ impl ConsoleService {
         } else if msg.starts_with("subscribe status") {
             let request = NodeRequest::SubscribeStatus {};
             self.send_node_request(request).await?
+        } else if msg.starts_with("subscribe wallet") {
+            let request = WalletControlRequest::SubscribeWalletUpdates {};
+            self.send_wallet_control_request(request).await?
         } else if msg == "show accounts" {
             let request = WalletControlRequest::AccountsInfo {};
             self.send_wallet_control_request(request).await?;

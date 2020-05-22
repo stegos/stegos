@@ -92,6 +92,9 @@ pub struct Gossipsub {
 
     // List of peers that allowed to communicate in gossip
     whitelisted_peers: HashSet<PeerId>,
+
+    // Allow to communicate inside a topic
+    public_topics: HashSet<TopicHash>,
 }
 
 impl Gossipsub {
@@ -103,7 +106,7 @@ impl Gossipsub {
             local_peer_id
         };
 
-        Gossipsub {
+        let mut gossip = Gossipsub {
             config: gs_config.clone(),
             events: VecDeque::new(),
             control_pool: HashMap::new(),
@@ -124,13 +127,19 @@ impl Gossipsub {
                 gs_config.heartbeat_interval,
             ),
             whitelisted_peers: HashSet::new(),
-        }
+            public_topics: HashSet::new(),
+        };
+        gossip.public_topics = gs_config.public_topics.iter().map(|t|gossip.topic_hash(t.clone())).collect();
+        gossip
     }
 
     pub fn add_peer_whitelist(&mut self, peer_id: PeerId) {
         self.whitelisted_peers.insert(peer_id);
     }
 
+    pub fn allowed(&self, peer_id: &PeerId, topic: &TopicHash) -> bool {
+        self.public_topics.contains(topic) || self.whitelisted_peers.contains(peer_id)
+    }
     /// Subscribe to a topic.
     ///
     /// Returns true if the subscription worked. Returns false if we were already subscribed.
@@ -159,7 +168,7 @@ impl Gossipsub {
             let event = fixed_event.expect("event has been initialised");
 
             for peer in peer_list {
-                if !self.whitelisted_peers.contains(peer) {
+                if !self.allowed(peer, &topic_hash) {
                     debug!("Dont send SUBSCRIBE to peer: {:?}", peer);
                     continue;
                 }
@@ -209,7 +218,7 @@ impl Gossipsub {
             let event = fixed_event.expect("event has been initialised");
 
             for peer in peer_list {
-                if !self.whitelisted_peers.contains(peer) {
+                if !self.allowed(peer, topic_hash) {
                     debug!("Dont send SUBSCRIBE to peer: {:?}", peer);
                     continue;
                 }
@@ -276,7 +285,7 @@ impl Gossipsub {
                     let new_peers =
                         Self::get_random_peers(&self.topic_peers, &topic_hash, mesh_n, {
                             |peer| {
-                                self.whitelisted_peers.contains(peer)
+                                self.allowed(peer, &topic_hash)
                             }
                         });
                     // add the new peers to the fanout and recipient peers
@@ -383,7 +392,7 @@ impl Gossipsub {
                 topic_hash,
                 self.config.mesh_n - added_peers.len(),
                 |peer| {
-                    self.whitelisted_peers.contains(peer)
+                    self.allowed(peer, &topic_hash)
                 },
             );
             added_peers.extend_from_slice(&new_peers);
@@ -706,6 +715,7 @@ impl Gossipsub {
         let mut to_prune = HashMap::new();
 
         let whitelisted_peers = &self.whitelisted_peers;
+        let whitelisted_topics = &self.public_topics;
         // maintain the mesh for each topic
         for (topic_hash, peers) in self.mesh.iter_mut() {
             // too little peers - add some
@@ -721,7 +731,7 @@ impl Gossipsub {
                 let peer_list =
                     Self::get_random_peers(&self.topic_peers, topic_hash, desired_peers, {
                         |peer| {
-                            whitelisted_peers.contains(peer) &&
+                            (whitelisted_topics.contains(topic_hash) || whitelisted_peers.contains(peer)) &&
                             !peers.contains(peer)
                         }
                     });
@@ -776,6 +786,7 @@ impl Gossipsub {
 
 
         let whitelisted_peers = &self.whitelisted_peers;
+        let whitelisted_topics = &self.public_topics;
         // maintain fanout
         // check if our peers are still a part of the topic
         for (topic_hash, peers) in self.fanout.iter_mut() {
@@ -810,7 +821,7 @@ impl Gossipsub {
                 let needed_peers = self.config.mesh_n - peers.len();
                 let new_peers =
                     Self::get_random_peers(&self.topic_peers, topic_hash, needed_peers, |peer| {
-                        whitelisted_peers.contains(peer) &&
+                        (whitelisted_topics.contains(topic_hash) || whitelisted_peers.contains(peer)) &&
                         !peers.contains(peer)
                     });
                 peers.extend(new_peers);
@@ -848,7 +859,7 @@ impl Gossipsub {
                 &topic_hash,
                 self.config.gossip_lazy,
                 |peer| {
-                    self.whitelisted_peers.contains(peer) &&
+                    self.allowed(peer, &topic_hash) &&
                     !peers.contains(peer)
                 },
             );

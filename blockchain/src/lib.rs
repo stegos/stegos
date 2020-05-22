@@ -114,4 +114,10 @@ pub trait BlockReader {
         epoch: u64,
         offset: u32,
     ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error>;
+
+    fn get_block<'a>(
+        &'a self,
+        epoch: u64,
+        offset: u32,
+    ) -> Result<std::borrow::Cow<'a, Block>, Error>;
 }

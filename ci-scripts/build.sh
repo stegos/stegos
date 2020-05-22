@@ -361,7 +361,8 @@ do_release() {
     mv target/$target/release/$dylib release/$dylib.debug
     $strip -S release/$dylib.debug -o release/$dylib
 
-    if test $1 = "win-x64"; then
+    case $1 in
+    win-x64)
         for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
             cp /mingw64/bin/lib$lib.dll ./release/
         done
@@ -374,8 +375,17 @@ do_release() {
             done
             popd
         done
-    fi
+        ;;
+    android-x64)
+        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so ./release
 
+        ;;
+    android-aarch64)
+        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./release
+        ;;
+    *)
+        ;;
+    esac
     ls -lah release
 }
 

@@ -659,9 +659,7 @@ mod tests {
     use super::*;
     use simple_logger;
     use std::ffi::OsStr;
-    use stegos_blockchain::ChainConfig;
     use tempdir::TempDir;
-    // use pretty_assertions::assert_eq;
 
     #[test]
     #[ignore]

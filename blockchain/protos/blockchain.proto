@@ -141,8 +141,6 @@ message LightMacroBlock {
     repeated stegos.crypto.Hash input_hashes = 5;
     repeated stegos.crypto.Hash output_hashes = 6;
     repeated Canary canaries = 7;
-    /// TODO: this transitional member will be removed when the light node is fully finished.
-    repeated Output outputs = 8;
 }
 
 message MicroBlockHeader {
@@ -177,8 +175,6 @@ message LightMicroBlock {
     repeated stegos.crypto.Hash input_hashes = 5;
     repeated stegos.crypto.Hash output_hashes = 6;
     repeated Canary canaries = 7;
-    /// TODO: this transitional member will be removed when the light node is fully finished.
-    repeated Output outputs = 8;
 }
 
 message Block {

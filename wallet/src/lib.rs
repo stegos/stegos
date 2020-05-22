@@ -20,7 +20,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-#![recursion_limit = "1024"]
+#![recursion_limit = "2048"]
 
 pub mod accounts;
 pub mod api;
@@ -38,11 +38,13 @@ use self::recovery::recovery_to_account_skey;
 use api::*;
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
+use futures::future::FutureExt;
 use futures::prelude::*;
 use futures::select;
-use futures::task::Poll;
+use futures::stream;
 use log::*;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::fs;
 use std::path::{Path, PathBuf};
 use stegos_blockchain::api::StatusInfo;
@@ -52,12 +54,14 @@ use stegos_crypto::{pbc, scc};
 use stegos_keychain::keyfile::{load_account_pkey, write_account_pkey, write_account_skey};
 use stegos_network::{Network, PeerId, ReplicationEvent};
 use stegos_replication::api::PeerInfo;
-use stegos_replication::{Replication, ReplicationRow};
-use tokio::time::Duration;
+use stegos_replication::{OutputsInfo, Replication, ReplicationRow};
+use tokio::time::{Duration, Instant};
 
 use futures::stream::SelectAll;
 
 const STAKE_FEE: i64 = 0;
+const REPLICATION_RETRY_REQUEST: Duration = Duration::from_secs(30);
+const REPLICATION_RETRY_ON_NO_CONNECTION: Duration = Duration::from_secs(3);
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const PENDING_UTXO_TIME: Duration = Duration::from_secs(5 * 60);
 const CHECK_LOCKED_INPUTS: Duration = Duration::from_secs(10);
@@ -133,7 +137,7 @@ pub struct AccountHandle {
     /// True if unsealed.
     pub unsealed: bool,
     /// A channel to send blocks,
-    pub chain_tx: mpsc::Sender<LightBlock>,
+    pub chain_tx: mpsc::Sender<ReplicationOutEvent>,
 }
 
 pub struct WalletService {
@@ -151,7 +155,7 @@ pub struct WalletService {
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
 
     events: mpsc::UnboundedReceiver<(WalletRequest, oneshot::Sender<WalletResponse>)>,
-    replication: Replication,
+    replication: ReplicationBlockCollector,
 }
 
 impl WalletService {
@@ -170,7 +174,10 @@ impl WalletService {
         let subscribers = Vec::new();
         let account_notifications = SelectAll::new();
         let light = true;
-        let replication = Replication::new(peer_id, network.clone(), light, replication_rx);
+        let replication = ReplicationBlockCollector::new(
+            chain_cfg.clone(),
+            Replication::new(peer_id, network.clone(), light, replication_rx),
+        );
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
             network_skey,
@@ -338,7 +345,7 @@ impl WalletService {
                         )
                     })
                     .collect();
-                let replication_info = self.replication.info();
+                let replication_info = self.replication.replication.info();
                 let remote_epoch = replication_info
                     .peers
                     .into_iter()
@@ -381,7 +388,7 @@ impl WalletService {
                 unreachable!("Delete account should be already processed in different routine")
             }
             WalletControlRequest::LightReplicationInfo {} => Ok(
-                WalletControlResponse::LightReplicationInfo(self.replication.info()),
+                WalletControlResponse::LightReplicationInfo(self.replication.replication.info()),
             ),
             WalletControlRequest::SubscribeWalletUpdates {} => {
                 let (sender, rx) = mpsc::unbounded();
@@ -484,48 +491,39 @@ impl WalletService {
         );
     }
 
-    /// Handle incoming blocks received from network.
-    async fn handle_block(&mut self, block: LightBlock) -> Result<(), Error> {
-        for (account_id, handle) in &mut self.accounts {
-            if !handle.unsealed {
-                continue;
-            }
-            if let Err(e) = handle.chain_tx.send(block.clone()).await {
-                warn!("{}: account_id={}", e, account_id);
-            }
-        }
-        Ok(())
-    }
-
     pub async fn start(mut self) {
-        // Update replication timer.
-        let mut poll_timer = tokio::time::interval(Duration::from_secs(1));
+        // Timer to prevent network death.
+        // let dead_timer = tokio::time::interval_at(Duration::from_secs(3));
         // Process events.
         loop {
             select! {
-                    event = self.events.next() => {
-                        let (request, tx) = event.unwrap();
-                        match request {
-                            // process DeleteAccount seperately, because we need to end account future before.
-                            WalletRequest::WalletControlRequest(
-                                WalletControlRequest::DeleteAccount { account_id },
-                            ) => self.handle_account_delete(account_id, tx),
-                            WalletRequest::WalletControlRequest(request) => {
-                                let response = match self.handle_control_request(request) {
-                                    Ok(r) => r,
-                                    Err(e) => WalletControlResponse::Error {
-                                        error: format!("{}", e),
-                                    },
-                                };
-                                let response = WalletResponse::WalletControlResponse(response);
-                                tx.send(response).ok(); // ignore errors.
-                            }
-                            WalletRequest::AccountRequest {
-                                account_id,
-                                request,
-                            } => self.handle_account_request(account_id, request, tx),
+                // _ = dead_timer.tick().fuse() => {},
+                event = self.events.next() => {
+                    let (request, tx) = match event {
+                        Some((request, tx)) => (request, tx),
+                        None => return,
+                    };
+                    match request {
+                        // process DeleteAccount seperately, because we need to end account future before.
+                        WalletRequest::WalletControlRequest(
+                            WalletControlRequest::DeleteAccount { account_id },
+                        ) => self.handle_account_delete(account_id, tx),
+                        WalletRequest::WalletControlRequest(request) => {
+                            let response = match self.handle_control_request(request) {
+                                Ok(r) => r,
+                                Err(e) => WalletControlResponse::Error {
+                                    error: format!("{}", e),
+                                },
+                            };
+                            let response = WalletResponse::WalletControlResponse(response);
+                            tx.send(response).ok(); // ignore errors.
                         }
-                    },
+                        WalletRequest::AccountRequest {
+                            account_id,
+                            request,
+                        } => self.handle_account_request(account_id, request, tx),
+                    }
+                },
                 // Forward notifications.
                 notification = self.account_notifications.next() => {
                     if let Some((account_id, notification)) = notification {
@@ -566,61 +564,13 @@ impl WalletService {
                         }
                     }
                 }
-                timer = poll_timer.tick().fuse() => {}
+                event = self.replication.select(&mut self.accounts).fuse() => {
+                    trace!("Return replication event = {:?}", event);
 
-            }
-
-            // Replication
-            'outer: while self.accounts.len() > 0 {
-                // Sic: check that all accounts are ready before polling the replication.
-                let mut current_epoch = std::u64::MAX;
-                let mut current_offset = std::u32::MAX;
-                let mut unsealed = false;
-                for (_account_id, handle) in &mut self.accounts {
-                    if !handle.unsealed {
-                        continue;
+                    if let Some(event) = self.replication.process_event(&mut self.accounts, event).await {
+                        error!("Replication shutdown.");
+                        return;
                     }
-                    unsealed = true;
-                    if handle.status.epoch <= current_epoch {
-                        current_epoch = handle.status.epoch;
-                        if handle.status.offset <= current_offset {
-                            current_offset = handle.status.offset;
-                        }
-                    }
-                }
-
-                if !unsealed {
-                    break;
-                }
-
-                let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
-                let block_reader = DummyBlockReady {};
-                trace!(
-                    "Poll replication: current_epoch={}, current_offset={}",
-                    current_epoch,
-                    current_offset
-                );
-
-                let replication_fut = future::poll_fn(|cx| {
-                    Poll::Ready(self.replication.poll(
-                        cx,
-                        current_epoch,
-                        current_offset,
-                        micro_blocks_in_epoch,
-                        &block_reader,
-                    ))
-                });
-                match replication_fut.await {
-                    Poll::Ready(Some(ReplicationRow::LightBlock(block))) => {
-                        if let Err(e) = self.handle_block(block).await {
-                            error!("Invalid block received from replication: {}", e);
-                        }
-                    }
-                    Poll::Ready(Some(ReplicationRow::Block(_block))) => {
-                        panic!("The full block received from replication");
-                    }
-                    Poll::Ready(None) => return, // Shutdown.
-                    Poll::Pending => break 'outer,
                 }
             }
         }
@@ -637,12 +587,735 @@ impl BlockReader for DummyBlockReady {
     ) -> Result<Box<dyn Iterator<Item = Block> + 'a>, Error> {
         return Err(format_err!("The light node can't be used a an upstream"));
     }
+
     fn light_iter_starting<'a>(
         &'a self,
         _epoch: u64,
         _offset: u32,
     ) -> Result<Box<dyn Iterator<Item = LightBlock> + 'a>, Error> {
         return Err(format_err!("The light node can't be used a an upstream"));
+    }
+
+    fn get_block<'a>(
+        &'a self,
+        _epoch: u64,
+        _offset: u32,
+    ) -> Result<std::borrow::Cow<'a, Block>, Error> {
+        return Err(format_err!("The light node can't be used as an upstream"));
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CanaryProcessed {
+    needed_outputs: Vec<(u32, Hash)>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BlockEvent {
+    CanaryProcessed {
+        epoch: u64,
+        offset: Option<u32>,
+        account_id: AccountId,
+        response: CanaryProcessed,
+    },
+    OutputsReceived {
+        epoch: u64,
+        offset: Option<u32>,
+        found_outputs: Vec<Output>,
+    },
+}
+
+impl BlockEvent {
+    fn epoch(&self) -> u64 {
+        match self {
+            BlockEvent::CanaryProcessed { epoch, .. } => *epoch,
+            BlockEvent::OutputsReceived { epoch, .. } => *epoch,
+        }
+    }
+
+    fn offset(&self) -> Option<u32> {
+        match self {
+            BlockEvent::CanaryProcessed { offset, .. } => *offset,
+            BlockEvent::OutputsReceived { offset, .. } => *offset,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ReplicationOutEvent {
+    FullBlock {
+        block: LightBlock,
+        outputs: Vec<Output>,
+    },
+    CanaryList {
+        canaries: Vec<Canary>,
+        outputs: Vec<Hash>,
+        tx: oneshot::Sender<CanaryProcessed>,
+    },
+}
+
+#[derive(Debug)]
+pub enum AccountBlockState {
+    Pending,
+    Resolved { outputs: Vec<(u32, Hash)> },
+}
+
+/// Pipeline of block processing,
+#[derive(Debug)]
+pub enum BlockState<B> {
+    BugState,
+    WaitCanaryValidate {
+        block: B,
+        accounts: HashMap<AccountId, AccountBlockState>,
+    },
+    BlockPending {
+        block: B,
+        outputs: Vec<Output>,
+        pending_outputs: HashMap<Hash, u32>,
+        deadline: Instant,
+    },
+    BlockReady {
+        block: B,
+        outputs: Vec<Output>,
+    },
+}
+
+impl<B> BlockState<B> {
+    fn init(block: B, accounts: Vec<AccountId>) -> BlockState<B> {
+        BlockState::WaitCanaryValidate {
+            block,
+            accounts: accounts
+                .into_iter()
+                .map(|k| (k, AccountBlockState::Pending))
+                .collect(),
+        }
+    }
+
+    fn block(&self) -> &B {
+        match self {
+            BlockState::BlockPending { ref block, .. } => block,
+            BlockState::BlockReady { ref block, .. } => block,
+            BlockState::WaitCanaryValidate { ref block, .. } => block,
+            BlockState::BugState => unreachable!(),
+        }
+    }
+}
+
+pub struct ReplicationBlockCollector {
+    replication: Replication,
+    pending_blocks: VecDeque<BlockState<LightMacroBlock>>,
+    micro_blocks: VecDeque<BlockState<LightMicroBlock>>,
+    chain_cfg: ChainConfig,
+
+    replication_responses: stream::FuturesUnordered<
+        Box<dyn Future<Output = Result<BlockEvent, oneshot::Canceled>> + Unpin + Send>,
+    >,
+
+    timer: tokio::time::Interval,
+}
+
+impl ReplicationBlockCollector {
+    fn new(chain_cfg: ChainConfig, replication: Replication) -> Self {
+        Self {
+            replication,
+            pending_blocks: VecDeque::new(),
+            micro_blocks: VecDeque::new(),
+            chain_cfg,
+            replication_responses: stream::FuturesUnordered::new(),
+            timer: tokio::time::interval(Duration::from_secs(2)),
+        }
+    }
+
+    fn change_upstream(&mut self, error: bool) {
+        self.replication.change_upstream(error)
+    }
+
+    fn first_epoch(&self) -> Option<u64> {
+        self.pending_blocks.front().map(|b| b.block().header.epoch)
+    }
+
+    fn last_full_epoch(&self) -> Option<u64> {
+        self.pending_blocks.back().map(|b| b.block().header.epoch)
+    }
+
+    fn first_offset(&self) -> Option<u32> {
+        self.micro_blocks.front().map(|b| b.block().header.offset)
+    }
+
+    fn block_process_event<B: BlockInfo>(
+        replication: &mut Replication,
+        original_block: &mut BlockState<B>,
+        event: BlockEvent,
+    ) {
+        let state = std::mem::replace(original_block, BlockState::BugState);
+        match (event, state) {
+            (_, BlockState::BugState) => {
+                unreachable!("Bug state should not persist between transfer")
+            }
+            // Process canary
+            (
+                BlockEvent::CanaryProcessed {
+                    epoch,
+                    offset,
+                    account_id,
+                    response,
+                },
+                BlockState::WaitCanaryValidate {
+                    block,
+                    mut accounts,
+                },
+            ) => {
+                //
+                // Contract
+                //
+                trace!(
+                    "Block({}:{:?}) BlockEvent::CanaryProcessed event",
+                    epoch,
+                    offset
+                );
+                assert_eq!(epoch, block.epoch());
+                assert_eq!(offset, block.offset());
+
+                //
+                // Buisness logic
+                //
+                *accounts
+                    .get_mut(&account_id)
+                    .expect("Account already known") = AccountBlockState::Resolved {
+                    outputs: response.needed_outputs,
+                };
+
+                let mut pending_outputs = HashMap::new();
+                let mut collected_outputs = Vec::new();
+                let mut ready = true;
+                for (_account_id, account) in &accounts {
+                    match account {
+                        AccountBlockState::Pending => ready = false,
+
+                        AccountBlockState::Resolved { outputs } => {
+                            for (id, hash) in outputs.clone() {
+                                collected_outputs.push(id);
+                                pending_outputs.insert(hash, id);
+                            }
+                        }
+                    }
+                }
+
+                //
+                // Transfer
+                //
+                debug!("Block({}:{:?}) ready = {}", epoch, offset, ready);
+                if ready {
+                    if pending_outputs.is_empty() {
+                        debug!(
+                            "Block({}:{:?}) WaitCanaryValidate -> BlockReady",
+                            epoch, offset
+                        );
+                        *original_block = BlockState::BlockReady {
+                            block,
+                            outputs: Vec::new(),
+                        };
+                        return;
+                    } else {
+                        let deadline = if replication.try_request_outputs(
+                            epoch,
+                            offset.unwrap_or(std::u32::MAX),
+                            collected_outputs,
+                        ) {
+                            Instant::now() + REPLICATION_RETRY_REQUEST
+                        } else {
+                            Instant::now() + REPLICATION_RETRY_ON_NO_CONNECTION
+                        };
+                        debug!(
+                            "Block({}:{:?}) WaitCanaryValidate -> BlockPending",
+                            epoch, offset
+                        );
+                        *original_block = BlockState::BlockPending {
+                            block,
+                            outputs: Vec::new(),
+                            pending_outputs,
+                            deadline,
+                        };
+                        return;
+                    }
+                }
+                *original_block = BlockState::WaitCanaryValidate { block, accounts };
+            }
+            // Process outputs
+            (
+                BlockEvent::OutputsReceived {
+                    epoch,
+                    offset,
+                    found_outputs,
+                },
+                BlockState::BlockPending {
+                    block,
+                    mut outputs,
+                    mut pending_outputs,
+                    deadline,
+                },
+            ) => {
+                //
+                // Contract
+                //
+                trace!(
+                    "Block({}:{:?}) BlockEvent::OutputsReceived event",
+                    epoch,
+                    offset
+                );
+                assert_eq!(epoch, block.epoch());
+                assert_eq!(offset, block.offset());
+
+                //
+                // Logic
+                //
+                for output in found_outputs {
+                    let output_hash = Hash::digest(&output);
+                    if pending_outputs.remove(&output_hash).is_some() {
+                        trace!(
+                            "BlockState::BlockPending Processing output: output_hash={}",
+                            output_hash
+                        );
+                        outputs.push(output);
+                    } else {
+                        warn!(
+                            "OutputsReceived with output that was not pending: output_hash={}",
+                            output_hash
+                        );
+                    }
+                }
+
+                //
+                // Transfer
+                //
+                let state;
+                if pending_outputs.is_empty() {
+                    info!("Block({}:{:?}) BlockPending -> BlockReady", epoch, offset);
+                    state = BlockState::BlockReady { block, outputs };
+                } else {
+                    state = BlockState::BlockPending {
+                        block,
+                        outputs,
+                        deadline,
+                        pending_outputs,
+                    };
+                }
+                *original_block = state;
+            }
+            (BlockEvent::OutputsReceived { .. }, state) => {
+                warn!(
+                    "Outdated OutputsReceived from replication, state = {:?}",
+                    state
+                );
+                *original_block = state;
+            }
+            (BlockEvent::CanaryProcessed { .. }, s) => {
+                // if we receive oudated CanaryProcessed event, then some account was skipped
+                panic!("Outdated CanaryProcessed from replication, state = {:?}", s)
+            }
+        }
+    }
+
+    async fn broadcast_block(
+        &mut self,
+        accounts: &mut HashMap<AccountId, AccountHandle>,
+        block: LightBlock,
+        outputs: Vec<Output>,
+    ) -> Result<(), Error> {
+        for (account_id, handle) in accounts {
+            if !handle.unsealed {
+                continue;
+            }
+            trace!("Sending block to account={}", account_id);
+            let event = ReplicationOutEvent::FullBlock {
+                block: block.clone(),
+                outputs: outputs.clone(),
+            };
+            if let Err(e) = handle.chain_tx.send(event).await {
+                warn!("{}: account_id={}", e, account_id);
+            }
+        }
+        Ok(())
+    }
+
+    async fn broadcast_canary(
+        &mut self,
+        accounts: &mut HashMap<AccountId, AccountHandle>,
+        canaries: Vec<Canary>,
+        outputs: Vec<Hash>,
+        epoch: u64,
+        offset: Option<u32>,
+    ) -> Result<(), Error> {
+        for (account_id, handle) in accounts {
+            if !handle.unsealed {
+                continue;
+            }
+
+            trace!("Sending canary to account={}", account_id);
+            let (tx, rx) = oneshot::channel::<CanaryProcessed>();
+            let event = ReplicationOutEvent::CanaryList {
+                canaries: canaries.clone(),
+                outputs: outputs.clone(),
+                tx,
+            };
+            if let Err(e) = handle.chain_tx.send(event).await {
+                warn!("{}: account_id={}", e, account_id);
+            }
+            let epoch = epoch.clone();
+            let offset = offset.clone();
+            let account_id = account_id.clone();
+            self.replication_responses
+                .push(Box::new(rx.map_ok(move |r| BlockEvent::CanaryProcessed {
+                    response: r,
+                    epoch,
+                    offset,
+                    account_id,
+                })));
+        }
+        Ok(())
+    }
+
+    pub fn process_block_event(&mut self, event: BlockEvent) {
+        let epoch = event.epoch();
+        let offset = event.offset();
+        // microblock
+        if let Some(offset) = offset {
+            if let Some(first_offset) = self.first_offset() {
+                if first_offset > offset {
+                    warn!(
+                        "Received event with offset from past, our_offset = {}, event = {:?}",
+                        first_offset, event
+                    );
+                    return;
+                }
+                let id = offset - first_offset;
+                if let Some(block) = self.micro_blocks.get_mut(id as usize) {
+                    Self::block_process_event(&mut self.replication, block, event)
+                } else {
+                    warn!("Not found block for event = {:?}", event);
+                }
+            }
+        }
+        // macroblock
+        else if let Some(first_epoch) = self.first_epoch() {
+            if first_epoch > epoch {
+                warn!(
+                    "Received event with epoch from past, our_epoch = {}, event = {:?}",
+                    first_epoch, event
+                );
+                return;
+            }
+            let id = epoch - first_epoch;
+            if let Some(block) = self.pending_blocks.get_mut(id as usize) {
+                Self::block_process_event(&mut self.replication, block, event)
+            } else {
+                warn!("Not found block for event = {:?}", event);
+            }
+        }
+    }
+
+    pub fn process_timer(&mut self, now: Instant) {
+        Self::process_timer_inner(&mut self.replication, self.pending_blocks.iter_mut(), now);
+        Self::process_timer_inner(&mut self.replication, self.micro_blocks.iter_mut(), now);
+    }
+
+    fn process_timer_inner<'a, B: BlockInfo + 'static, I>(
+        replication: &mut Replication,
+        blocks: I,
+        now: Instant,
+    ) where
+        I: Iterator<Item = &'a mut BlockState<B>>,
+    {
+        for block in blocks {
+            match block {
+                BlockState::BlockPending {
+                    block,
+                    pending_outputs,
+                    deadline,
+                    ..
+                } => {
+                    let epoch = block.epoch();
+                    let offset = block.offset();
+                    if *deadline > now {
+                        continue;
+                    }
+                    debug!("Block({}:{:?}) process timer event event", epoch, offset);
+                    let mut collected_outputs = Vec::new();
+
+                    for (_h, id) in pending_outputs {
+                        collected_outputs.push(*id);
+                    }
+
+                    // Update timers
+                    let new_deadline = if replication.try_request_outputs(
+                        epoch,
+                        offset.unwrap_or(std::u32::MAX),
+                        collected_outputs,
+                    ) {
+                        Instant::now() + REPLICATION_RETRY_REQUEST
+                    } else {
+                        Instant::now() + REPLICATION_RETRY_ON_NO_CONNECTION
+                    };
+                    *deadline = new_deadline;
+                }
+                _ => {} // ignore rest states
+            }
+        }
+    }
+
+    async fn process_event(
+        &mut self,
+        accounts: &mut HashMap<AccountId, AccountHandle>,
+        event: ReplicationInEvent,
+    ) -> Option<()> {
+        match event {
+            ReplicationInEvent::ReplicationBlock { block } => {
+                debug!("Received block");
+                let mut active_accounts = Vec::new();
+                for (account_id, handle) in accounts.iter() {
+                    if !handle.unsealed {
+                        continue;
+                    }
+                    active_accounts.push(account_id.clone());
+                }
+                match block {
+                    LightBlock::LightMacroBlock(b) => {
+                        let epoch = b.header.epoch;
+                        let canaries = b.canaries.clone();
+                        let output_hashes = b.output_hashes.clone();
+                        if let Some(our_epoch) = self.last_full_epoch() {
+                            assert_eq!(our_epoch + 1, epoch);
+                        }
+                        let block = BlockState::init(b, active_accounts.clone());
+                        if let Err(e) = self
+                            .broadcast_canary(accounts, canaries, output_hashes, epoch, None)
+                            .await
+                        {
+                            error!("Failed to broadcast canary = {}", e);
+                        }
+                        self.pending_blocks.push_back(block);
+                        self.micro_blocks.clear();
+                    }
+                    LightBlock::LightMicroBlock(b) => {
+                        let epoch = b.header.epoch;
+                        let offset = b.header.offset;
+                        let canaries = b.canaries.clone();
+                        let output_hashes = b.output_hashes.clone();
+                        if let Some(micro_block) = self.micro_blocks.back() {
+                            assert_eq!(micro_block.block().header.epoch, epoch);
+                            assert_eq!(micro_block.block().header.offset + 1, offset);
+                        } else {
+                            if let Some(our_epoch) = self.last_full_epoch() {
+                                if our_epoch + 1 != epoch {
+                                    warn!("First micro_block in epoch should continue our history, our_epoch={}, micro_block_epoch={}", our_epoch, epoch);
+                                    return None;
+                                }
+                            }
+                        }
+                        if let Err(e) = self
+                            .broadcast_canary(
+                                accounts,
+                                canaries,
+                                output_hashes,
+                                epoch,
+                                Some(offset),
+                            )
+                            .await
+                        {
+                            error!("Failed to broadcast canary = {}", e);
+                        }
+                        debug!("Add micro block epoch = {}, offset = {}", epoch, offset);
+                        let block = BlockState::init(b, active_accounts.clone());
+                        self.micro_blocks.push_back(block);
+                    }
+                }
+            }
+            ReplicationInEvent::ReplicationOutputs { outputs_info } => {
+                debug!("Received OutputsInfo");
+                let epoch = outputs_info.block_epoch;
+                let offset = if outputs_info.block_offset == std::u32::MAX {
+                    None
+                } else {
+                    Some(outputs_info.block_offset)
+                };
+                let event = BlockEvent::OutputsReceived {
+                    epoch,
+                    offset,
+                    found_outputs: outputs_info.found_outputs,
+                };
+                self.process_block_event(event);
+            }
+            ReplicationInEvent::Timer { now } => self.process_timer(now),
+
+            ReplicationInEvent::BlockEvent { block_event } => self.process_block_event(block_event),
+            ReplicationInEvent::Shutdown => return Some(()),
+        }
+
+        while let Some(BlockState::BlockReady { .. }) = self.pending_blocks.front() {
+            match self.pending_blocks.pop_front() {
+                Some(BlockState::BlockReady { block, outputs }) => {
+                    if let Err(e) = self.broadcast_block(accounts, block.into(), outputs).await {
+                        error!("Failed to broadcast block = {}", e);
+                    }
+                }
+                s => unreachable!("Wrong state {:?}", s),
+            }
+        }
+
+        if self.pending_blocks.is_empty() {
+            while let Some(BlockState::BlockReady { .. }) = self.micro_blocks.front() {
+                match self.micro_blocks.pop_front() {
+                    Some(BlockState::BlockReady { block, outputs }) => {
+                        if let Err(e) = self.broadcast_block(accounts, block.into(), outputs).await
+                        {
+                            error!("Failed to broadcast block = {}", e);
+                        }
+                    }
+                    s => unreachable!("Wrong state {:?}", s),
+                }
+            }
+        }
+
+        None
+    }
+
+    async fn select(
+        &mut self,
+        accounts: &mut HashMap<AccountId, AccountHandle>,
+    ) -> ReplicationInEvent {
+        // Replication
+        loop {
+            // Sic: check that all accounts are ready before polling the replication.
+            let mut current_epoch = std::u64::MAX;
+            let mut current_offset = std::u32::MAX;
+            let mut unsealed = false;
+            for (_account_id, handle) in accounts.iter() {
+                if !handle.unsealed {
+                    continue;
+                }
+                unsealed = true;
+                if handle.status.epoch <= current_epoch {
+                    current_epoch = handle.status.epoch;
+                    if handle.status.offset <= current_offset {
+                        current_offset = handle.status.offset;
+                    }
+                }
+            }
+            if !unsealed {
+                // If no unsealed accounts, wait for external events.
+                let future = future::pending();
+                let () = future.await;
+            }
+
+            let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
+            let block_reader = DummyBlockReady {};
+            if let Some(epoch) = self.last_full_epoch() {
+                let mut epoch = epoch;
+                // We processing epoch that is not full.
+                if self.micro_blocks.len() > 0 {
+                    epoch += 1;
+                    current_offset = 0;
+                }
+
+                if epoch < current_epoch {
+                    debug!("Removing all history, because wallet request history from future: current_epoch = {}, epoch_requested = {}", epoch, current_epoch);
+                    self.micro_blocks.clear();
+                    self.pending_blocks.clear();
+                }
+            }
+
+            if let Some(epoch) = self.first_epoch() {
+                if epoch < current_epoch {
+                    debug!(
+                        "Removed one block from queue, because it is outdated: epoch = {}",
+                        epoch
+                    );
+                    let _block = self.pending_blocks.pop_front();
+                }
+            }
+
+            // TODO: move this logic into replication.
+            if let Some(b) = self.micro_blocks.back() {
+                current_epoch = b.block().header.epoch;
+                current_offset = b.block().header.offset + 1;
+            } else if let Some(epoch) = self.last_full_epoch() {
+                current_epoch = epoch + 1;
+            }
+
+            trace!(
+                "Poll replication: current_epoch={}, current_offset={}",
+                current_epoch,
+                current_offset
+            );
+
+            let replication = &mut self.replication;
+            let replication_fut = future::poll_fn(|cx| {
+                replication.poll(
+                    cx,
+                    current_epoch,
+                    current_offset,
+                    micro_blocks_in_epoch,
+                    &block_reader,
+                )
+            });
+            select! {
+                event = replication_fut.fuse() => match event {
+                    Some(ReplicationRow::LightBlock(block)) => {
+                        return ReplicationInEvent::ReplicationBlock { block, };
+                    }
+                    Some(ReplicationRow::OutputsInfo(outputs_info)) => {
+                        return ReplicationInEvent::ReplicationOutputs { outputs_info, };
+                    }
+                    Some(ReplicationRow::Block(_block)) => {
+                        panic!("The full block received from replication");
+                    }
+                    None => return ReplicationInEvent::Shutdown, // Shutdown.
+                },
+                notifications = self.replication_responses.next() => {
+                    if let Some(event) = notifications {
+                        match event {
+                            Ok(block_event) => return ReplicationInEvent::BlockEvent {block_event},
+                            Err(e) => panic!("{}", e)// TODO handle eeror
+                        }
+                    }
+                }
+                now = self.timer.tick().fuse() => {
+                    return ReplicationInEvent::Timer { now, };
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ReplicationInEvent {
+    BlockEvent { block_event: BlockEvent },
+    Timer { now: Instant },
+    ReplicationBlock { block: LightBlock },
+    ReplicationOutputs { outputs_info: OutputsInfo },
+    Shutdown,
+}
+
+trait BlockInfo: std::fmt::Debug {
+    fn epoch(&self) -> u64;
+    fn offset(&self) -> Option<u32>;
+}
+
+impl BlockInfo for LightMacroBlock {
+    fn epoch(&self) -> u64 {
+        self.header.epoch
+    }
+    fn offset(&self) -> Option<u32> {
+        None
+    }
+}
+impl BlockInfo for LightMicroBlock {
+    fn epoch(&self) -> u64 {
+        self.header.epoch
+    }
+
+    fn offset(&self) -> Option<u32> {
+        Some(self.header.offset)
     }
 }
 

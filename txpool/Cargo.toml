@@ -15,7 +15,7 @@ description = "Stegos - Facilitator"
 [dependencies]
 stegos_crypto = { version = "1.0.0", path = "../crypto" }
 stegos_blockchain = { version = "1.0.0", path = "../blockchain" }
-stegos_network = { version = "1.0.0", path = "../network_async", package="stegos_network_async"}
+stegos_network = { version = "1.0.0", path = "../network"}
 stegos_serialization = { version = "1.0.0", path = "../serialization" }
 log = "0.4"
 failure = "0.1"

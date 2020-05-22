@@ -14,12 +14,13 @@ COPY ./blockchain/Cargo.toml ./blockchain/Cargo.toml
 COPY ./consensus/Cargo.toml ./consensus/Cargo.toml
 COPY ./crypto/Cargo.toml ./crypto/Cargo.toml
 COPY ./keychain/Cargo.toml ./keychain/Cargo.toml
-COPY ./network_async/Cargo.toml ./network_async/Cargo.toml
+COPY ./network/Cargo.toml ./network/Cargo.toml
 COPY ./node/Cargo.toml ./node/Cargo.toml
 COPY ./txpool/Cargo.toml ./txpool/Cargo.toml
 COPY ./replication/Cargo.toml ./replication/Cargo.toml
 COPY ./serialization/Cargo.toml ./serialization/Cargo.toml
 COPY ./wallet/Cargo.toml ./wallet/Cargo.toml
+COPY ./stegos_lib_test/Cargo.toml ./stegos_lib_test/Cargo.toml
 COPY ./3rdparty/gossipsub/Cargo.toml ./3rdparty/gossipsub/Cargo.toml
 
 

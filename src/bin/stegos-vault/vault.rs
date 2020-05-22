@@ -18,8 +18,8 @@ use futures::stream::SelectAll;
 use stegos_api::load_api_token;
 use stegos_api::WebSocketClient;
 use stegos_api::{InnerResponses, Request, RequestKind, Response, ResponseKind};
+use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::Timestamp;
-use stegos_blockchain::{api::StatusInfo, LightBlock};
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain::keyfile::{
@@ -142,7 +142,7 @@ struct AccountHandle {
     secret_key: scc::SecretKey,
     account: Account,
     status: StatusInfo,
-    chain_tx: mpsc::Sender<LightBlock>,
+    chain_tx: mpsc::Sender<stegos_wallet::ReplicationOutEvent>,
 }
 
 struct VaultService {
@@ -462,11 +462,16 @@ impl VaultService {
                     {
                         error!("Failed to process deposit = {}", e)
                     }
+                    let outputs = block.block.outputs.clone();
                     let light_block = block.block.into_light_macro_block(validators);
+                    let event = stegos_wallet::ReplicationOutEvent::FullBlock {
+                        block: light_block.into(),
+                        outputs,
+                    };
 
                     self.handle
                         .chain_tx
-                        .send(light_block.into())
+                        .send(event)
                         .await
                         .expect("Account should read blocks.");
                 }

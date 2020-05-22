@@ -22,7 +22,9 @@
 // SOFTWARE.
 
 use super::api::PeerInfo;
+use super::downstream::Downstream;
 use super::protos::{ReplicationRequest, ReplicationResponse};
+use crate::protos::RequestOutputs;
 use crate::ReplicationRow;
 use futures::channel::mpsc;
 use futures::{
@@ -32,7 +34,7 @@ use futures::{
 use log::*;
 use std::collections::HashMap;
 use std::time::Duration;
-use stegos_blockchain::{Block, BlockReader, LightBlock, MacroBlockHeader, MicroBlockHeader};
+use stegos_blockchain::{Block, LightBlock};
 use stegos_network::{Multiaddr, PeerId, ReplicationVersion};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::time::Instant;
@@ -43,10 +45,9 @@ const MAX_IDLE_DURATION: Duration = Duration::from_secs(60);
 const MAX_STREAMING_DURATION: Duration = Duration::from_secs(60 * 10);
 /// Maximal size of batch in blocks.
 pub const MAX_BLOCKS_PER_BATCH: usize = 100; // Average block size is 100k.
-/// Maximal size of batch in bytes.
-const MAX_BYTES_PER_BATCH: u64 = 10 * 1024 * 1024; // 10Mb.
 
 /// Replication Peer.
+#[derive(Debug)]
 pub(super) enum Peer {
     /// Replication protocol resolved.
     Registered {
@@ -62,21 +63,21 @@ pub(super) enum Peer {
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
+    /// Peer is connected, but his connection keeped unsubscribed for future usage.
+    Background {
+        version: ReplicationVersion,
+        peer_id: PeerId,
+        multiaddr: HashMap<Multiaddr, bool>,
+        last_clock: Instant,
+        tx: mpsc::Sender<Vec<u8>>,
+        rx: mpsc::Receiver<Vec<u8>>,
+    },
     /// Peer has been connected to a remote side.
     Connected {
         version: ReplicationVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
-        last_clock: Instant,
-        tx: mpsc::Sender<Vec<u8>>,
-        rx: mpsc::Receiver<Vec<u8>>,
-    },
-    /// Peer
-    Accepted {
-        version: ReplicationVersion,
-        peer_id: PeerId,
-        multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
         tx: mpsc::Sender<Vec<u8>>,
         rx: mpsc::Receiver<Vec<u8>>,
@@ -96,20 +97,6 @@ pub(super) enum Peer {
         blocks_received: u64,
         bytes_received: u64,
     },
-    Sending {
-        version: ReplicationVersion,
-        peer_id: PeerId,
-        multiaddr: HashMap<Multiaddr, bool>,
-        light: bool,
-        last_clock: Instant,
-        start_clock: Instant,
-        tx: mpsc::Sender<Vec<u8>>,
-        rx: mpsc::Receiver<Vec<u8>>,
-        epoch: u64,
-        offset: u32,
-        blocks_sent: u64,
-        bytes_sent: u64,
-    },
     Failed {
         version: ReplicationVersion,
         peer_id: PeerId,
@@ -119,84 +106,6 @@ pub(super) enum Peer {
     },
 }
 
-trait IntoReplicationResponse: Sized {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse;
-}
-
-impl IntoReplicationResponse for Block {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse {
-        ReplicationResponse::Block {
-            current_epoch,
-            current_offset,
-            block: self,
-        }
-    }
-}
-
-impl IntoReplicationResponse for LightBlock {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse {
-        ReplicationResponse::LightBlock {
-            current_epoch,
-            current_offset,
-            block: self,
-        }
-    }
-}
-
-trait NextEpochOffset {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32);
-}
-
-impl NextEpochOffset for MacroBlockHeader {
-    fn next_epoch_offset(&self, _micro_blocks_in_epoch: u32) -> (u64, u32) {
-        (self.epoch + 1, 0)
-    }
-}
-
-impl NextEpochOffset for MicroBlockHeader {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
-        if self.offset + 1 >= micro_blocks_in_epoch {
-            (self.epoch + 1, 0)
-        } else {
-            (self.epoch, self.offset + 1)
-        }
-    }
-}
-
-impl NextEpochOffset for Block {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
-        match self {
-            Block::MacroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
-            Block::MicroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
-        }
-    }
-}
-
-impl NextEpochOffset for LightBlock {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
-        match self {
-            LightBlock::LightMacroBlock(block) => {
-                block.header.next_epoch_offset(micro_blocks_in_epoch)
-            }
-            LightBlock::LightMicroBlock(block) => {
-                block.header.next_epoch_offset(micro_blocks_in_epoch)
-            }
-        }
-    }
-}
-
 impl Peer {
     pub(super) fn add_addr(&mut self, addr: Multiaddr) -> bool {
         trace!("Add addr = {}", addr.to_string());
@@ -204,9 +113,8 @@ impl Peer {
             Peer::Registered { multiaddr, .. }
             | Peer::Connecting { multiaddr, .. }
             | Peer::Connected { multiaddr, .. }
+            | Peer::Background { multiaddr, .. }
             | Peer::Receiving { multiaddr, .. }
-            | Peer::Accepted { multiaddr, .. }
-            | Peer::Sending { multiaddr, .. }
             | Peer::Failed { multiaddr, .. } => multiaddr,
         };
         multiaddr.insert(addr, true).is_some()
@@ -218,9 +126,8 @@ impl Peer {
             Peer::Registered { multiaddr, .. }
             | Peer::Connecting { multiaddr, .. }
             | Peer::Connected { multiaddr, .. }
+            | Peer::Background { multiaddr, .. }
             | Peer::Receiving { multiaddr, .. }
-            | Peer::Accepted { multiaddr, .. }
-            | Peer::Sending { multiaddr, .. }
             | Peer::Failed { multiaddr, .. } => multiaddr,
         };
         if multiaddr.get_mut(&addr).map(|addr| *addr = false).is_none() {
@@ -239,7 +146,7 @@ impl Peer {
         H: IntoIterator<Item = (Multiaddr, bool)>,
     {
         let multiaddr = multiaddr.into_iter().collect();
-        debug!("[{}] Disconnected", peer_id);
+        debug!("[{}] Registered", peer_id);
         Peer::Registered {
             peer_id,
             multiaddr,
@@ -264,6 +171,7 @@ impl Peer {
                 ..
             } => (peer_id.clone(), multiaddr.clone(), version.clone()),
             _ => {
+                debug!("Connecting Invalid state ={:?}", self);
                 // Unexpected state - disconnect.
                 return self.disconnected();
             }
@@ -279,13 +187,80 @@ impl Peer {
     }
 
     ///
+    /// Try send request outputs.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the current state is not Background.
+    ///
+    pub(super) fn request_outputs(
+        &mut self,
+        block_epoch: u64,
+        block_offset: u32,
+        outputs_ids: Vec<u32>,
+    ) {
+        // take needed fields for disconnect
+        let (peer_id, multiaddr, version) = match self {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone()),
+            _ => {
+                debug!("request_outputs Invalid state ={:?}", self);
+                // Unexpected state - disconnect.
+                return self.disconnected();
+            }
+        };
+
+        let emptry_state = Peer::registered(peer_id, multiaddr, version.into());
+        let this = std::mem::replace(self, emptry_state);
+        let (peer_id, multiaddr, version, rx, mut tx) = match this {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                rx,
+                tx,
+                ..
+            } => (peer_id, multiaddr, version, rx, tx),
+            _ => unreachable!("Handled in previous match"),
+        };
+
+        let request = RequestOutputs {
+            block_epoch,
+            block_offset,
+            outputs_ids,
+        };
+        let request = ReplicationRequest::RequestOutputs(request);
+        trace!("[{}] <- {:?}", peer_id, request);
+        let request = request.into_buffer().unwrap();
+        let new_state = match tx.try_send(request) {
+            Ok(()) => {
+                debug!("[{}] Background", peer_id);
+                Peer::Background {
+                    version,
+                    peer_id,
+                    multiaddr,
+                    last_clock: Instant::now(),
+                    tx,
+                    rx,
+                }
+            }
+            Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
+        };
+        *self = new_state;
+    }
+
+    ///
     /// Moves to Connected state.
     ///
     /// # Panics
     ///
     /// Panics if the current state is not Connecting.
     ///
-    pub(super) fn connected(
+    pub(super) fn subscribe(
         &mut self,
         light: bool,
         epoch: u64,
@@ -301,6 +276,7 @@ impl Peer {
                 ..
             } if version.is_some() => (peer_id.clone(), multiaddr.clone(), version.clone()),
             _ => {
+                debug!("Subscribe Invalid state ={:?}", self);
                 // Unexpected state - disconnect.
                 return self.disconnected();
             }
@@ -317,6 +293,94 @@ impl Peer {
                 debug!("[{}] Connected", peer_id);
                 Peer::Connected {
                     version: version.expect("is_some is handled in match"),
+                    peer_id,
+                    multiaddr,
+                    light,
+                    last_clock: Instant::now(),
+                    tx,
+                    rx,
+                }
+            }
+            Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
+        };
+        *self = new_state;
+    }
+
+    pub(super) fn background(&mut self, rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<Vec<u8>>) {
+        let (peer_id, multiaddr, version) = match self {
+            Peer::Registered {
+                // in case of multiple connections.
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
+            | Peer::Connecting {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } if version.is_some() => (peer_id.clone(), multiaddr.clone(), version.clone()),
+            _ => {
+                debug!("Background Invalid state ={:?}", self);
+                return;
+            }
+        };
+        debug!("[{}] Background", peer_id);
+        let new_state = Peer::Background {
+            version: version.expect("is_some is handled in match"),
+            peer_id,
+            multiaddr,
+            last_clock: Instant::now(),
+            tx,
+            rx,
+        };
+        *self = new_state;
+    }
+
+    // Promote background connection to foreground.
+    pub(super) fn promote_background(&mut self, epoch: u64, offset: u32, light: bool) {
+        // take needed fields for disconnect
+        let (peer_id, multiaddr, version) = match self {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => (peer_id.clone(), multiaddr.clone(), version.clone()),
+            _ => {
+                debug!("promote_background Invalid state ={:?}", self);
+                // Unexpected state - disconnect.
+                return self.disconnected();
+            }
+        };
+
+        let emptry_state = Peer::registered(peer_id, multiaddr, version.into());
+        let this = std::mem::replace(self, emptry_state);
+        let (peer_id, multiaddr, version, rx, mut tx) = match this {
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                rx,
+                tx,
+                ..
+            } => (peer_id, multiaddr, version, rx, tx),
+            _ => unreachable!("Handled in previous match"),
+        };
+
+        let request = ReplicationRequest::Subscribe {
+            epoch,
+            offset,
+            light,
+        };
+        trace!("[{}] <- {:?}", peer_id, request);
+        let request = request.into_buffer().unwrap();
+        let new_state = match tx.try_send(request) {
+            Ok(()) => {
+                debug!("[{}] Promoted Connected", peer_id);
+                Peer::Connected {
+                    version,
                     peer_id,
                     multiaddr,
                     light,
@@ -355,19 +419,13 @@ impl Peer {
                 version,
                 ..
             }
+            | Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
             | Peer::Receiving {
-                peer_id,
-                multiaddr,
-                version,
-                ..
-            }
-            | Peer::Accepted {
-                peer_id,
-                multiaddr,
-                version,
-                ..
-            }
-            | Peer::Sending {
                 peer_id,
                 multiaddr,
                 version,
@@ -388,16 +446,26 @@ impl Peer {
     ///
     /// Moves to Accepted state.
     ///
-    pub(super) fn accepted(&mut self, rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<Vec<u8>>) {
+    pub(super) fn accept(
+        &self,
+        rx: mpsc::Receiver<Vec<u8>>,
+        tx: mpsc::Sender<Vec<u8>>,
+    ) -> Option<Downstream> {
         match self {
             Peer::Registered {
                 peer_id,
                 multiaddr,
                 version,
                 ..
+            }
+            | Peer::Connecting {
+                peer_id,
+                multiaddr,
+                version,
+                ..
             } if version.is_some() => {
                 debug!("[{}] Accepted", peer_id);
-                let new_state = Peer::Accepted {
+                let new_state = Downstream::Accepted {
                     peer_id: peer_id.clone(),
                     multiaddr: multiaddr.clone(),
                     version: version.clone().expect("is_some is handled in match"),
@@ -405,22 +473,51 @@ impl Peer {
                     tx,
                     last_clock: Instant::now(),
                 };
-                *self = new_state;
+                return Some(new_state);
             }
-            Peer::Registered { peer_id, .. } => {
+            Peer::Registered { peer_id, .. } | Peer::Connecting { peer_id, .. } => {
                 debug!("[{}] Rejected version not resolved", peer_id)
             }
-            Peer::Connecting { peer_id, .. }
-            | Peer::Connected { peer_id, .. }
-            | Peer::Accepted { peer_id, .. }
-            | Peer::Sending { peer_id, .. }
-            | Peer::Receiving { peer_id, .. }
-            | Peer::Failed { peer_id, .. } => {
-                debug!("[{}] Rejected", peer_id);
+            Peer::Connected {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
+            | Peer::Background {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
+            | Peer::Receiving {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            }
+            | Peer::Failed {
+                peer_id,
+                multiaddr,
+                version,
+                ..
+            } => {
+                debug!("[{}] Accepted", peer_id);
+                let new_state = Downstream::Accepted {
+                    peer_id: peer_id.clone(),
+                    multiaddr: multiaddr.clone(),
+                    version: version.clone(),
+                    rx,
+                    tx,
+                    last_clock: Instant::now(),
+                };
+                return Some(new_state);
             }
         }
+        None
     }
-    fn format_addr((m, b): (&Multiaddr, &bool)) -> String {
+
+    pub(crate) fn format_addr((m, b): (&Multiaddr, &bool)) -> String {
         format!(
             "{} = {}",
             m.to_string(),
@@ -472,6 +569,19 @@ impl Peer {
                 idle: Instant::now().duration_since(*last_clock).into(),
                 banned,
             },
+            Peer::Background {
+                peer_id,
+                multiaddr,
+                last_clock,
+                version,
+                ..
+            } => PeerInfo::Connected {
+                version: version.to_string(),
+                peer_id: peer_id.to_base58(),
+                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
+                idle: Instant::now().duration_since(*last_clock).into(),
+                banned,
+            },
             Peer::Receiving {
                 peer_id,
                 multiaddr,
@@ -493,40 +603,6 @@ impl Peer {
                 bytes_received: *bytes_received,
                 blocks_received: *blocks_received,
             },
-            Peer::Accepted {
-                peer_id,
-                multiaddr,
-                last_clock,
-                version,
-                ..
-            } => PeerInfo::Accepted {
-                version: version.to_string(),
-                peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
-                idle: Instant::now().duration_since(*last_clock).into(),
-                banned,
-            },
-            Peer::Sending {
-                peer_id,
-                multiaddr,
-                last_clock,
-                epoch,
-                offset,
-                bytes_sent,
-                blocks_sent,
-                version,
-                ..
-            } => PeerInfo::Sending {
-                version: version.to_string(),
-                peer_id: peer_id.to_base58(),
-                multiaddr: multiaddr.iter().map(Self::format_addr).collect(),
-                idle: Instant::now().duration_since(*last_clock).into(),
-                banned,
-                epoch: *epoch,
-                offset: *offset,
-                bytes_sent: *bytes_sent,
-                blocks_sent: *blocks_sent,
-            },
             Peer::Failed {
                 peer_id,
                 multiaddr,
@@ -546,157 +622,42 @@ impl Peer {
     }
 
     ///
-    /// Returns true if this Peer is an upstream.
+    /// Returns true if this Peer has background connection.
     ///
-    pub(super) fn is_upstream(&self) -> bool {
+    pub(super) fn is_background(&self) -> bool {
         match self {
-            Peer::Connected { .. } | Peer::Connecting { .. } | Peer::Receiving { .. } => true,
+            Peer::Background { .. } => true,
             _ => false,
         }
     }
 
     ///
-    /// A helper for Receiving state and on_block().
+    /// Returns true if this Peer has background connection.
     ///
-    fn send_blocks<BlocksIter, I>(
-        &mut self,
-        cx: &mut Context,
-        blocks: BlocksIter,
-        current_epoch: u64,
-        current_offset: u32,
-        micro_blocks_in_epoch: u32,
-    ) where
-        BlocksIter: IntoIterator<Item = I>,
-        I: IntoReplicationResponse + NextEpochOffset + Sized,
-    {
-        let (peer_id, tx, epoch, offset, total_bytes_sent, total_blocks_sent, clock) = match self {
-            Peer::Sending {
-                peer_id,
-                tx,
-                epoch,
-                offset,
-                last_clock,
-                bytes_sent,
-                blocks_sent,
-                ..
-            } => (
-                peer_id,
-                tx,
-                epoch,
-                offset,
-                bytes_sent,
-                blocks_sent,
-                last_clock,
-            ),
-            _ => unreachable!("Expected Sending state"),
-        };
-
-        let mut bytes_sent: u64 = 0;
-        let mut blocks_sent: usize = 0;
-        for block in blocks {
-            if blocks_sent >= MAX_BLOCKS_PER_BATCH || bytes_sent >= MAX_BYTES_PER_BATCH {
-                trace!(
-                    "[{}] Wrote enough: bytes={}, blocks={}",
-                    peer_id,
-                    bytes_sent,
-                    blocks_sent
-                );
-                cx.waker().wake_by_ref();
-                break;
-            }
-            let (next_epoch, next_offset) = block.next_epoch_offset(micro_blocks_in_epoch);
-            let response: ReplicationResponse =
-                block.into_replication_response(current_epoch, current_offset);
-            let response = response.into_buffer().unwrap();
-            let response_len = response.len();
-            match tx.try_send(response) {
-                Ok(_) => {
-                    *epoch = next_epoch;
-                    *offset = next_offset;
-                    bytes_sent += response_len as u64;
-                    *total_bytes_sent += response_len as u64;
-                    blocks_sent += 1;
-                    *total_blocks_sent += 1;
-                }
-                Err(e) if e.is_full() => {
-                    trace!(
-                        "[{}] Not ready for writing: bytes={}, blocks={}",
-                        peer_id,
-                        bytes_sent,
-                        blocks_sent
-                    );
-                    if Instant::now().duration_since(*clock) >= MAX_IDLE_DURATION {
-                        debug!("[{}] Peer is not active, disconnecting", peer_id);
-                        self.disconnected();
-                        return;
-                    }
-                    break;
-                }
-                Err(_e) => {
-                    self.disconnected();
-                    return;
-                }
-            }
+    pub(super) fn is_connected(&self) -> bool {
+        match self {
+            Peer::Connecting { .. }
+            | Peer::Connected { .. }
+            | Peer::Receiving { .. }
+            | Peer::Background { .. } => true,
+            _ => false,
         }
-        *clock = Instant::now();
     }
 
-    // Called when a new block is registered.
-    pub(super) fn on_block(
-        &mut self,
-        cx: &mut Context,
-        block: &Block,
-        light_block: &LightBlock,
-        micro_blocks_in_epoch: u32,
-    ) {
-        let (current_epoch, current_offset) = match &block {
-            Block::MacroBlock(block) => (block.header.epoch, 0),
-            Block::MicroBlock(block) => (block.header.epoch, block.header.offset),
-        };
+    ///
+    /// Returns true if this Peer is an upstream.
+    ///
+    pub(super) fn is_upstream(&self) -> bool {
         match self {
-            Peer::Sending {
-                epoch,
-                offset,
-                light,
-                ..
-            } if *epoch == current_epoch && *offset == current_offset => {
-                if !*light {
-                    let blocks = vec![block.clone()];
-                    self.send_blocks(
-                        cx,
-                        blocks.into_iter(),
-                        current_epoch,
-                        current_offset,
-                        micro_blocks_in_epoch,
-                    );
-                } else {
-                    let light_blocks = vec![light_block.clone()];
-                    self.send_blocks(
-                        cx,
-                        light_blocks.into_iter(),
-                        current_epoch,
-                        current_offset,
-                        micro_blocks_in_epoch,
-                    );
-                }
-            }
-            _ => {
-                return;
-            }
+            Peer::Connected { .. } | Peer::Receiving { .. } => true,
+            _ => false,
         }
     }
 
     ///
     /// The state machine.
     ///
-    pub(super) fn poll(
-        &mut self,
-        cx: &mut Context,
-        current_epoch: u64,
-        current_offset: u32,
-        micro_blocks_in_epoch: u32,
-        block_reader: &dyn BlockReader,
-    ) -> Poll<ReplicationRow> {
+    pub(super) fn poll(&mut self, cx: &mut Context) -> Poll<ReplicationRow> {
         match self {
             //--------------------------------------------------------------------------------------
             // Registered
@@ -832,9 +793,9 @@ impl Peer {
             }
 
             //--------------------------------------------------------------------------------------
-            // Accepted
+            // Background
             //--------------------------------------------------------------------------------------
-            Peer::Accepted {
+            Peer::Background {
                 peer_id,
                 multiaddr,
                 rx,
@@ -842,13 +803,13 @@ impl Peer {
                 version,
                 ..
             } => {
-                trace!("[{}] Poll Accepted", peer_id);
+                trace!("[{}] Poll Connected", peer_id);
 
                 //
-                // Read a request.
+                // Read a response.
                 //
-                let request = match rx.poll_next_unpin(cx) {
-                    Poll::Ready(Some(request)) => request,
+                let response = match rx.poll_next_unpin(cx) {
+                    Poll::Ready(Some(response)) => response,
                     Poll::Ready(None) => {
                         self.disconnected();
                         return Poll::Pending;
@@ -863,23 +824,23 @@ impl Peer {
                 };
 
                 //
-                // Parse the request.
+                // Parse the response.
                 //
-                trace!("[{}] -> {:?}", peer_id, request);
-                let request = match ReplicationRequest::from_buffer(&request) {
-                    Ok(request) => request,
+                trace!("[{}] -> {:?}", peer_id, response);
+                let response = match ReplicationResponse::from_buffer(&response) {
+                    Ok(response) => response,
                     Err(error) => {
                         let error = format!(
-                            "Failed to parse request: request={:?}, error={:?}",
-                            request, error
+                            "Failed to parse response: response={:?}, error={:?}",
+                            response, error
                         );
                         error!("[{}] {}", peer_id, error);
                         let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
                         let new_state = Peer::Failed {
-                            version: version.clone(),
                             peer_id: peer_id.clone(),
                             multiaddr: multiaddr.clone(),
                             last_clock: Instant::now(),
+                            version: version.clone(),
                             error,
                         };
                         *self = new_state;
@@ -888,70 +849,30 @@ impl Peer {
                 };
 
                 //
-                // Process the request.
+                // Process the response.
                 //
-                trace!("[{}] -> {:?}", peer_id, request);
-                let tmp_state =
-                    Self::registered(peer_id.clone(), multiaddr.clone(), version.clone().into());
-                let (peer_id, multiaddr, version, rx, mut tx) =
-                    match std::mem::replace(self, tmp_state) {
-                        Peer::Accepted {
-                            peer_id,
-                            multiaddr,
-                            rx,
-                            tx,
-                            version,
-                            ..
-                        } => (peer_id, multiaddr, version, rx, tx),
-                        _ => unreachable!("Expected Accepted state"),
-                    };
-                match request {
-                    ReplicationRequest::Subscribe {
-                        epoch,
-                        offset,
-                        light,
-                    } => {
-                        if epoch > current_epoch {
-                            trace!("[{}] Subscribe from the future: epoch={}, offset={}, local_epoch={}, local_offset={}",
-                                   peer_id, epoch, offset, current_epoch, current_offset);
-                            let new_state = Self::registered(peer_id, multiaddr, version.into());
-                            *self = new_state;
-                            return Poll::Pending;
-                        }
-                        let response = ReplicationResponse::Subscribed {
-                            current_epoch,
-                            current_offset,
-                        };
-                        trace!("[{}] <- {:?}", peer_id, response);
-                        let response = response.into_buffer().unwrap();
-                        match tx.try_send(response) {
-                            Ok(()) => {
-                                debug!("[{}] Sending", peer_id);
-                                let new_state = Peer::Sending {
-                                    version,
-                                    peer_id,
-                                    multiaddr,
-                                    light,
-                                    last_clock: Instant::now(),
-                                    start_clock: Instant::now(),
-                                    tx,
-                                    rx,
-                                    epoch,
-                                    offset,
-                                    bytes_sent: 0,
-                                    blocks_sent: 0,
-                                };
-                                *self = new_state;
-                            }
-                            Err(mpsc::TrySendError { .. }) => {
-                                let new_state =
-                                    Self::registered(peer_id, multiaddr, version.into());
-                                *self = new_state;
-                                return Poll::Pending;
-                            }
+                trace!("[{}] -> {:?}", peer_id, response);
+                let new_state = match response {
+                    ReplicationResponse::OutputsInfo(outputs_info) => {
+                        return Poll::Ready(ReplicationRow::OutputsInfo(outputs_info));
+                    }
+                    response => {
+                        let error = format!(
+                            "Unexpected response: expected=OutputsInfo, got={}",
+                            response.name()
+                        );
+                        error!("[{}] {}", peer_id, error);
+                        let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
+                        Peer::Failed {
+                            version: version.clone(),
+                            peer_id: peer_id.clone(),
+                            multiaddr: multiaddr.clone(),
+                            last_clock: Instant::now(),
+                            error,
                         }
                     }
-                }
+                };
+                *self = new_state;
                 Poll::Pending
             }
 
@@ -1104,98 +1025,6 @@ impl Peer {
                         }
                     }
                 }
-            }
-
-            //--------------------------------------------------------------------------------------
-            // Sending
-            //--------------------------------------------------------------------------------------
-            Peer::Sending {
-                version,
-                peer_id,
-                multiaddr,
-                light,
-                start_clock,
-                rx,
-                epoch,
-                offset,
-                ..
-            } => {
-                trace!("[{}] Poll Sending", peer_id);
-
-                //
-                // Check quota.
-                //
-                if Instant::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
-                    debug!("[{}] Quota exceeded, disconnected", peer_id);
-                    self.disconnected();
-                    return Poll::Pending;
-                }
-
-                //
-                // Process incoming responses.
-                //
-                match rx.poll_next_unpin(cx) {
-                    Poll::Ready(Some(response)) => {
-                        let error =
-                            format!("Unexpected response: expected=nothing, got={:?}", response);
-                        error!("[{}] {}", peer_id, error);
-                        let error = std::io::Error::new(std::io::ErrorKind::InvalidData, error);
-                        let new_state = Peer::Failed {
-                            version: version.clone(),
-                            peer_id: peer_id.clone(),
-                            multiaddr: multiaddr.clone(),
-                            last_clock: Instant::now(),
-                            error,
-                        };
-                        *self = new_state;
-                        return Poll::Pending;
-                    }
-                    Poll::Ready(None) => {
-                        self.disconnected();
-                        return Poll::Pending;
-                    }
-                    Poll::Pending => {}
-                }
-
-                //
-                // Send blocks.
-                //
-                if *epoch != current_epoch || *offset != current_offset {
-                    if *light {
-                        let blocks = match block_reader.light_iter_starting(*epoch, *offset) {
-                            Ok(blocks) => blocks,
-                            Err(e) => {
-                                error!("[{}] Failed to send blocks: {}", peer_id, e);
-                                self.disconnected();
-                                return Poll::Pending;
-                            }
-                        };
-                        self.send_blocks(
-                            cx,
-                            blocks,
-                            current_epoch,
-                            current_offset,
-                            micro_blocks_in_epoch,
-                        );
-                    } else {
-                        let blocks = match block_reader.iter_starting(*epoch, *offset) {
-                            Ok(blocks) => blocks,
-                            Err(e) => {
-                                error!("[{}] Failed to send blocks: {}", peer_id, e);
-                                self.disconnected();
-                                return Poll::Pending;
-                            }
-                        };
-                        self.send_blocks(
-                            cx,
-                            blocks,
-                            current_epoch,
-                            current_offset,
-                            micro_blocks_in_epoch,
-                        );
-                    }
-                }
-                Poll::Pending
             }
 
             //--------------------------------------------------------------------------------------

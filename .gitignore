@@ -7,6 +7,7 @@
 /api_token.txt
 /dev/node*/chain
 /dev/node*/accounts/*/history
+/dev/node*/accounts/*/lightdb
 /dev/node*/api.token
 /dev/node*/stegosd.log
 /dev/node*/stegos.history
@@ -24,3 +25,7 @@ core
 
 # Release files
 /release
+a.out
+bootstrap-android-*.zip
+stegos-android-*.zip
+stegosd-android-*.zip

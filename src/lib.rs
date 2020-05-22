@@ -46,7 +46,6 @@ use stegos_keychain::keyfile::load_network_keys;
 use stegos_network::{Libp2pNetwork, NetworkConfig, NetworkName};
 use stegos_node::NodeConfig;
 use stegos_wallet::WalletService;
-use tokio::runtime::Runtime;
 
 #[cfg(target_os = "android")]
 fn load_logger_configuration() -> () {
@@ -250,10 +249,32 @@ fn init_sync(
     api_token: String,
     api_endpoint: String,
 ) -> Result<(), Error> {
-    let mut runtime = Runtime::new()?;
-    runtime.block_on(async move { init(chain_name, data_dir, api_token, api_endpoint).await })?;
+    let mut runtime = tokio::runtime::Builder::new();
+    let mut runtime = runtime.basic_scheduler();
+    runtime = runtime.threaded_scheduler();
+    runtime
+        .enable_all()
+        .build()?
+        .block_on(async move { init(chain_name, data_dir, api_token, api_endpoint).await })?;
     Ok(())
 }
+
+#[no_mangle]
+pub extern "system" fn init_rust() -> u32 {
+    let _log = load_logger_configuration();
+    let chain: String = "testnet".into();
+    let data_dir: String = "../data".into();
+    let api_token: String = "iUNtuwIDfPheI6BBqOin6A==".into();
+    let api_endpoint: String = "127.0.0.1:3145".into();
+
+    if let Err(e) = init_sync(chain, data_dir, api_token, api_endpoint) {
+        error!("{}", e);
+        return 1;
+    }
+
+    return 0;
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_stegos_stegos_1wallet_Stegos_init(
     env: JNIEnv,

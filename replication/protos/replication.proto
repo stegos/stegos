@@ -13,6 +13,7 @@ message ReplicationRequest {
     oneof request {
         Subscribe subscribe_full = 1;
         Subscribe subscribe_light = 2;
+        RequestOutputs request_outputs = 3;
     }
 }
 
@@ -33,10 +34,27 @@ message LightBlock {
     stegos.blockchain.LightBlock block = 10;
 }
 
+message RequestOutputs {
+    // block info
+    uint64 block_epoch = 1;
+    uint32 block_offset = 2;
+    // Utxo info
+    repeated uint32 outputs_ids = 3;
+}
+
+message OutputsInfo {
+    // block info
+    uint64 block_epoch = 1;
+    uint32 block_offset = 2;
+    // Utxo info
+    repeated stegos.blockchain.Output found_outputs = 3; 
+}
+
 message ReplicationResponse {
     oneof response {
         Subscribed subscribed = 1;
         Block block = 2;
         LightBlock light_block = 3;
+        OutputsInfo outputs_info = 4;
     }
 }

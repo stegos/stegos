@@ -554,7 +554,7 @@ impl ConsoleService {
                 }) => {
                     {
                         let mut locked = self.account_id.lock().unwrap();
-                        std::mem::replace(&mut *locked, account_id);
+                        *locked = account_id;
                     }
                     self.send_account_request(request).await?
                 }
@@ -1027,7 +1027,7 @@ impl ConsoleService {
             };
             let account_id = caps.name("account_id").unwrap().as_str().to_string();
             let mut locked = self.account_id.lock().unwrap();
-            std::mem::replace(&mut *locked, account_id);
+            *locked = account_id;
             return Ok(true);
         } else if msg.starts_with("delete account") {
             eprint!("Are you sure? Please type YES to continue: ");
@@ -1040,7 +1040,7 @@ impl ConsoleService {
             let account_id = {
                 let mut locked = self.account_id.lock().unwrap();
                 let account_id = locked.clone();
-                std::mem::replace(&mut *locked, String::new());
+                *locked = String::new();
                 account_id
             };
             let request = WalletControlRequest::DeleteAccount { account_id };

@@ -275,7 +275,7 @@ impl Peer {
             multiaddr,
             last_clock: Instant::now(),
         };
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     ///
@@ -327,7 +327,7 @@ impl Peer {
             }
             Err(mpsc::TrySendError { .. }) => Self::registered(peer_id, multiaddr, version.into()),
         };
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     ///
@@ -382,7 +382,7 @@ impl Peer {
         };
 
         let new_state = Peer::registered(peer_id, multiaddr, version);
-        std::mem::replace(self, new_state);
+        *self = new_state;
     }
 
     ///
@@ -405,7 +405,7 @@ impl Peer {
                     tx,
                     last_clock: Instant::now(),
                 };
-                std::mem::replace(self, new_state);
+                *self = new_state;
             }
             Peer::Registered { peer_id, .. } => {
                 debug!("[{}] Rejected version not resolved", peer_id)
@@ -638,7 +638,7 @@ impl Peer {
                 }
             }
         }
-        std::mem::replace(clock, Instant::now());
+        *clock = Instant::now();
     }
 
     // Called when a new block is registered.
@@ -765,7 +765,7 @@ impl Peer {
                             version: version.clone(),
                             error,
                         };
-                        std::mem::replace(self, new_state);
+                        *self = new_state;
                         return Poll::Pending;
                     }
                 };
@@ -827,7 +827,7 @@ impl Peer {
                         }
                     }
                 };
-                std::mem::replace(self, new_state);
+                *self = new_state;
                 Poll::Pending
             }
 
@@ -882,7 +882,7 @@ impl Peer {
                             last_clock: Instant::now(),
                             error,
                         };
-                        std::mem::replace(self, new_state);
+                        *self = new_state;
                         return Poll::Pending;
                     }
                 };
@@ -915,7 +915,7 @@ impl Peer {
                             trace!("[{}] Subscribe from the future: epoch={}, offset={}, local_epoch={}, local_offset={}",
                                    peer_id, epoch, offset, current_epoch, current_offset);
                             let new_state = Self::registered(peer_id, multiaddr, version.into());
-                            std::mem::replace(self, new_state);
+                            *self = new_state;
                             return Poll::Pending;
                         }
                         let response = ReplicationResponse::Subscribed {
@@ -941,12 +941,12 @@ impl Peer {
                                     bytes_sent: 0,
                                     blocks_sent: 0,
                                 };
-                                std::mem::replace(self, new_state);
+                                *self = new_state;
                             }
                             Err(mpsc::TrySendError { .. }) => {
                                 let new_state =
                                     Self::registered(peer_id, multiaddr, version.into());
-                                std::mem::replace(self, new_state);
+                                *self = new_state;
                                 return Poll::Pending;
                             }
                         }
@@ -1008,7 +1008,7 @@ impl Peer {
                                         last_clock: Instant::now(),
                                         error,
                                     };
-                                    std::mem::replace(self, new_state);
+                                    *self = new_state;
                                     return Poll::Pending;
                                 }
                             };
@@ -1022,7 +1022,7 @@ impl Peer {
                                     current_offset,
                                     block,
                                 } if !*light => {
-                                    std::mem::replace(last_clock, Instant::now());
+                                    *last_clock = Instant::now();
                                     match &block {
                                         Block::MacroBlock(block) => {
                                             debug!(
@@ -1048,7 +1048,7 @@ impl Peer {
                                     current_offset,
                                     block,
                                 } if *light => {
-                                    std::mem::replace(last_clock, Instant::now());
+                                    *last_clock = Instant::now();
                                     match &block {
                                         LightBlock::LightMacroBlock(block) => {
                                             debug!(
@@ -1085,7 +1085,7 @@ impl Peer {
                                         last_clock: Instant::now(),
                                         error,
                                     };
-                                    std::mem::replace(self, new_state);
+                                    *self = new_state;
                                     return Poll::Pending;
                                 }
                             }
@@ -1147,7 +1147,7 @@ impl Peer {
                             last_clock: Instant::now(),
                             error,
                         };
-                        std::mem::replace(self, new_state);
+                        *self = new_state;
                         return Poll::Pending;
                     }
                     Poll::Ready(None) => {

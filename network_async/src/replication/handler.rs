@@ -136,7 +136,7 @@ impl SubstreamState {
                     rx_forward,
                     tx_forward,
                 };
-                std::mem::replace(self, state);
+                *self = state;
                 Poll::Ready(Ok((tx, rx)))
             }
             SubstreamState::Forwarding {
@@ -144,24 +144,24 @@ impl SubstreamState {
                 rx_forward,
             } => match tx_forward.poll_unpin(cx) {
                 Poll::Ready(Ok(())) => {
-                    std::mem::replace(self, SubstreamState::Registered);
+                    *self = SubstreamState::Registered;
                     Poll::Pending
                 }
                 Poll::Pending => match rx_forward.poll_unpin(cx) {
                     Poll::Ready(Ok(())) => {
-                        std::mem::replace(self, SubstreamState::Registered);
+                        *self = SubstreamState::Registered;
                         Poll::Pending
                     }
                     Poll::Ready(Err(error)) => {
                         error!("rx error: {:?}", error);
-                        std::mem::replace(self, SubstreamState::Registered);
+                        *self = SubstreamState::Registered;
                         Poll::Pending
                     }
                     Poll::Pending => Poll::Pending,
                 },
                 Poll::Ready(Err(error)) => {
                     error!("tx error: {:?}", error);
-                    std::mem::replace(self, SubstreamState::Registered);
+                    *self = SubstreamState::Registered;
                     Poll::Pending
                 }
             },

@@ -1,0 +1,132 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        build: [ubuntu, macos]
+        include:
+          - build: ubuntu
+            os: ubuntu-16.04
+            target: x86_64-unknown-linux-gnu
+            sccache_target: x86_64-unknown-linux-musl
+          - build: macos
+            os: macos-latest
+            target: x86_64-apple-darwin
+            sccache_target: x86_64-apple-darwin
+    steps:
+      # Checkout the source code
+      - uses: actions/checkout@v2
+
+      - name: Cache cargo registry
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-registry-
+      - name: Cache cargo index
+        uses: actions/cache@v1
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-index-
+      - name: Cache cargo build
+        uses: actions/cache@v1
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-test-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-test-target-
+
+      - name: Install missing packages
+        run: ./ci-scripts/build.sh builddep
+        shell: bash
+
+      - name: Test
+        run: ./ci-scripts/build.sh test
+        shell: bash
+
+
+
+  win:
+    name: Test (windows)
+    runs-on: windows-2019
+    env: 
+      target: x86_64-pc-windows-gnu
+    defaults:
+      run:
+        shell: bash.exe -eo pipefail "{0}"
+    steps:
+      - name: Set up shell
+        run: | 
+          echo ::add-path::C:\msys64\usr\bin\
+          echo ::add-path::C:\msys64\mingw64\bin\
+        shell: pwsh
+      # Checkout the source code
+      - uses: actions/checkout@v2
+
+      - name: Cache cargo registry
+        uses: actions/cache@v1
+        with:
+          path: c:/Users/runneradmin/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-registry-
+      - name: Cache cargo index
+        uses: actions/cache@v1
+        with:
+          path: c:/Users/runneradmin/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-index-
+      - name: Cache cargo build
+        uses: actions/cache@v1
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-test-target-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+                ${{ runner.os }}-cargo-test-target-
+
+      - name: Install missing packages
+        run: ./ci-scripts/build.sh builddep
+
+      - name: Test
+        run: ./ci-scripts/build.sh test
+  
+  clippy:
+    name: Fast checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - name: Install audit
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: cargo-audit --force       
+
+      # - name: Clippy
+      #   uses: actions-rs/cargo@v1
+      #   with:
+      #     command: clippy
+      #     args: -- -D warnings          
+
+      - name: Audit
+        uses: actions-rs/cargo@v1
+        with:
+          command: audit      
+
+      - name: Check
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+

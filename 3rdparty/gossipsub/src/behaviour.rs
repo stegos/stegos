@@ -404,7 +404,7 @@ impl Gossipsub {
             let mesh_peers = self
                 .mesh
                 .entry(topic_hash.clone())
-                .or_insert_with(|| Vec::new());
+                .or_insert_with(Vec::new);
             mesh_peers.extend_from_slice(&new_peers);
         }
 

@@ -54,6 +54,10 @@ where
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
     pub fn insert(&mut self, key: K, value: V) {
         if let Some((cache_key, _)) = self.entries.remove(&key) {
             self.expirations.remove(&cache_key);
@@ -95,20 +99,18 @@ where
     }
 
     pub fn poll(&mut self, cx: &mut Context) -> Poll<Result<(K, Option<V>), Error>> {
-        loop {
-            match self.expirations.poll_expired(cx) {
-                Poll::Ready(Some(Ok(entry))) => {
-                    let expired = entry.get_ref().clone();
-                    let v = match self.entries.remove(entry.get_ref()) {
-                        Some((_, v)) => Some(v),
-                        None => None,
-                    };
-                    return Poll::Ready(Ok((expired, v)));
-                }
-                Poll::Ready(Some(Err(e))) => return Poll::Ready(Err(e.into())),
-                Poll::Ready(None) => return Poll::Pending,
-                Poll::Pending => return Poll::Pending,
+        match self.expirations.poll_expired(cx) {
+            Poll::Ready(Some(Ok(entry))) => {
+                let expired = entry.get_ref().clone();
+                let v = match self.entries.remove(entry.get_ref()) {
+                    Some((_, v)) => Some(v),
+                    None => None,
+                };
+                Poll::Ready(Ok((expired, v)))
             }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Err(e.into())),
+            Poll::Ready(None) => Poll::Pending,
+            Poll::Pending => Poll::Pending,
         }
     }
 }

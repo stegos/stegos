@@ -145,12 +145,7 @@ where
         };
 
         // process expired enties, if any
-        let key_expired = match self.get_by_key(&key) {
-            Some(_) => false,
-            None => true,
-        };
-
-        if key_expired {
+        if self.get_by_key(&key).is_none() {
             self.vk.remove(value);
         }
         self.vk.get(value)

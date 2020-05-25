@@ -63,19 +63,19 @@ use Validation::*;
 // ----------------------------------------------------------------
 
 /// Topic used for sending transactions.
-pub const TX_TOPIC: &'static str = "tx";
+pub const TX_TOPIC: &str = "tx";
 /// Topic used for consensus.
-pub(crate) const CONSENSUS_TOPIC: &'static str = "consensus";
+pub(crate) const CONSENSUS_TOPIC: &str = "consensus";
 /// Topic for ViewChange message.
-pub(crate) const VIEW_CHANGE_TOPIC: &'static str = "view_changes";
+pub(crate) const VIEW_CHANGE_TOPIC: &str = "view_changes";
 /// Topic for ViewChange proofs broadcasts.
-pub(crate) const VIEW_CHANGE_PROOFS_TOPIC: &'static str = "view_changes_proofs";
+pub(crate) const VIEW_CHANGE_PROOFS_TOPIC: &str = "view_changes_proofs";
 /// Topic for ViewChange proofs.
-pub(crate) const VIEW_CHANGE_DIRECT: &'static str = "view_changes_direct";
+pub(crate) const VIEW_CHANGE_DIRECT: &str = "view_changes_direct";
 /// Topic used for sending sealed blocks.
-pub(crate) const SEALED_BLOCK_TOPIC: &'static str = "block";
+pub(crate) const SEALED_BLOCK_TOPIC: &str = "block";
 /// Unicast topic for loading blocks.
-pub(crate) const CHAIN_LOADER_TOPIC: &'static str = "chain-loader";
+pub(crate) const CHAIN_LOADER_TOPIC: &str = "chain-loader";
 
 //
 // Logging utils.

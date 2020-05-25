@@ -95,6 +95,12 @@ impl NcpHandler {
     }
 }
 
+impl Default for NcpHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SubstreamState {
     /// Consumes this state and produces the substream.
     fn into_substream(self) -> Framed<NegotiatedSubstream, NcpCodec> {

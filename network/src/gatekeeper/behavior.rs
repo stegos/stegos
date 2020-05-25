@@ -179,8 +179,8 @@ impl Gatekeeper {
     }
 
     pub fn enable_dialer(&mut self, peer_id: PeerId) {
-        if self.pending_in_peers.contains_key(&peer_id.clone().into()) {
-            self.pending_in_peers.remove(&peer_id.clone().into());
+        if self.pending_in_peers.contains_key(&peer_id) {
+            self.pending_in_peers.remove(&peer_id);
 
             debug!(target: "stegos_network::gatekeeper", "dialer enabled, sending permit reply: peer_id={}", peer_id);
             self.events
@@ -199,7 +199,7 @@ impl Gatekeeper {
     }
 
     pub fn enable_listener(&mut self, peer_id: PeerId) {
-        let challenge = self.solved_vdfs.get(&peer_id.clone().into()).clone();
+        let challenge = self.solved_vdfs.get(&peer_id.clone().into());
         let proof = match challenge {
             Some((p, Some(proof))) => Some(VDFProof {
                 challenge: p.challenge.clone(),
@@ -211,7 +211,7 @@ impl Gatekeeper {
         };
         debug!(target: "stegos_network::gatekeeper", "listener enabled, sending unlock request: peer_id={}, with_proof={}", peer_id, proof.is_some());
         self.pending_out_peers
-            .insert(peer_id.clone().into(), DialerPeerState::UnlockRequestSent);
+            .insert(peer_id.clone(), DialerPeerState::UnlockRequestSent);
         self.events
             .push_back(NetworkBehaviourAction::NotifyHandler {
                 peer_id,
@@ -260,7 +260,7 @@ impl Gatekeeper {
         for addr in addresses {
             //TODO: Add waiting list.
             let mut multiaddr = Multiaddr::empty();
-            multiaddr.push(Protocol::Ip4(addr.clone()));
+            multiaddr.push(Protocol::Ip4(*addr));
             multiaddr.push(Protocol::Tcp(metadata.port));
             debug!(target: "stegos_network::gatekeeper", "trying to back-connect: peer_id={}, addr={}", peer_id, multiaddr);
             self.events
@@ -392,10 +392,10 @@ impl Gatekeeper {
         let network = metadata
             .as_ref()
             .map(|metadata| metadata.network.clone())
-            .unwrap_or(NetworkName::Mainnet.to_string());
+            .unwrap_or_else(|| NetworkName::Mainnet.to_string());
         if let Some(metadata) = metadata {
             debug!(target: "stegos_network::gatekeeper", "Resolved metadata for peer: peer_id={}, metadata={:?}", peer_id, metadata);
-            self.peers_metadata.insert(peer_id.clone().into(), metadata);
+            self.peers_metadata.insert(peer_id.clone(), metadata);
         }
         if network != self.my_metadata.network {
             warn!(target: "stegos_network::gatekeeper", "Peer network not equal to our: peer_id={}, our_network={}, peer_network={}",
@@ -438,7 +438,7 @@ impl Gatekeeper {
         self.register_metadata(peer_id.clone(), metadata);
 
         let challenge = VDFChallenge {
-            challenge: challenge.clone(),
+            challenge,
             difficulty,
         };
         if let Some(p) = self.solved_vdfs.get(&peer_id.clone().into()) {
@@ -464,7 +464,7 @@ impl Gatekeeper {
             }
         }
         self.solved_vdfs
-            .insert(peer_id.clone().into(), (challenge.clone(), None));
+            .insert(peer_id.clone().into(), (challenge, None));
         self.pending_out_peers
             .insert(peer_id.clone(), DialerPeerState::SolvingVDF);
         // put peer into the queue to be solved.
@@ -505,14 +505,14 @@ impl NetworkBehaviour for Gatekeeper {
                     self.events
                         .push_back(NetworkBehaviourAction::NotifyHandler {
                             peer_id: id.clone(),
-                            handler: NotifyHandler::One(cid.clone()),
+                            handler: NotifyHandler::One(*cid),
                             event: GatekeeperSendEvent::Send(GatekeeperMessage::PublicIpUnlock {}),
                         });
                     return;
                 }
 
                 self.pending_out_peers
-                    .insert(id.clone().into(), DialerPeerState::Connected);
+                    .insert(id.clone(), DialerPeerState::Connected);
 
                 if self.desired_peers.contains(id) {
                     self.protocol_updates.push_back(PeerEvent::ConnectedToPeer {
@@ -523,8 +523,8 @@ impl NetworkBehaviour for Gatekeeper {
             ConnectedPoint::Listener { send_back_addr, .. } => {
                 let peer_entry = self
                     .peers_addresses
-                    .entry(id.clone().into())
-                    .or_insert(Vec::new());
+                    .entry(id.clone())
+                    .or_insert_with(Vec::new);
                 for addr in send_back_addr.iter() {
                     match addr {
                         Protocol::Ip4(addr) => {
@@ -569,8 +569,8 @@ impl NetworkBehaviour for Gatekeeper {
 
         debug!(target: "stegos_network::gatekeeper", "peer disconnected: peer_id={}", id);
         self.connected_peers.remove(id);
-        self.pending_out_peers.remove(&id.clone().into());
-        self.pending_in_peers.remove(&id.clone().into());
+        self.pending_out_peers.remove(&id.clone());
+        self.pending_in_peers.remove(&id.clone());
         self.peers_addresses.remove(id);
         self.peers_metadata.remove(id);
     }
@@ -647,8 +647,7 @@ impl NetworkBehaviour for Gatekeeper {
                 // send last vdf again
                 let challenge = self
                     .solved_vdfs
-                    .get(&propagation_source.clone().into())
-                    .clone();
+                    .get(&propagation_source.clone().into());
                 let proof = match challenge {
                     Some((p, Some(proof))) => Some(VDFProof {
                         challenge: p.challenge.clone(),
@@ -660,7 +659,7 @@ impl NetworkBehaviour for Gatekeeper {
                 };
                 self.events
                     .push_back(NetworkBehaviourAction::NotifyHandler {
-                        peer_id: propagation_source.clone(),
+                        peer_id: propagation_source,
                         handler: NotifyHandler::Any,
                         event: GatekeeperSendEvent::Send(GatekeeperMessage::UnlockRequest {
                             proof,
@@ -686,8 +685,8 @@ impl NetworkBehaviour for Gatekeeper {
                 self.solvers.remove(&peer_id);
                 debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
                 self.protocol_updates.push_back(PeerEvent::VDFSolved {
-                    peer_id: peer_id.clone(),
-                    proof: proof.clone(),
+                    peer_id,
+                    proof,
                 });
             }
             Poll::Ready(None) => {
@@ -696,7 +695,7 @@ impl NetworkBehaviour for Gatekeeper {
             Poll::Pending => {}
         }
 
-        if self.solvers.len() < self.solver_threads && self.challenges_queue.len() > 0 {
+        if self.solvers.len() < self.solver_threads && self.challenges_queue.is_empty() {
             loop {
                 if self.challenges_queue.is_empty() {
                     break;
@@ -706,7 +705,6 @@ impl NetworkBehaviour for Gatekeeper {
                     debug!(target: "stegos_network::gatekeeper", "starting thread to solve puzzle: peer_id={}", peer_id);
                     let tx = self.solution_sink.clone();
                     let p = challenge.0.clone();
-                    let peer_id = peer_id.clone();
                     self.solvers.insert(peer_id.clone());
                     thread::spawn(move || {
                         let start = SystemTime::now();
@@ -732,7 +730,7 @@ impl NetworkBehaviour for Gatekeeper {
                 PeerEvent::ConnectedToPeer { peer_id } => {
                     debug!(target: "stegos_network::gatekeeper", "peer is connected, enabling listener: peer_id={}", peer_id);
                     self.pending_out_peers
-                        .insert(peer_id.clone().into(), DialerPeerState::WaitingListener);
+                        .insert(peer_id.clone(), DialerPeerState::WaitingListener);
                     self.events.push_back(NetworkBehaviourAction::GenerateEvent(
                         GatekeeperOutEvent::PrepareListener { peer_id },
                     ))
@@ -745,12 +743,12 @@ impl NetworkBehaviour for Gatekeeper {
                     if let Some(mut challenge) = self.solved_vdfs.get_mut(&peer_id.clone().into()) {
                         debug!(target: "stegos_network::gatekeeper", "VDF solved, sending proof: peer_id={}", peer_id);
                         self.pending_out_peers
-                            .insert(peer_id.clone().into(), DialerPeerState::UnlockRequestSent);
+                            .insert(peer_id.clone(), DialerPeerState::UnlockRequestSent);
                         challenge.1 = Some(proof.clone());
                         let vdf_proof = VDFProof {
                             challenge: challenge.0.challenge.clone(),
                             difficulty: challenge.0.difficulty,
-                            proof: proof.clone(),
+                            proof,
                         };
                         if self.connected_peers.contains(&peer_id) {
                             self.events
@@ -779,7 +777,7 @@ impl NetworkBehaviour for Gatekeeper {
         loop {
             match self.pending_out_peers.poll(cx) {
                 Poll::Ready(Ok(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "outgoing peer VDF expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "outgoing peer VDF expired: peer_id={}", entry.0);
                     // Do cleanup
                 }
                 Poll::Ready(Err(e)) => {
@@ -793,7 +791,7 @@ impl NetworkBehaviour for Gatekeeper {
         loop {
             match self.pending_in_peers.poll(cx) {
                 Poll::Ready(Ok(ref entry)) => {
-                    debug!(target: "stegos_network::gatekeeper", "incoming peer VDF expired: peer_id={}", entry.clone().0);
+                    debug!(target: "stegos_network::gatekeeper", "incoming peer VDF expired: peer_id={}", entry.0);
                     // Do cleanup
                 }
                 Poll::Ready(Err(e)) => {
@@ -814,15 +812,14 @@ impl NetworkBehaviour for Gatekeeper {
 
 fn local_check_proof(proof: &VDFProof, difficulty: u64) -> bool {
     let vdf = VDF::new();
-    if let Err(_) = vdf.verify(&proof.challenge, difficulty, &proof.proof) {
+    if vdf.verify(&proof.challenge, difficulty, &proof.proof).is_err() {
         return false;
     }
     true
 }
 
 fn generate_challenge(_peer_id: &PeerId) -> Vec<u8> {
-    let key = (0..256).map(|_| rand::random::<u8>()).collect::<Vec<_>>();
-    key
+    (0..256).map(|_| rand::random::<u8>()).collect::<Vec<_>>()
 }
 
 // to be extended?

@@ -89,6 +89,12 @@ impl FloodsubHandler {
     }
 }
 
+impl Default for FloodsubHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ProtocolsHandler for FloodsubHandler {
     type InEvent = FloodsubSendEvent;
     type OutEvent = FloodsubRecvEvent;

@@ -39,10 +39,10 @@ use unsigned_varint::codec;
 use super::proto::ncp_proto;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &'static str = "ncp";
+const PROTOCOL_LABEL: &str = "ncp";
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct NcpConfig {}
 
 impl NcpConfig {
@@ -184,7 +184,7 @@ impl Decoder for NcpCodec {
 
             ncp_proto::Message_MessageType::GET_PEERS_RES => {
                 let mut response = GetPeersResponse { peers: vec![] };
-                for peer in message.get_peers().into_iter() {
+                for peer in message.get_peers().iter() {
                     let peer_id =
                         PeerId::from_bytes(peer.get_peer_id().to_vec()).map_err(|_| {
                             io::Error::new(
@@ -205,7 +205,7 @@ impl Decoder for NcpCodec {
                         node_id,
                         addresses: vec![],
                     };
-                    for addr in peer.get_addrs().into_iter() {
+                    for addr in peer.get_addrs().iter() {
                         if let Ok(addr_) = Multiaddr::try_from(addr.to_vec()) {
                             peer_info.addresses.push(addr_);
                         }
@@ -245,7 +245,7 @@ impl PeerInfo {
     pub fn new(peer_id: &PeerId, node_id: &pbc::PublicKey) -> Self {
         Self {
             peer_id: peer_id.clone(),
-            node_id: node_id.clone(),
+            node_id: *node_id,
             addresses: vec![],
         }
     }

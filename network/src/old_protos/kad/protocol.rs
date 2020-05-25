@@ -47,7 +47,7 @@ use unsigned_varint::codec;
 use unsigned_varint::codec::UviBytes;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &'static str = "kademlia";
+const PROTOCOL_LABEL: &str = "kademlia";
 
 /// Status of our connection to a node reported by the Kademlia protocol.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]

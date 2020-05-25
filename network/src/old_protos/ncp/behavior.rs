@@ -160,7 +160,7 @@ impl Ncp {
             if let Some(info) = self.known_peers.peek(p.as_bytes()) {
                 nodes.push(NodeInfo {
                     peer_id: p.to_base58(),
-                    network_pkey: info.0.clone(),
+                    network_pkey: info.0,
                     addresses: info.1.to_vec(),
                 });
             }
@@ -182,8 +182,8 @@ impl NetworkBehaviour for Ncp {
             .known_peers
             .get(peer.as_bytes())
             .map(|(_, v)| v.clone())
-            .unwrap_or(SmallVec::new());
-        let addresses: Vec<Multiaddr> = small.iter().map(|v| v.clone()).collect();
+            .unwrap_or_default();
+        let addresses: Vec<Multiaddr> = small.iter().cloned().collect();
         addresses
     }
     fn inject_connected(&mut self, id: &PeerId) {
@@ -251,56 +251,51 @@ impl NetworkBehaviour for Ncp {
         }
 
         // Check established connections and request more, if needed.
-        loop {
-            match self.monitor_delay.poll_unpin(cx) {
-                Poll::Ready(_) => {
-                    debug!(
-                        target: "stegos_network::ncp",
-                        "monitoring event: connected_peers={}, known_peers={}",
-                        self.connected_peers.len(),
-                        self.known_peers.len(),
-                    );
-                    // Setup delay to the next event
-                    self.monitor_delay.reset(
-                        Instant::now()
-                            + self.delay_between_monitor_events
-                            + Duration::from_secs(thread_rng().gen_range(0, 30)),
-                    );
-                    // refresh peers in known peers, so they wouldn't be purged
-                    for p in self.connected_peers.keys() {
-                        self.events
-                            .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
-                        let _ = self.known_peers.get(p.as_bytes());
-                    }
-                    if self.connected_peers.len() >= self.max_connections {
-                        // Already have max connected_peers
-                        continue;
-                    }
-                    if self.connected_peers.len() < self.min_connections {
-                        let mut seen_peers: Vec<PeerId> = Vec::new();
-                        let mut bad_peer_ids: Vec<Vec<u8>> = Vec::new();
-                        for (peer_bytes, _addresses) in self.known_peers.peek_iter() {
-                            if let Ok(peer) = PeerId::from_bytes(peer_bytes.clone()) {
-                                seen_peers.push(peer.clone());
-                                if peer == *poll_parameters.local_peer_id()
-                                    || self.connected_peers.contains_key(&peer)
-                                {
-                                    continue;
-                                }
-                                trace!(target: "stegos_network::ncp", "Dialing peer: {:#?}", peer);
-                                self.out_events
-                                    .push_back(NcpOutEvent::DialPeer { peer_id: peer });
-                            } else {
-                                bad_peer_ids.push(peer_bytes.clone());
-                            }
+        while let Poll::Ready(_) = self.monitor_delay.poll_unpin(cx) {
+            debug!(
+                target: "stegos_network::ncp",
+                "monitoring event: connected_peers={}, known_peers={}",
+                self.connected_peers.len(),
+                self.known_peers.len(),
+            );
+            // Setup delay to the next event
+            self.monitor_delay.reset(
+                Instant::now()
+                    + self.delay_between_monitor_events
+                    + Duration::from_secs(thread_rng().gen_range(0, 30)),
+            );
+            // refresh peers in known peers, so they wouldn't be purged
+            for p in self.connected_peers.keys() {
+                self.events
+                    .push_back(NcpEvent::RequestPeers { peer_id: p.clone() });
+                let _ = self.known_peers.get(p.as_bytes());
+            }
+            if self.connected_peers.len() >= self.max_connections {
+                // Already have max connected_peers
+                continue;
+            }
+            if self.connected_peers.len() < self.min_connections {
+                let mut seen_peers: Vec<PeerId> = Vec::new();
+                let mut bad_peer_ids: Vec<Vec<u8>> = Vec::new();
+                for (peer_bytes, _addresses) in self.known_peers.peek_iter() {
+                    if let Ok(peer) = PeerId::from_bytes(peer_bytes.clone()) {
+                        seen_peers.push(peer.clone());
+                        if peer == *poll_parameters.local_peer_id()
+                            || self.connected_peers.contains_key(&peer)
+                        {
+                            continue;
                         }
-                        // remove broken (can't really happen) peer_ids from known peers
-                        for p in bad_peer_ids.iter() {
-                            self.known_peers.remove(p);
-                        }
-                    };
+                        trace!(target: "stegos_network::ncp", "Dialing peer: {:#?}", peer);
+                        self.out_events
+                            .push_back(NcpOutEvent::DialPeer { peer_id: peer });
+                    } else {
+                        bad_peer_ids.push(peer_bytes.clone());
+                    }
                 }
-                Poll::Pending => break,
+                // remove broken (can't really happen) peer_ids from known peers
+                for p in bad_peer_ids.iter() {
+                    self.known_peers.remove(p);
+                }
             }
         }
 
@@ -336,7 +331,7 @@ impl NetworkBehaviour for Ncp {
                             // Replace information for peer
                             self.known_peers.insert(
                                 id.clone().into_bytes(),
-                                (peer.node_id.clone(), SmallVec::new()),
+                                (peer.node_id, SmallVec::new()),
                             );
                             for addr in peer.addresses.into_iter() {
                                 // Don't store 127.0.0.1 IPs
@@ -360,15 +355,15 @@ impl NetworkBehaviour for Ncp {
                                 }
                             }
                             self.out_events.push_back(NcpOutEvent::DiscoveredPeer {
-                                peer_id: peer.peer_id.clone(),
-                                node_id: peer.node_id.clone(),
+                                peer_id: peer.peer_id,
+                                node_id: peer.node_id,
                                 addresses: self
                                     .known_peers
                                     .get(id.as_bytes())
                                     .unwrap()
                                     .1
                                     .iter()
-                                    .map(|v| v.clone())
+                                    .cloned()
                                     .filter(|v| !is_localhost(v))
                                     .collect(),
                             });
@@ -379,7 +374,7 @@ impl NetworkBehaviour for Ncp {
                     debug!(target: "stegos_network::ncp", "sending peers info: to_peer={}", peer_id.to_base58());
                     let mut response = GetPeersResponse { peers: vec![] };
                     let mut connected: Vec<PeerId> =
-                        self.connected_peers.keys().map(|v| v.clone()).collect();
+                        self.connected_peers.keys().cloned().collect();
                     for peer in connected.drain(..) {
                         if peer == peer_id {
                             continue;
@@ -392,7 +387,7 @@ impl NetworkBehaviour for Ncp {
                         for addr in self.addresses_of_peer(&peer) {
                             peer_info.addresses.push(addr);
                         }
-                        if peer_info.addresses.len() > 0 {
+                        if !peer_info.addresses.is_empty() {
                             response.peers.push(peer_info);
                         }
                     }

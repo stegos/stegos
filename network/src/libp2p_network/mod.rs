@@ -29,7 +29,6 @@ use futures::channel::{mpsc, oneshot};
 use futures::future;
 use futures::stream::StreamExt;
 
-use libp2p;
 pub use libp2p::gossipsub::Topic;
 use libp2p::gossipsub::{self, Gossipsub, GossipsubMessage, MessageId};
 use libp2p::gossipsub::{GossipsubEvent, TopicHash};
@@ -81,12 +80,12 @@ pub struct Libp2pNetwork {
     control_tx: mpsc::UnboundedSender<ControlMessage>,
 }
 
-pub const NETWORK_STATUS_TOPIC: &'static str = "stegos-network-status";
+pub const NETWORK_STATUS_TOPIC: &str = "stegos-network-status";
 pub const VERSION: u64 = 1;
 pub const GOSSIP_VERSION: u64 = 1;
 // Max number of topic for one floodsub message.
 
-pub const NETWORK_READY_TOKEN: &'static [u8] = &[1, 0, 0, 0];
+pub const NETWORK_READY_TOKEN: &[u8] = &[1, 0, 0, 0];
 use crate::utils::{encode_unicast, UnicastPayload};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -144,7 +143,7 @@ impl NetworkProvider for Libp2pNetwork {
         &self,
         protocol_id: &str,
     ) -> Result<mpsc::UnboundedReceiver<UnicastMessage>, Error> {
-        let protocol_id: String = protocol_id.clone().into();
+        let protocol_id: String = protocol_id.into();
         let (tx, rx) = mpsc::unbounded::<UnicastMessage>();
         let msg = ControlMessage::SubscribeUnicast {
             protocol_id,
@@ -156,7 +155,7 @@ impl NetworkProvider for Libp2pNetwork {
 
     // Send direct message to public key
     fn send(&self, to: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
-        let protocol_id: String = protocol_id.clone().into();
+        let protocol_id: String = protocol_id.into();
         let msg = ControlMessage::SendUnicast {
             to,
             protocol_id,
@@ -219,7 +218,7 @@ fn new_service(
     let keypair = utils::ed25519_from_pbc(&network_skey);
     let local_key = identity::Keypair::Ed25519(keypair);
     let local_pub_key = local_key.public();
-    let peer_id = local_pub_key.clone().into_peer_id();
+    let peer_id = local_pub_key.into_peer_id();
 
     let (replication_tx, replication_rx) = mpsc::unbounded();
 
@@ -288,7 +287,7 @@ fn new_service(
         Poll::Pending
     });
 
-    Ok((service, control_tx, peer_id.clone(), replication_rx))
+    Ok((service, control_tx, peer_id, replication_rx))
 }
 
 #[derive(NetworkBehaviour)]
@@ -340,16 +339,13 @@ impl Libp2pBehaviour {
         peer_id: PeerId,
         replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
     ) -> Self {
-        let relaying = if config.advertised_endpoint == "".to_string() {
-            false
-        } else {
-            true
-        };
-        let mut port = 0;
-        if config.endpoint != "" {
+        let relaying = config.advertised_endpoint != "";
+        let port = if config.endpoint != "" {
             let endpoint = SocketAddrV4::from_str(&config.endpoint).expect("Invalid endpoint");
-            port = endpoint.port();
-        }
+            endpoint.port()
+        } else {
+            0
+        };
         let metadata = Metadata {
             network: network_name.to_string(),
             version: VERSION,
@@ -378,16 +374,16 @@ impl Libp2pBehaviour {
         let behaviour = Libp2pBehaviour {
             gossipsub: Gossipsub::new(peer_id.clone(), gossipsub_config),
             gossip_consumers: HashMap::new(),
-            my_pkey: network_pkey.clone(),
-            my_skey: network_skey.clone(),
+            my_pkey: network_pkey,
+            my_skey: network_skey,
             connected_peers: HashSet::new(),
 
-            ncp: Ncp::new(config, network_pkey.clone()),
+            ncp: Ncp::new(config, network_pkey),
             floodsub: Floodsub::new(relaying),
             floodsub_consumers: HashMap::new(),
             gatekeeper: Gatekeeper::new(config, metadata),
             delivery: Delivery::new(),
-            discovery: Discovery::new(network_pkey.clone()),
+            discovery: Discovery::new(network_pkey),
             replication: Replication::new(),
             replication_tx,
             unicast_consumers: HashMap::new(),
@@ -410,11 +406,11 @@ impl Libp2pBehaviour {
                     let gossipsub_topic = Topic::new(topic.clone());
                     self.gossip_consumers
                         .entry(gossipsub_topic.no_hash())
-                        .or_insert(SmallVec::new())
+                        .or_insert_with(SmallVec::new)
                         .push(handler.clone());
                     self.floodsub_consumers
                         .entry(topic.clone())
-                        .or_insert(SmallVec::new())
+                        .or_insert_with(SmallVec::new)
                         .push(handler);
                     self.gossipsub.subscribe(gossipsub_topic);
                     self.floodsub.subscribe(topic);
@@ -448,7 +444,7 @@ impl Libp2pBehaviour {
             } => {
                 self.unicast_consumers
                     .entry(protocol_id)
-                    .or_insert(SmallVec::new())
+                    .or_insert_with(SmallVec::new)
                     .push(consumer);
             }
             ControlMessage::SendUnicast {
@@ -466,12 +462,12 @@ impl Libp2pBehaviour {
 
                 if to == self.my_pkey {
                     let msg = UnicastMessage {
-                        from: to.clone(),
+                        from: to,
                         data,
                     };
                     self.unicast_consumers
                         .entry(protocol_id)
-                        .or_insert(SmallVec::new())
+                        .or_insert_with(SmallVec::new)
                         .retain({
                             move |c| {
                                 if let Err(e) = c.unbounded_send(msg.clone()) {
@@ -484,8 +480,8 @@ impl Libp2pBehaviour {
                         })
                 } else {
                     let payload = UnicastPayload {
-                        from: self.my_pkey.clone(),
-                        to: to.clone(),
+                        from: self.my_pkey,
+                        to,
                         protocol_id,
                         data,
                     };
@@ -513,9 +509,10 @@ impl Libp2pBehaviour {
         _poll_parameters: &mut impl PollParameters) -> Poll<NetworkBehaviourAction<
         <<<Self as NetworkBehaviour>::ProtocolsHandler as IntoProtocolsHandler>::Handler as ProtocolsHandler>::InEvent, <Self as NetworkBehaviour>::OutEvent>,>
     {
-        while let Some(event) = self.events.pop_front() {
+        if let Some(event) = self.events.pop_front() {
             return Poll::Ready(NetworkBehaviourAction::GenerateEvent(event));
         }
+
         Poll::Pending
     }
 
@@ -549,7 +546,7 @@ impl NetworkBehaviourEventProcess<GossipsubEvent> for Libp2pBehaviour {
                 let consumers = self
                     .gossip_consumers
                     .entry(topic)
-                    .or_insert(SmallVec::new());
+                    .or_insert_with(SmallVec::new);
                 consumers.retain({
                     let data = &message.data;
                     move |c| {
@@ -587,7 +584,7 @@ impl NetworkBehaviourEventProcess<FloodsubEvent> for Libp2pBehaviour {
                 let consumers = self
                     .floodsub_consumers
                     .entry(message.topic)
-                    .or_insert(SmallVec::new());
+                    .or_insert_with(SmallVec::new);
                 consumers.retain({
                     let data = &message.data;
                     move |c| {
@@ -706,7 +703,7 @@ impl NetworkBehaviourEventProcess<NcpOutEvent> for Libp2pBehaviour {
             } => {
                 debug!(target: "stegos_network::discovery", "discovered node: node_id={}, peer_id={}", node_id, peer_id);
                 self.discovery.add_node(node_id.clone(), peer_id.clone());
-                if addresses.len() > 0 {
+                if !addresses.is_empty() {
                     self.discovery.set_peer_id(&node_id, peer_id.clone());
                     if self.connected_peers.contains(&peer_id) {
                         for a in addresses.iter() {
@@ -750,7 +747,7 @@ impl NetworkBehaviourEventProcess<GatekeeperOutEvent> for Libp2pBehaviour {
                 let consumers = self
                     .floodsub_consumers
                     .entry(NETWORK_STATUS_TOPIC.to_string())
-                    .or_insert(SmallVec::new());
+                    .or_insert_with(SmallVec::new);
                 consumers.retain(move |c| c.unbounded_send(NETWORK_READY_TOKEN.to_vec()).is_ok());
             }
 
@@ -795,7 +792,7 @@ impl NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour {
                     if unicast.to == self.my_pkey {
                         // Unicast message to us, deliver
                         debug!(target: "stegos_network::delivery", "message for us, delivering");
-                        match utils::decode_unicast(unicast.payload.clone()) {
+                        match utils::decode_unicast(unicast.payload) {
                             Ok((payload, signature, rval)) => {
                                 // send unicast message upstream
                                 if payload.to == self.my_pkey {
@@ -823,7 +820,7 @@ impl NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour {
                                     };
                                     self.unicast_consumers
                                         .entry(payload.protocol_id)
-                                        .or_insert(SmallVec::new())
+                                        .or_insert_with(SmallVec::new)
                                         .retain({
                                             move |c| {
                                                 if let Err(e) = c.unbounded_send(msg.clone()) {
@@ -843,7 +840,7 @@ impl NetworkBehaviourEventProcess<DeliveryEvent> for Libp2pBehaviour {
                         return;
                     }
                     // Mesage to somebody else, try to route again...
-                    let dest = unicast.to.clone();
+                    let dest = unicast.to;
                     self.discovery.route(&dest, unicast);
                 }
                 DeliveryMessage::BroadcastMessage(_) => unimplemented!(),

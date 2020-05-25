@@ -37,7 +37,6 @@ use libp2p_swarm::{
 use log::{debug, trace};
 use lru_time_cache::LruCache;
 use parity_multihash::Multihash;
-use rand;
 use smallvec::SmallVec;
 use std::vec::IntoIter as VecIntoIter;
 use std::{cmp::Ordering, error, time::Duration, time::Instant};
@@ -181,7 +180,7 @@ impl Kademlia {
 
     /// Change node's id (pbc::PublicKey)
     pub fn change_id(&mut self, new_id: pbc::PublicKey) {
-        self.kbuckets = self.kbuckets.new_table(new_id.clone());
+        self.kbuckets = self.kbuckets.new_table(new_id);
         self.my_id = new_id;
     }
 
@@ -209,7 +208,7 @@ impl Kademlia {
             node_info.peer_id = Some(peer_id.clone());
         }
         self.known_peers
-            .insert(peer_id.as_bytes().to_vec(), node_id.clone());
+            .insert(peer_id.as_bytes().to_vec(), *node_id);
     }
 
     /// Adds a known address for the given `PeerId`. We are connected to this address.
@@ -232,7 +231,7 @@ impl Kademlia {
         let parallelism = 3;
 
         let mut behaviour = Kademlia {
-            my_id: local_node_id.clone(),
+            my_id: local_node_id,
             kbuckets: KBucketsTable::new(
                 local_node_id,
                 Duration::from_secs(BUCKET_EXPIRATION_PERIOD),
@@ -308,8 +307,8 @@ impl Kademlia {
                     .values_providers
                     .get(&key)
                     .into_iter()
-                    .flat_map(|peers| peers)
-                    .map(|node_id| build_kad_peer(node_id.clone(), parameters, &self.kbuckets))
+                    .flatten()
+                    .map(|node_id| build_kad_peer(*node_id, parameters, &self.kbuckets))
                     .collect();
 
                 KademliaHandlerIn::GetProvidersRes {
@@ -363,7 +362,7 @@ impl Kademlia {
             .or_insert_with(Default::default);
         let my_id = self.kbuckets.my_id();
         if !providers.iter().any(|k| k == my_id) {
-            providers.push(my_id.clone());
+            providers.push(*my_id);
         }
 
         // Trigger the next refresh now.
@@ -383,7 +382,7 @@ impl Kademlia {
         };
 
         // remove outselves from list of peers providing the key
-        let my_id = self.my_id.clone();
+        let my_id = self.my_id;
         if let Some(position) = providers.iter().position(|k| *k == my_id) {
             providers.remove(position);
             providers.shrink_to_fit();
@@ -455,7 +454,7 @@ impl NetworkBehaviour for Kademlia {
         }
 
         if let Update::Pending(to_ping) = self.kbuckets.set_connected(&node_id) {
-            let target_node = to_ping.clone();
+            let target_node = *to_ping;
             if let Some(ref node_info) = self.kbuckets.get(&target_node) {
                 if let Some(ref peer_id) = node_info.peer_id {
                     self.queued_events.push(NetworkBehaviourAction::DialPeer {
@@ -544,7 +543,6 @@ impl NetworkBehaviour for Kademlia {
             KademliaHandlerEvent::FindNodeReq { key, request_id } => {
                 self.remote_requests
                     .push((source, request_id, QueryTarget::FindPeer(key)));
-                return;
             }
             KademliaHandlerEvent::FindNodeRes {
                 closer_peers,
@@ -560,7 +558,7 @@ impl NetworkBehaviour for Kademlia {
                     self.queued_events
                         .push(NetworkBehaviourAction::GenerateEvent(
                             KademliaOut::Discovered {
-                                node_id: peer.node_id.clone(),
+                                node_id: peer.node_id,
                                 peer_id,
                                 addresses: peer.multiaddrs.clone(),
                                 ty: peer.connection_ty,
@@ -569,7 +567,7 @@ impl NetworkBehaviour for Kademlia {
                 }
                 if let Some((query, _, _)) = self.active_queries.get_mut(&user_data) {
                     let peer_key = source.into_bytes();
-                    let my_id = self.my_id.clone();
+                    let my_id = self.my_id;
                     if let Some(node_id) = self.known_peers.get(&peer_key) {
                         query.inject_rpc_result(
                             &node_id,
@@ -587,7 +585,6 @@ impl NetworkBehaviour for Kademlia {
             KademliaHandlerEvent::GetProvidersReq { key, request_id } => {
                 self.remote_requests
                     .push((source, request_id, QueryTarget::GetProviders(key)));
-                return;
             }
             KademliaHandlerEvent::GetProvidersRes {
                 closer_peers,
@@ -602,7 +599,7 @@ impl NetworkBehaviour for Kademlia {
                     self.queued_events
                         .push(NetworkBehaviourAction::GenerateEvent(
                             KademliaOut::Discovered {
-                                node_id: peer.node_id.clone(),
+                                node_id: peer.node_id,
                                 peer_id,
                                 addresses: peer.multiaddrs.clone(),
                                 ty: peer.connection_ty,
@@ -636,21 +633,17 @@ impl NetworkBehaviour for Kademlia {
                 }
             }
             KademliaHandlerEvent::AddProvider { key, provider_peer } => {
-                let peer_id = match provider_peer.peer_id {
-                    Some(p) => Some(p.clone()),
-                    None => None,
-                };
+                let peer_id = provider_peer.peer_id;
                 self.queued_events
                     .push(NetworkBehaviourAction::GenerateEvent(
                         KademliaOut::Discovered {
-                            node_id: provider_peer.node_id.clone(),
+                            node_id: provider_peer.node_id,
                             peer_id,
                             addresses: provider_peer.multiaddrs.clone(),
                             ty: provider_peer.connection_ty,
                         },
                     ));
                 self.add_provider.push((key, provider_peer.node_id));
-                return;
             }
         };
     }
@@ -775,21 +768,21 @@ impl NetworkBehaviour for Kademlia {
                                 if self.connected_peers.contains(&peer_id) {
                                     debug!(target: "stegos_network::kad", "sending event to node: node_id={}, peer_id={}", node_id, peer_id);
                                     return Poll::Ready(NetworkBehaviourAction::NotifyHandler {
-                                        peer_id: peer_id.clone(),
+                                        peer_id,
                                         handler: NotifyHandler::Any,
                                         event: rpc,
                                     });
                                 } else {
                                     debug!(target: "stegos_network::kad", "dialing node: node_id={}, peer_id={}", node_id, peer_id);
-                                    self.pending_rpcs.push((node_id.clone(), rpc));
+                                    self.pending_rpcs.push((*node_id, rpc));
                                     return Poll::Ready(NetworkBehaviourAction::DialPeer {
-                                        peer_id: peer_id.clone(),
+                                        peer_id,
                                         condition: DialPeerCondition::Disconnected,
                                     });
                                 }
                             } else {
                                 debug!(target: "stegos_network::kad", "Can't find peer_id for node: node_id={}", node_id);
-                                nodes_without_peerids.push(node_id.clone());
+                                nodes_without_peerids.push(*node_id);
                             }
                         }
                         Poll::Ready(QueryStatePollOut::CancelRpc { node_id }) => {
@@ -847,7 +840,7 @@ impl NetworkBehaviour for Kademlia {
                                     event: KademliaHandlerIn::AddProvider {
                                         key: key.clone(),
                                         provider_peer: build_kad_peer(
-                                            self.my_id.clone(),
+                                            self.my_id,
                                             parameters,
                                             &self.kbuckets,
                                         ),
@@ -944,7 +937,7 @@ fn build_kad_peer(
     let is_self = node_id == *kbuckets.my_id();
 
     let (peer_id, multiaddrs, connection_ty) = if is_self {
-        let addrs = parameters.external_addresses().map(|v| v.clone()).collect();
+        let addrs = parameters.external_addresses().collect();
         (
             Some(parameters.local_peer_id().clone()),
             addrs,
@@ -975,7 +968,7 @@ fn build_kad_peer(
     };
 
     KadPeer {
-        node_id: node_id.clone(),
+        node_id,
         peer_id,
         multiaddrs,
         connection_ty,

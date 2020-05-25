@@ -39,6 +39,7 @@ use log4rs::Handle as LogHandle;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::str::FromStr;
 use stegos_api::{server::spawn_server, ApiToken};
 use stegos_blockchain::{chain_to_prefix, initialize_chain};
 use stegos_crypto::hash::Hash;
@@ -177,7 +178,7 @@ async fn init(
         }
         let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
             network_config,
-            NetworkName::from_str(&chain_name).expect("Valid network name."),
+            NetworkName::from_str(&chain_name).unwrap(),
             network_skey.clone(),
             network_pkey.clone(),
         )

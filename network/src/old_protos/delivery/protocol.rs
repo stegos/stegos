@@ -40,10 +40,10 @@ use unsigned_varint::codec;
 use super::proto::delivery_proto;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &'static str = "delivery";
+const PROTOCOL_LABEL: &str = "delivery";
 
 /// Implementation of `ConnectionUpgrade` for the floodsub protocol.
-#[derive(Debug, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct DeliveryConfig {}
 
 impl DeliveryConfig {
@@ -182,12 +182,12 @@ impl Decoder for DeliveryCodec {
                 })?;
                 let payload = msg.get_payload().to_vec();
                 let dont_route = msg.get_dont_route();
-                return Ok(Some(DeliveryMessage::UnicastMessage(Unicast {
+                Ok(Some(DeliveryMessage::UnicastMessage(Unicast {
                     to,
                     payload,
                     dont_route,
                     seq_no,
-                })));
+                })))
             }
             Some(delivery_proto::Message_oneof_typ::broadcast(msg)) => {
                 let mut topics: Vec<String> = Vec::new();
@@ -198,21 +198,21 @@ impl Decoder for DeliveryCodec {
                     )
                 })?;
                 let payload = msg.get_payload().to_vec();
-                for t in msg.get_topics().into_iter() {
+                for t in msg.get_topics().iter() {
                     topics.push(t.to_string());
                 }
-                return Ok(Some(DeliveryMessage::BroadcastMessage(Broadcast {
+                Ok(Some(DeliveryMessage::BroadcastMessage(Broadcast {
                     from,
                     payload,
                     topics,
                     seq_no,
-                })));
+                })))
             }
             None => {
-                return Err(io::Error::new(
+                Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "bad protobuf encoding, unknown message type",
-                ));
+                ))
             }
         }
     }

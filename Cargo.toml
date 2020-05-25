@@ -30,6 +30,7 @@ members = [
     "wallet",
     "stegos_lib_test",
     "crypto/stubs/vdf_field",
+    "3rdparty/gossipsub",
 ]
 
 [dependencies]

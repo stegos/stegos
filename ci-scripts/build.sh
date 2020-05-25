@@ -33,7 +33,7 @@ DOWNLOADS=$(xdg-user-dir DOWNLOAD 2>/dev/null || echo $HOME/Downloads)
 # Android options.
 ANDROID_SDK_URL=https://dl.google.com/android/repository/sdk-tools-linux-4333796.zip
 ANDROID_SDK_TARBALL=$(basename $ANDROID_SDK_URL)
-ANDROID_SDK_DIR=$HOME/Android/Sdk
+ANDROID_SDK_DIR=${ANDROID_HOME:-$HOME/Android/Sdk}
 ANDROID_API_LEVEL=21
 
 configure_mingw() {
@@ -49,7 +49,7 @@ configure_mingw() {
         $@
     }
 
-    export PATH=/mingw64/bin:$PATH
+    export PATH=/c/msys64/mingw64/bin:$PATH
     export HOME=$(cygpath -u $USERPROFILE)
     export RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN-x86_64-pc-windows-gnu
     export CPATH=/mingw64/include/
@@ -136,7 +136,7 @@ install_packages_macos() {
 }
 
 install_packages_mingw() {
-    LLVM_VERSION=5.0.0-1
+    LLVM_VERSION=10.0.0-1
     GCC_VERSION=9.2.0-2
     MINGW_URL=http://repo.msys2.org/mingw/x86_64/mingw-w64-x86_64
     PEXT=any.pkg.tar.xz
@@ -161,7 +161,8 @@ install_packages_mingw() {
 
     # Upgrade gcc version to 9.2.0, because 8.3 cannot build libbactrace during building of rocksdb.
     URL_VER=$GCC_VERSION-$PEXT
-    pacman -U --noconfirm --needed $MINGW_URL-gcc-$URL_VER $MINGW_URL-gcc-libs-$URL_VER
+    pacman -U --noconfirm --needed $MINGW_URL-gcc-$URL_VER $MINGW_URL-gcc-libs-$URL_VER $MINGW_URL-gcc-ada-$URL_VER \
+    $MINGW_URL-gcc-libgfortran-$URL_VER $MINGW_URL-gcc-fortran-$URL_VER $MINGW_URL-gcc-objc-$URL_VER
 
 
 }
@@ -178,6 +179,8 @@ patch_mingw_toolchain() {
     for mingw_file in "x86_64-w64-mingw32/lib/libshlwapi.a" lib/gcc/x86_64-w64-mingw32/9.2.0/libstdc++.a; do
       cp /mingw64/$mingw_file $rust_path/lib/
     done
+
+    
 }
 
 # Installs Android toolchain.
@@ -190,6 +193,7 @@ install_android_toolchain() {
         echo 2>&1 "Platform $platform is not supported"
         ;;
     esac
+    echo ANDROID_SDK_DIR = $ANDROID_SDK_DIR
     if test ! -x $ANDROID_SDK_DIR/tools/bin/sdkmanager; then
         echo "Install Android SDK"
         if test ! -f $DOWNLOADS/$ANDROID_SDK_TARBALL; then
@@ -216,13 +220,13 @@ install_android_toolchain() {
             echo "Create symlinks for $triplet"
             (
                 cd $bindir
-                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-clang
-                ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-gcc
-                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-clang++
-                ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-g++
+                sudo ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-clang
+                sudo ln -sf $triplet$ANDROID_API_LEVEL-clang $triplet-gcc
+                sudo ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-clang++
+                sudo ln -sf $triplet$ANDROID_API_LEVEL-clang++ $triplet-g++
             )
         fi
-        cp -pf $SCRIPT_DIR/rustlinker $bindir/$triplet-rustlinker
+        sudo cp -pf $SCRIPT_DIR/rustlinker $bindir/$triplet-rustlinker
         $triplet-gcc --version
     done
 
@@ -251,16 +255,6 @@ install_toolchain() {
         # allow for non-existent rustfmt (nightly ARM65)
         # does not affect production build
         rustup component add rustfmt || true
-    fi
-
-    if uname -s | grep -q Linux && ! cargo-audit --help >/dev/null; then
-        echo "Installing cargo-audit"
-        cargo install cargo-audit
-    fi
-
-    if uname -s | grep -q Linux && ! grcov --version >/dev/null; then
-        echo "Installing grcov"
-        cargo install grcov
     fi
 }
 
@@ -345,7 +339,7 @@ do_release() {
         export CC CXX
         ;;
     *)
-        echo 2>&1 "Unknown platform: $0"
+        echo 2>&1 "Unknown platform: $1"
         exit 1
         ;;
     esac

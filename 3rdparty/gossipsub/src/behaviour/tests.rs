@@ -52,6 +52,7 @@ mod tests {
 
         for _ in 0..peer_no {
             let peer = PeerId::random();
+            gs.add_peer_whitelist(peer.clone());
             peers.push(peer.clone());
             <Gossipsub as NetworkBehaviour>::inject_connected(
                 &mut gs,

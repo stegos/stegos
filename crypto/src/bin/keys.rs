@@ -24,9 +24,9 @@ use base58check::{FromBase58Check, ToBase58Check};
 use bech32::{FromBase32, ToBase32};
 use clap::{App, Arg, ArgMatches};
 use curve25519_dalek::ristretto::CompressedRistretto;
-use failure::{bail, Error};
 #[cfg(feature = "old_crypto")]
 use failure::format_err;
+use failure::{bail, Error};
 use stegos_crypto::scc::{Pt, PublicKey};
 
 enum Format {

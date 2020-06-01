@@ -18,10 +18,10 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 // DEALINGS IN THE SOFTWARE.
 
+use super::topic::Topic;
 use crate::protocol::{GossipsubMessage, MessageId};
 use std::borrow::Cow;
 use std::time::Duration;
-use super::topic::Topic;
 
 /// If the `no_source_id` flag is set, the IDENTITY_SOURCE value is used as the source of the
 /// packet.
@@ -76,7 +76,7 @@ pub struct GossipsubConfig {
     /// true, the user must manually call `propagate_message()` on the behaviour to forward message
     /// once validated (default is false).
     pub manual_propagation: bool,
-    
+
     pub public_topics: Vec<Topic>,
 
     /// A user-defined function allowing the user to specify the message id of a gossipsub message.

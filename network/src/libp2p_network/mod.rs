@@ -461,10 +461,7 @@ impl Libp2pBehaviour {
                 );
 
                 if to == self.my_pkey {
-                    let msg = UnicastMessage {
-                        from: to,
-                        data,
-                    };
+                    let msg = UnicastMessage { from: to, data };
                     self.unicast_consumers
                         .entry(protocol_id)
                         .or_insert_with(SmallVec::new)

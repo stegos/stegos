@@ -262,7 +262,8 @@ mod test {
     #[test]
     fn whitespace_tolerate_network_pkey() {
         let tmp_file = TempDir::new("whitespace_tolerate_account_pkey").unwrap();
-        let source = " 0757675e2547e04ee1f17ec1992a80d8da6f9a05aef55f76a66d5c32c068a32\
+        let source =
+            " 0757675e2547e04ee1f17ec1992a80d8da6f9a05aef55f76a66d5c32c068a32\
              81212970a44d3150934358f8414b2f60579858c67718fcd4b102eb45add61d069fdb4316fe0ca70f6777\
              bb0c9b35633469547c2dd1c0382418b88789af01e48ad \n";
         let mut path = tmp_file.into_path();

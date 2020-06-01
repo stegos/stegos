@@ -141,8 +141,8 @@ mod behaviour;
 mod config;
 mod handler;
 mod mcache;
-mod topic;
 pub mod metrics;
+mod topic;
 
 mod rpc_proto {
     include!(concat!(env!("OUT_DIR"), "/gossipsub.pb.rs"));

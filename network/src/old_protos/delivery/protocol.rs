@@ -208,12 +208,10 @@ impl Decoder for DeliveryCodec {
                     seq_no,
                 })))
             }
-            None => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "bad protobuf encoding, unknown message type",
-                ))
-            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad protobuf encoding, unknown message type",
+            )),
         }
     }
 }

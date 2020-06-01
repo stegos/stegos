@@ -1532,10 +1532,7 @@ impl NodeState {
     fn propose_macro_block(&mut self) -> Result<(), Error> {
         let timestamp = self.next_block_timestamp();
         let consensus = match &mut self.validation {
-            MacroBlockValidator {
-                consensus,
-                ..
-            } => consensus,
+            MacroBlockValidator { consensus, .. } => consensus,
             _ => panic!("Expected MacroBlockValidator state"),
         };
         assert!(self.chain.is_epoch_full());

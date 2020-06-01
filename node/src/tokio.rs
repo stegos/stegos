@@ -31,12 +31,12 @@ use crate::{
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
 use futures::{
-    future::{self, Fuse, OptionFuture},
+    future::{self, Fuse},
     stream,
 };
 use futures::{select, task::Poll, FutureExt, SinkExt, Stream, StreamExt};
+use futures::stream::SelectAll;
 use log::*;
-use pin_utils::pin_mut;
 use std::pin::Pin;
 use std::thread;
 use stegos_blockchain::{Block, BlockReader, Blockchain, Transaction};
@@ -45,9 +45,8 @@ use stegos_network::PeerId;
 use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
-use stegos_txpool::TransactionPoolService;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Interval};
+use tokio::time::{self, Interval, Delay};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -167,8 +166,8 @@ pub struct NodeService {
     check_sync: Interval,
 
     /// Aggregated stream of events.
-    events: Vec<Pin<Box<dyn Stream<Item = NodeIncomingEvent> + Send>>>,
-
+    //events: Vec<Pin<Box<dyn Stream<Item = NodeIncomingEvent> + Send>>>,
+    events: SelectAll<Pin<Box<dyn Stream<Item = NodeIncomingEvent> + Send>>>,
     /// Subscribers for status events.
     status_subscribers: Vec<mpsc::Sender<StatusNotification>>,
     /// Subscribers for chain events.
@@ -176,14 +175,17 @@ pub struct NodeService {
     /// Network interface.
     network: Network,
 
-    /// Txpool
-    txpool_service: Option<TransactionPoolService>,
-
     replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
     replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
 
     /// Replication
     replication: Replication,
+
+    macro_propose_timer: Pin<Box<Fuse<Delay>>>,
+    macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
+    micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
+    micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
+
 }
 
 impl NodeService {
@@ -260,7 +262,6 @@ impl NodeService {
             network: network.clone(),
         };
         let (replication_tx, proxy_rx) = mpsc::unbounded();
-        let txpool_service = None;
         let light = false;
         let replication = Replication::new(peer_id, network.clone(), light, proxy_rx);
 
@@ -269,12 +270,15 @@ impl NodeService {
             chain_subscribers,
             network: network.clone(),
             check_sync,
-            events: streams,
-            txpool_service,
+            events: stream::select_all(streams),
             replication,
             replication_rx,
             replication_tx,
             status_subscribers,
+            macro_propose_timer: Box::pin(Fuse::terminated()),
+            macro_view_change_timer: Box::pin(Fuse::terminated()),
+            micro_propose_timer: Box::pin(Fuse::terminated()),
+            micro_view_change_timer: Box::pin(Fuse::terminated()),        
         };
 
         Ok((service, node))
@@ -460,278 +464,257 @@ impl NodeService {
         }
     }
 
-    pub async fn start(self) {
-        let macro_block_propose_timer = Fuse::terminated();
-        let macro_block_view_change_timer = Fuse::terminated();
-        let micro_block_propose_timer: Fuse<oneshot::Receiver<Vec<u8>>> = Fuse::terminated();
-        let micro_block_view_change_timer = Fuse::terminated();
-        pin_mut!(
-            macro_block_propose_timer,
-            macro_block_view_change_timer,
-            micro_block_propose_timer,
-            micro_block_view_change_timer
-        );
+    pub async fn start(mut self) {
+        loop {
+            self.step().await;
+        }
+    }
 
-        // let mut chain_readers = future::select_all(self.chain_readers.into_iter().map(Box::pin)).fuse();
+    pub async fn step(&mut self) {
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
-        let mut status_subscribers = self.status_subscribers;
-        let mut chain_subscribers = self.chain_subscribers.clone();
-        let mut events = stream::select_all(self.events);
-        let mut replication = self.replication;
-        let mut state = self.state;
-        let mut txpool_service: OptionFuture<_> = self.txpool_service.map(FutureExt::fuse).into();
-        let mut check_sync = self.check_sync;
-        let mut network = self.network;
 
-        let mut replication_rx = self.replication_rx;
-        let mut replication_tx = self.replication_tx;
+        // handle events, then flush responses.
+        select! {
+            ev = self.replication_rx.next().fuse() => {
+                let _ = self.replication_tx.send(ev.unwrap()).await;
+            }
+            // poll timers
+            _ = self.macro_propose_timer.as_mut() => {
+                let event = NodeIncomingEvent::MacroBlockProposeTimer;
+                self.state.handle_event(event);
+            },
+            _ = self.macro_view_change_timer.as_mut() => {
+                let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
+                self.state.handle_event(event);
+            },
 
-        loop {
-            // handle events, then flush responses.
-            select! {
-                ev = replication_rx.next().fuse() => {let _ = replication_tx.send(ev.unwrap()).await;}
-                // poll timers
-                _ = macro_block_propose_timer => {
-                    let event = NodeIncomingEvent::MacroBlockProposeTimer;
-                    state.handle_event(event);
-                },
-                _ = macro_block_view_change_timer => {
-                    let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
-                    state.handle_event(event);
-                },
+            solution = self.micro_propose_timer.as_mut() => {
+                // Panic is possible only if thread of solver was killed, which is a bug.
+                let solution = solution.expect("Solution should always be calculated, no panics expected.");
+                let event = NodeIncomingEvent::MicroBlockProposeTimer(solution);
+                self.state.handle_event(event);
+            },
 
-                solution = micro_block_propose_timer => {
-                    // Panic is possible only if thread of solver was killed, which is a bug.
-                    let solution = solution.expect("Solution should always be calculated, no panics expected.");
-                    let event = NodeIncomingEvent::MicroBlockProposeTimer(solution);
-                    state.handle_event(event);
-                },
+            _ = self.micro_view_change_timer.as_mut() => {
+                let event = NodeIncomingEvent::MicroBlockViewChangeTimer;
+                self.state.handle_event(event);
+            },
+            interval = self.check_sync.tick().fuse() => {
+                let event = NodeIncomingEvent::CheckSyncTimer;
+                self.state.handle_event(event);
+            },
 
-                _ = micro_block_view_change_timer => {
-                    let event = NodeIncomingEvent::MicroBlockViewChangeTimer;
-                    state.handle_event(event);
-                },
-                interval = check_sync.tick().fuse() => {
-                    let event = NodeIncomingEvent::CheckSyncTimer;
-                    state.handle_event(event);
-                },
-
-                _ = txpool_service => {/*do nothing*/},
-                event = events.next() => {
-                    let event = event.expect("Should be no end in internall event stream.");
-                    match event {
-                        NodeIncomingEvent::Request { request, tx } => {
-                            match request {
-                                NodeRequest::ChangeUpstream {} => {
-                                    replication.change_upstream(false);
-                                    let response = NodeResponse::UpstreamChanged;
-                                    tx.send(response).ok(); // ignore errors.
-                                    continue;
-                                }
-                                NodeRequest::ReplicationInfo {} => {
-                                    let response =
-                                        NodeResponse::ReplicationInfo(replication.info());
-                                    tx.send(response).ok(); // ignore errors.
-                                    continue;
-                                }
-                                NodeRequest::SubscribeChain { epoch, offset } => {
-                                    let response =
-                                        match Self::handle_subscription_to_chain(&mut state, &mut chain_readers, epoch, offset) {
-                                            Ok(rx) => NodeResponse::SubscribedChain {
-                                                current_epoch: state.chain.epoch(),
-                                                current_offset: state.chain.offset(),
-                                                rx: Some(rx),
-                                            },
-                                            Err(e) => NodeResponse::Error {
-                                                error: format!("{}", e),
-                                            },
-                                        };
-                                    tx.send(response).ok(); // ignore errors.
-                                    continue;
-                                }
-                                NodeRequest::SubscribeStatus {} => {
-                                    let response = match Self::handle_subscription_to_status(&mut status_subscribers) {
-                                        Ok(rx) => {
-                                            let status = state.chain.status();
-                                            NodeResponse::SubscribedStatus {
-                                                status,
-                                                rx: Some(rx),
-                                            }
-                                        }
+            event = self.events.next() => {
+                let event = event.expect("Should be no end in internall event stream.");
+                match event {
+                    NodeIncomingEvent::Request { request, tx } => {
+                        match request {
+                            NodeRequest::ChangeUpstream {} => {
+                                self.replication.change_upstream(false);
+                                let response = NodeResponse::UpstreamChanged;
+                                tx.send(response).ok(); // ignore errors.
+                                return;
+                            }
+                            NodeRequest::ReplicationInfo {} => {
+                                let response =
+                                    NodeResponse::ReplicationInfo(self.replication.info());
+                                tx.send(response).ok(); // ignore errors.
+                                return;
+                            }
+                            NodeRequest::SubscribeChain { epoch, offset } => {
+                                let response =
+                                    match Self::handle_subscription_to_chain(&mut self.state, &mut chain_readers, epoch, offset) {
+                                        Ok(rx) => NodeResponse::SubscribedChain {
+                                            current_epoch: self.state.chain.epoch(),
+                                            current_offset: self.state.chain.offset(),
+                                            rx: Some(rx),
+                                        },
                                         Err(e) => NodeResponse::Error {
                                             error: format!("{}", e),
                                         },
                                     };
-                                    tx.send(response).ok(); // ignore errors.
-                                    continue;
-                                }
-                                request => {
-                                    let event = NodeIncomingEvent::Request { request, tx };
-                                    state.handle_event(event)
-                                }
+                                tx.send(response).ok(); // ignore errors.
+                                return;
+                            }
+                            NodeRequest::SubscribeStatus {} => {
+                                let response = match Self::handle_subscription_to_status(&mut self.status_subscribers) {
+                                    Ok(rx) => {
+                                        let status = self.state.chain.status();
+                                        NodeResponse::SubscribedStatus {
+                                            status,
+                                            rx: Some(rx),
+                                        }
+                                    }
+                                    Err(e) => NodeResponse::Error {
+                                        error: format!("{}", e),
+                                    },
+                                };
+                                tx.send(response).ok(); // ignore errors.
+                                return;
+                            }
+                            request => {
+                                let event = NodeIncomingEvent::Request { request, tx };
+                                self.state.handle_event(event)
                             }
                         }
-                        NodeIncomingEvent::ChainLoaderMessage { from, data } => {
-                            if let Err(e) = ChainLoaderMessage::from_buffer(&data)
-                                .map(|data| Self::handle_chain_loader_message(&mut network, &mut state, from, data))
-                            {
-                                error!("Invalid block from loader: {}", e);
-                            }
+                    }
+                    NodeIncomingEvent::ChainLoaderMessage { from, data } => {
+                        if let Err(e) = ChainLoaderMessage::from_buffer(&data)
+                            .map(|data| Self::handle_chain_loader_message(&mut self.network, &mut self.state, from, data))
+                        {
+                            error!("Invalid block from loader: {}", e);
                         }
-                        event => state.handle_event(event),
                     }
-                },
-
-            }
-            // Replication
-            'inner: loop {
-                // Replication interface need deep interaction with state and blockchain.
-                // So we create a temporary feature that fastly return result of poll.
-                // TODO: Replace by refcell and local task
-                let replication_fut = future::poll_fn(|cx| {
-                    let micro_blocks_in_epoch = state.chain.cfg().micro_blocks_in_epoch;
-                    let block_reader: &dyn BlockReader = &state.chain;
-                    Poll::Ready(replication.poll(
-                        cx,
-                        state.chain.epoch(),
-                        state.chain.offset(),
-                        micro_blocks_in_epoch,
-                        block_reader,
-                    ))
-                });
-
-                match replication_fut.await {
-                    Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
-                        panic!("Received the light block from the replication");
-                    }
-                    Poll::Ready(Some(ReplicationRow::OutputsInfo(_outputs_info))) => {
-                        panic!("Received the light node outputs info from the replication");
-                    }
-                    Poll::Ready(Some(ReplicationRow::Block(block))) => {
-                        let event = NodeIncomingEvent::DecodedBlock(block);
-                        state.handle_event(event);
-                    }
-                    Poll::Ready(None) => return (), // Shutdown main feature (replication failure).
-                    Poll::Pending => break 'inner,
+                    event => self.state.handle_event(event),
                 }
-            }
+            },
 
-            for event in std::mem::replace(&mut state.outgoing, Vec::new()) {
-                trace!("Outgoing event = {:?}", event);
-                let result = match event {
-                    NodeOutgoingEvent::FacilitatorChanged { facilitator } => {
-                        if facilitator == state.network_pkey {
-                            info!("I am facilitator");
-                            let txpool = TransactionPoolService::new(network.clone());
-                            txpool_service = OptionFuture::from(Some(txpool).map(FutureExt::fuse));
-                        } else {
-                            info!("Facilitator is {}", facilitator);
-                            txpool_service = OptionFuture::from(None);
-                        }
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::ChangeUpstream {} => {
-                        replication.change_upstream(true);
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::Publish { topic, data } => {
-                        //
-                        network.publish(&topic, data)
-                    }
-                    NodeOutgoingEvent::Send { dest, topic, data } => {
-                        //
-                        network.send(dest, &topic, data)
-                    }
-                    NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                        macro_block_propose_timer.set(time::delay_for(duration).fuse());
-                        micro_block_propose_timer.set(Fuse::terminated());
-                        micro_block_view_change_timer.set(Fuse::terminated());
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
-                        macro_block_propose_timer.set(Fuse::terminated());
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
-                        macro_block_view_change_timer.set(time::delay_for(duration).fuse());
-                        micro_block_propose_timer.set(Fuse::terminated());
-                        micro_block_view_change_timer.set(Fuse::terminated());
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::MicroBlockProposeTimer {
-                        random,
-                        vdf,
-                        difficulty,
-                    } => {
-                        let (tx, rx) = oneshot::channel::<Vec<u8>>();
-                        let challenge = random.to_bytes();
-                        let solver = move || {
-                            let solution = vdf.solve(&challenge, difficulty);
-                            tx.send(solution).ok(); // ignore errors.
-                        };
-                        // Spawn a background thread to solve VDF puzzle.
-                        thread::spawn(solver);
-                        micro_block_propose_timer.set(rx.fuse());
-                        macro_block_propose_timer.set(Fuse::terminated());
-                        macro_block_view_change_timer.set(Fuse::terminated());
-                        // task::current().notify();
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::MicroBlockProposeTimerCancel => {
-                        micro_block_propose_timer.set(Fuse::terminated());
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
-                        micro_block_view_change_timer.set(time::delay_for(duration).fuse());
-                        macro_block_propose_timer.set(Fuse::terminated());
-                        macro_block_view_change_timer.set(Fuse::terminated());
-                        // task::current().notify();
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
-                        // TODO: refator on_block to be async fn.
-                        let block = block;
-                        let light_block = light_block;
-                        let replication = &mut replication;
-                        let state = &state;
-                        future::poll_fn(move |cx| {
-                            replication.on_block(
-                                cx,
-                                block.clone(),
-                                light_block.clone(),
-                                state.chain.cfg().micro_blocks_in_epoch,
-                            );
-                            Poll::Ready(())
-                        })
-                        .await;
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::StatusNotification(notification) => {
-                        Self::notify_subscribers(&mut status_subscribers, notification);
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::ChainNotification(notification) => {
-                        Self::notify_subscribers(&mut chain_subscribers, notification);
-                        Ok(())
-                    }
-                    NodeOutgoingEvent::RequestBlocksFrom { from } => {
-                        Self::request_history_from(&mut network, &state, from)
-                    }
-                    NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
-                        Self::send_blocks(&mut network, &mut state, to, epoch, offset)
-                    }
-                };
-                if let Err(e) = result {
-                    error!("Error: {}", e);
-                }
-            }
+        }
+        // Replication
+        'inner: loop {
+            // Replication interface need deep interaction with state and blockchain.
+            // So we create a temporary feature that fastly return result of poll.
+            // TODO: Replace by refcell and local task
+            let replication_fut = future::poll_fn(|cx| {
+                let micro_blocks_in_epoch = self.state.chain.cfg().micro_blocks_in_epoch;
+                let block_reader: &dyn BlockReader = &self.state.chain;
+                Poll::Ready(self.replication.poll(
+                    cx,
+                    self.state.chain.epoch(),
+                    self.state.chain.offset(),
+                    micro_blocks_in_epoch,
+                    block_reader,
+                ))
+            });
 
-            for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
-                if let Ok(_) = reader.advance(&state.chain) {
-                    chain_readers.push(reader)
+            match replication_fut.await {
+                Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
+                    panic!("Received the light block from the replication");
                 }
+                Poll::Ready(Some(ReplicationRow::OutputsInfo(_outputs_info))) => {
+                    panic!("Received the light node outputs info from the replication");
+                }
+                Poll::Ready(Some(ReplicationRow::Block(block))) => {
+                    let event = NodeIncomingEvent::DecodedBlock(block);
+                    self.state.handle_event(event);
+                }
+                Poll::Ready(None) => return (), // Shutdown main feature (replication failure).
+                Poll::Pending => break 'inner,
+            }
+        }
+
+        for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
+            trace!("Outgoing event = {:?}", event);
+            let result = match event {
+                NodeOutgoingEvent::FacilitatorChanged { .. } => { 
+                    Ok(())
+                }
+                NodeOutgoingEvent::ChangeUpstream {} => {
+                    self.replication.change_upstream(true);
+                    Ok(())
+                }
+                NodeOutgoingEvent::Publish { topic, data } => {
+                    //
+                    self.network.publish(&topic, data)
+                }
+                NodeOutgoingEvent::Send { dest, topic, data } => {
+                    //
+                    self.network.send(dest, &topic, data)
+                }
+                NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
+                    self.macro_propose_timer.set(time::delay_for(duration).fuse());
+                    self.micro_propose_timer.set(Fuse::terminated());
+                    self.micro_view_change_timer.set(Fuse::terminated());
+                    Ok(())
+                }
+                NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
+                    self.macro_propose_timer.set(Fuse::terminated());
+                    Ok(())
+                }
+                NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
+                    self.macro_view_change_timer.set(time::delay_for(duration).fuse());
+                    self.micro_propose_timer.set(Fuse::terminated());
+                    self.micro_view_change_timer.set(Fuse::terminated());
+                    Ok(())
+                }
+                NodeOutgoingEvent::MicroBlockProposeTimer {
+                    random,
+                    vdf,
+                    difficulty,
+                } => {
+                    let (tx, rx) = oneshot::channel::<Vec<u8>>();
+                    let challenge = random.to_bytes();
+                    let solver = move || {
+                        let solution = vdf.solve(&challenge, difficulty);
+                        tx.send(solution).ok(); // ignore errors.
+                    };
+                    // Spawn a background thread to solve VDF puzzle.
+                    thread::spawn(solver);
+                    self.micro_propose_timer.set(rx.fuse());
+                    self.macro_propose_timer.set(Fuse::terminated());
+                    self.macro_view_change_timer.set(Fuse::terminated());
+                    // task::current().notify();
+                    Ok(())
+                }
+                NodeOutgoingEvent::MicroBlockProposeTimerCancel => {
+                    self.micro_propose_timer.set(Fuse::terminated());
+                    Ok(())
+                }
+                NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
+                    self.micro_view_change_timer.set(time::delay_for(duration).fuse());
+                    self.macro_propose_timer.set(Fuse::terminated());
+                    self.macro_view_change_timer.set(Fuse::terminated());
+                    // task::current().notify();
+                    Ok(())
+                }
+                NodeOutgoingEvent::ReplicationBlock { .. } => { 
+                    Ok(())
+                }
+                /*
+                NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
+                    // TODO: refator on_block to be async fn.
+                    let block = block;
+                    let light_block = light_block;
+                    //let replication = &mut replication;
+                    //let state = &state;
+                    future::poll_fn(move |cx| {
+                        self.replication.on_block(
+                            cx,
+                            block.clone(),
+                            light_block.clone(),
+                            self.state.chain.cfg().micro_blocks_in_epoch,
+                        );
+                        Poll::Ready(())
+                    })
+                    .await;
+                    Ok(())
+                }
+                */
+                NodeOutgoingEvent::StatusNotification(notification) => {
+                    Self::notify_subscribers(&mut self.status_subscribers, notification);
+                    Ok(())
+                }
+                NodeOutgoingEvent::ChainNotification(notification) => {
+                    Self::notify_subscribers(&mut self.chain_subscribers, notification);
+                    Ok(())
+                }
+                NodeOutgoingEvent::RequestBlocksFrom { from } => {
+                    Self::request_history_from(&mut self.network, &self.state, from)
+                }
+                NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
+                    Self::send_blocks(&mut self.network, &mut self.state, to, epoch, offset)
+                }
+            };
+            if let Err(e) = result {
+                error!("Error: {}", e);
+            }
+        }
+
+        for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
+            if let Ok(_) = reader.advance(&self.state.chain) {
+                chain_readers.push(reader)
             }
         }
     }

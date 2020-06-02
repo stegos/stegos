@@ -32,6 +32,9 @@ pub mod metrics;
 pub mod protos;
 mod tokio;
 mod validation;
+#[cfg(test)]
+mod test;
+
 pub use self::tokio::{Node, NodeService};
 pub use crate::api::*;
 pub use crate::config::NodeConfig;

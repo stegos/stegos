@@ -289,6 +289,16 @@ impl NodeService {
         self.state.init()
     }
 
+    #[cfg(test)]
+    pub fn state(&self) -> &NodeState {
+        &self.state
+    }
+
+    #[cfg(test)]
+    pub fn network(&self) -> &Network {
+        return &self.network
+    }
+
     /// Notify all subscribers about new event.
     fn notify_subscribers<T: Clone>(subscribers: &mut Vec<mpsc::Sender<T>>, msg: T) {
         let mut i = 0;
@@ -467,6 +477,7 @@ impl NodeService {
     pub async fn start(mut self) {
         loop {
             self.step().await;
+            self.handle_outgoing().await;
         }
     }
 
@@ -605,6 +616,14 @@ impl NodeService {
             }
         }
 
+        for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
+            if let Ok(_) = reader.advance(&self.state.chain) {
+                chain_readers.push(reader)
+            }
+        }
+    }
+
+    async fn handle_outgoing(&mut self) {
         for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
             trace!("Outgoing event = {:?}", event);
             let result = match event {
@@ -709,12 +728,6 @@ impl NodeService {
             };
             if let Err(e) = result {
                 error!("Error: {}", e);
-            }
-        }
-
-        for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
-            if let Ok(_) = reader.advance(&self.state.chain) {
-                chain_readers.push(reader)
             }
         }
     }

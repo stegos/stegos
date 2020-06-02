@@ -25,6 +25,8 @@
 mod logger;
 mod sandbox;
 
+#[cfg(test)]
+extern crate tokio;
 /*
 mod consensus;
 mod integration;
@@ -747,8 +749,8 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
 #[cfg(test)]
 mod test_framework {
     use super::*;
-    #[test]
-    fn test_partition() {
+    #[tokio::test]
+    async fn test_partition() {
         let config: SandboxConfig = Default::default();
 
         Sandbox::start(config, |mut s| {

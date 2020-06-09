@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use std::time::Duration;
+use std::collections::HashSet;
 
 use rand_isaac::IsaacRng;
 use rand_core::SeedableRng;
@@ -169,10 +170,7 @@ impl<'p> Partition<'p> {
     // to proove that it is safe this implemetation contain intermediate vector.
     // This function can be rewrited as unsafe,
     // or may be later rewrited just as `self.into_iter().map(|i|*i)`
-    pub fn reborrow_nodes<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn reborrow_nodes(&self) -> impl Iterator<Item = &NodeSandbox> {
         use std::ops::Deref;
         let mut arr = Vec::new();
         for item in &self.nodes {
@@ -181,10 +179,7 @@ impl<'p> Partition<'p> {
         arr.into_iter()
     }
 
-    pub fn reborrow_nodes_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn reborrow_nodes_mut(&mut self) -> impl Iterator<Item = &mut NodeSandbox> {
         use std::ops::DerefMut;
         let mut arr = Vec::new();
         for item in &mut self.nodes {
@@ -193,24 +188,15 @@ impl<'p> Partition<'p> {
         arr.into_iter()
     }    
 
-    pub fn iter<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn iter(&self) -> impl Iterator<Item = &NodeSandbox> {
         self.reborrow_nodes()
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut NodeSandbox> {
         self.reborrow_nodes_mut()
     }
 
-    pub fn auditor_mut<'a>(&'a mut self) -> Option<&'a mut NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn auditor_mut(&mut self) -> Option<&mut NodeSandbox> {
         // reborrow auditor
         if let Some(&mut ref mut s) = self.auditor {
             Some(s)
@@ -219,10 +205,7 @@ impl<'p> Partition<'p> {
         }
     }
 
-    pub fn auditor<'a>(&'a self) -> Option<&'a NodeSandbox>
-    where
-        'p: 'a,
-    {
+    pub fn auditor(&self) -> Option<&NodeSandbox> {
         // reborrow auditor
         if let Some(&mut ref s) = self.auditor {
             Some(s)
@@ -231,37 +214,26 @@ impl<'p> Partition<'p> {
         }
     }
 
-    pub fn first<'a>(&'a self) -> &'a NodeSandbox
-    where
-        'p: 'a,
-    {
+    pub fn first(&self) -> &NodeSandbox {
         self.iter()
             .next()
             .expect("First node not found in the sandbox")
     }
 
-    pub fn first_mut<'a>(&'a mut self) -> &'a mut NodeSandbox
-    where
-        'p: 'a,
-    {
+    pub fn first_mut(&mut self) -> &mut NodeSandbox {
         self.iter_mut()
             .next()
             .expect("First node not found in the sandbox.")
     }
 
     /// Iterator among all nodes, except one of
-    pub fn iter_except<'a>(
-        &'a mut self,
-        validators: &'a [pbc::PublicKey],
-    ) -> impl Iterator<Item = &'a mut NodeSandbox>
+    pub fn iter_except<'a>(&'a mut self, excl: &'a [pbc::PublicKey]) -> impl Iterator<Item = &'a mut NodeSandbox> 
     where
-        'p: 'a,
+        'p: 'a
     {
+        let keys: HashSet<&pbc::PublicKey> = excl.iter().collect();
         self.iter_mut().filter(move |node| {
-            validators
-                .iter()
-                .find(|key| **key == node.node_service.state().network_pkey)
-                .is_none()
+            !keys.contains(&node.node_service.state().network_pkey)
         })
     }
 

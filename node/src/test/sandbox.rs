@@ -193,18 +193,18 @@ impl<'p> Partition<'p> {
         arr.into_iter()
     }    
 
-    pub fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = &'a NodeSandbox> + 'a>
+    pub fn iter<'a>(&'a self) -> impl Iterator<Item = &'a NodeSandbox>
     where
         'p: 'a,
     {
-        Box::new(self.reborrow_nodes())
+        self.reborrow_nodes()
     }
 
-    pub fn iter_mut<'a>(&'a mut self) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    pub fn iter_mut<'a>(&'a mut self) -> impl Iterator<Item = &'a mut NodeSandbox>
     where
         'p: 'a,
     {
-        Box::new(self.reborrow_nodes_mut())
+        self.reborrow_nodes_mut()
     }
 
     pub fn auditor_mut<'a>(&'a mut self) -> Option<&'a mut NodeSandbox>
@@ -253,16 +253,16 @@ impl<'p> Partition<'p> {
     pub fn iter_except<'a>(
         &'a mut self,
         validators: &'a [pbc::PublicKey],
-    ) -> Box<dyn Iterator<Item = &'a mut NodeSandbox> + 'a>
+    ) -> impl Iterator<Item = &'a mut NodeSandbox>
     where
         'p: 'a,
     {
-        Box::new(self.iter_mut().filter(move |node| {
+        self.iter_mut().filter(move |node| {
             validators
                 .iter()
                 .find(|key| **key == node.node_service.state().network_pkey)
                 .is_none()
-        }))
+        })
     }
 
     pub fn split<'a>(
@@ -801,7 +801,6 @@ pub struct NodeSandbox {
     pub node: Node,
     pub node_service: NodeService,
     pub vdf_execution: VDFExecution,
-    //pub future: Pin<Box<dyn Future<Output = ()>>>,
 }
 
 impl Drop for NodeSandbox {

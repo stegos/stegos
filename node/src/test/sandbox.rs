@@ -19,6 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::time::Duration;
+
 use rand_isaac::IsaacRng;
 use rand_core::SeedableRng;
 use rand::{thread_rng, Rng};
@@ -27,6 +29,7 @@ use tempdir::TempDir;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
 use stegos_crypto::pbc::VRF;
+use stegos_crypto::pbc::PublicKey;
 
 use crate::*;
 use super::logger;
@@ -70,10 +73,7 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
-    pub fn start<F>(config: SandboxConfig, test_routine: F)
-    where
-        F: FnOnce(Sandbox),
-    {
+    pub fn new(config: SandboxConfig) -> Self {
         stegos_crypto::init_test_network_prefix();
         let var = std::env::var("STEGOS_TEST_LOGS_LEVEL")
             .ok()
@@ -143,43 +143,14 @@ impl Sandbox {
             assert_eq!(chain.epoch(), 1);
             assert_eq!(chain.offset(), 0);
         }
-        test_routine(sandbox)
+
+        sandbox
     }
 
     pub fn partition(&mut self) -> Partition {
         Partition {
             nodes: self.nodes.iter_mut().collect(),
             auditor: None,
-        }
-    }
-
-    pub fn split<'a>(
-        &'a mut self,
-        first_partitions_nodes: &[pbc::PublicKey],
-    ) -> PartitionGuard<'a> {
-        let divider = |key| {
-            first_partitions_nodes
-                .iter()
-                .find(|item| **item == key)
-                .is_some()
-        };
-
-        let mut part1 = Partition::default();
-        let mut part2 = Partition::default();
-        for node in self.nodes.iter_mut() {
-            if divider(node.node_service.state().network_pkey) {
-                part1.nodes.push(node)
-            } else {
-                part2.nodes.push(node)
-            }
-        }
-
-        //TODO: add support of multiple auditors, and allow to choose on which side should be auditors.
-        part2.auditor = Some(&mut self.auditor);
-
-        PartitionGuard {
-            config: &self.config,
-            parts: (part1, part2),
         }
     }
 }
@@ -294,6 +265,101 @@ impl<'p> Partition<'p> {
         }))
     }
 
+    pub fn split<'a>(
+        &'a mut self,
+        first_partitions_nodes: &[pbc::PublicKey],
+    ) -> PartitionGuard<'a> 
+    where 
+        'p: 'a
+    {
+        let divider = |key| {
+            first_partitions_nodes
+                .iter()
+                .find(|item| **item == key)
+                .is_some()
+        };
+
+        let mut part1 = Partition::default();
+        let mut part2 = Partition::default();
+        for node in self.nodes.iter_mut() {
+            if divider(node.node_service.state().network_pkey) {
+                part1.nodes.push(node)
+            } else {
+                part2.nodes.push(node)
+            }
+        }
+
+        use std::ops::DerefMut;
+        //TODO: add support of multiple auditors, and allow to choose on which side should be auditors.
+        part2.auditor = self.auditor.as_mut().map(|x| x.deref_mut());
+
+        PartitionGuard {
+            parts: (part1, part2),
+        }
+    }
+
+    /// Inner logic specific for cheater slashing.
+    pub async fn slash_cheater_inner<'a>(
+        part: &'a mut Partition<'a>,
+        leader_pk: PublicKey,
+        mut filter_nodes: Vec<PublicKey>,
+    ) -> PartitionGuard<'a> 
+    where
+        'p: 'a
+    {
+        part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
+        filter_nodes.push(leader_pk);
+        let mut r = part.split(&filter_nodes);
+        let leader = &mut r.parts.0.node_mut(&leader_pk).unwrap();
+        leader.handle_vdf();
+        leader.node_service.step().await;
+        let b1: Block = leader
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let mut b2 = b1.clone();
+        // modify timestamp for block
+        match &mut b2 {
+            Block::MicroBlock(ref mut b) => {
+                b.header.timestamp += Duration::from_millis(1);
+                let block_hash = Hash::digest(&*b);
+                b.sig = pbc::sign_hash(&block_hash, &leader.node_service.state().network_skey);
+            }
+            Block::MacroBlock(_) => unreachable!("Expected a MacroBlock"),
+        }
+
+        info!("BROADCAST BLOCK, WITH COPY.");
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+        }
+
+        if let Some(auditor) = r.parts.1.auditor_mut() {
+            auditor
+                .network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
+        }
+
+        r.parts
+            .1
+            .iter_mut()
+            .for_each(|node| assert_eq!(node.node_service.state().cheating_proofs.len(), 0));
+
+        for node in r.parts.1.iter_mut() {
+            node.network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+        }
+
+        if let Some(auditor) = r.parts.1.auditor_mut() {
+            auditor
+                .network_service
+                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
+        }
+
+        r.parts.1.poll().await;
+        r
+    }
+
     /// Checks if all sandbox nodes synchronized.
     pub fn assert_synchronized(&self) {
         let node = self.first();
@@ -359,20 +425,19 @@ impl<'p> Partition<'p> {
     }
 
     /// poll each node for updates.
-    pub fn poll(&mut self) {
-        futures::executor::block_on(async {
-            for node in self.iter_mut() {
-                info!(
-                    "============ POLLING node={:?} ============",
-                    node.validator_id()
-                );
-                node.node_service.step().await;
-            }
-            info!("============ POLLING auditor ============");
-            if let Some(auditor) = self.auditor_mut() {
-                auditor.node_service.step().await;
-            }
-        })
+    pub async fn poll(&mut self) {
+        for node in self.iter_mut() {
+            info!(
+                "============ POLLING node={:?} ============",
+                node.validator_id()
+            );
+            node.node_service.step().await;
+        }
+        info!("============ POLLING auditor ============");
+        if let Some(auditor) = self.auditor_mut() {
+            auditor.node_service.step().await;
+        }
+        ()
     }
 
     pub fn num_nodes(&self) -> usize {
@@ -382,7 +447,7 @@ impl<'p> Partition<'p> {
     //TODO: This temporary solution is used to emulate broadcast in network. For example
     // when you need to send transaction over network, it should be broadcasted.
     /// Take messages from topic, and broadcast to other nodes.
-    pub fn broadcast(&mut self, topic: &str) {
+    pub async fn broadcast(&mut self, topic: &str) {
         let mut messages = Vec::new();
         for node in self.iter_mut() {
             if let Some(m) = node.network_service.try_get_broadcast_raw(topic) {
@@ -396,11 +461,11 @@ impl<'p> Partition<'p> {
                     .receive_broadcast_raw(topic, msg.clone());
             }
         }
-        self.poll();
+        self.poll().await;
     }
 
     /// Take message from protocol_id, and broadcast to concrete node.
-    pub fn deliver_unicast(&mut self, protocol_id: &str) {
+    pub async fn deliver_unicast(&mut self, protocol_id: &str) {
         // deliver all messages, even if some node send multiple broadcasts messages.
         let mut messages = HashMap::new();
         for node in self.iter_mut() {
@@ -424,20 +489,20 @@ impl<'p> Partition<'p> {
             }
         }
 
-        self.poll();
+        self.poll().await;
     }
 
     /// Take micro block from leader, rebroadcast to other nodes.
     /// Should be used after block timeout.
     /// This function will poll() every node.
-    pub fn skip_micro_block(&mut self) {
+    pub async fn skip_micro_block(&mut self) {
         self.assert_synchronized();
         let chain = &self.first().node_service.state().chain;
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
         let leader_pk = chain.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
         self.node_mut(&leader_pk).unwrap().handle_vdf();
-        self.poll();
+        self.poll().await;
         self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader = self.node_mut(&leader_pk).unwrap();
         let block: Block = leader
@@ -452,11 +517,11 @@ impl<'p> Partition<'p> {
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
-        self.poll();
+        self.poll().await;
     }
 
     /// Emulate rollback of microblock, for wallet tests
-    pub fn rollback_microblock(&mut self) {
+    pub async fn rollback_microblock(&mut self) {
         let mut view_changes = Vec::new();
         let state = self.first().node_service.state();
         let chain = &state.chain;
@@ -504,10 +569,10 @@ impl<'p> Partition<'p> {
                 .network_service
                 .receive_broadcast_raw(VIEW_CHANGE_PROOFS_TOPIC, msg.clone());
         }
-        self.poll()
+        self.poll().await;
     }
 
-    pub fn skip_macro_block(&mut self) {
+    pub async fn skip_macro_block(&mut self) {
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let stake_epochs = chain.cfg().stake_epochs;
@@ -530,7 +595,7 @@ impl<'p> Partition<'p> {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
         }
-        self.poll();
+        self.poll().await;
 
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
@@ -553,7 +618,7 @@ impl<'p> Partition<'p> {
                 }
             }
         }
-        self.poll();
+        self.poll().await;
 
         // Check for pre-commits.
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
@@ -585,7 +650,7 @@ impl<'p> Partition<'p> {
                 }
             }
         }
-        self.poll();
+        self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
         let mut restakes: Vec<Transaction> = Vec::with_capacity(self.num_nodes());
@@ -625,7 +690,7 @@ impl<'p> Partition<'p> {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
 
-        self.poll();
+        self.poll().await;
 
         // Check state of all nodes.
         for node in self.iter() {
@@ -649,7 +714,7 @@ impl<'p> Partition<'p> {
                         .receive_broadcast(crate::TX_TOPIC, restake.clone());
                 }
             }
-            self.poll();
+            self.poll().await;
         }
     }
 
@@ -721,7 +786,6 @@ impl<'p> Partition<'p> {
 
 #[allow(unused)]
 pub struct PartitionGuard<'p> {
-    pub config: &'p SandboxConfig,
     pub parts: (Partition<'p>, Partition<'p>),
 }
 

@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 // most of the code is used in tests, so it can false positive detected as unused during build.
+//#![feature(async_closure)]
 #![allow(dead_code)]
 
 mod logger;
@@ -37,11 +38,8 @@ use crate::*;
 use crate::CHAIN_LOADER_TOPIC;
 use log::*;
 pub use sandbox::*;
-use std::time::Duration;
 pub use stegos_blockchain::test::*;
 pub use stegos_network::loopback::Loopback;
-use stegos_crypto::pbc;
-use stegos_crypto::pbc::PublicKey;
 
 #[derive(Debug)]
 pub enum VDFExecution {
@@ -91,66 +89,7 @@ impl VDFExecution {
     }
 }
 
-/// Inner logic specific for cheater slashing.
-pub async fn slash_cheater_inner<'a>(
-    s: &'a mut Sandbox,
-    leader_pk: PublicKey,
-    mut filter_nodes: Vec<PublicKey>,
-) -> PartitionGuard<'a> {
-    s.partition().filter_unicast(&[CHAIN_LOADER_TOPIC]);
-
-    filter_nodes.push(leader_pk);
-    let mut r = s.split(&filter_nodes);
-    let leader = &mut r.parts.0.node_mut(&leader_pk).unwrap();
-    leader.handle_vdf();
-    leader.node_service.step().await;
-    let b1: Block = leader
-        .network_service
-        .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-    let mut b2 = b1.clone();
-    // modify timestamp for block
-    match &mut b2 {
-        Block::MicroBlock(ref mut b) => {
-            b.header.timestamp += Duration::from_millis(1);
-            let block_hash = Hash::digest(&*b);
-            b.sig = pbc::sign_hash(&block_hash, &leader.node_service.state().network_skey);
-        }
-        Block::MacroBlock(_) => unreachable!("Expected a MacroBlock"),
-    }
-
-    info!("BROADCAST BLOCK, WITH COPY.");
-    for node in r.parts.1.iter_mut() {
-        node.network_service
-            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
-    }
-
-    if let Some(auditor) = r.parts.1.auditor_mut() {
-        auditor
-            .network_service
-            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b1.clone());
-    }
-
-    r.parts
-        .1
-        .iter_mut()
-        .for_each(|node| assert_eq!(node.node_service.state().cheating_proofs.len(), 0));
-
-    for node in r.parts.1.iter_mut() {
-        node.network_service
-            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
-    }
-
-    if let Some(auditor) = r.parts.1.auditor_mut() {
-        auditor
-            .network_service
-            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, b2.clone());
-    }
-
-    r.parts.1.poll();
-    r
-}
-
-pub fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
+pub async fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
     skip_blocks_until(s, |s| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| s.partition().future_block_leader(id).unwrap())
@@ -161,10 +100,10 @@ pub fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders
             leaders
         );
         check_unique(leaders)
-    })
+    }).await;
 }
 
-pub fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
+pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
     skip_blocks_until(s, |s| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| s.partition().future_view_change_leader(id))
@@ -175,11 +114,11 @@ pub fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_le
             leaders
         );
         check_unique(leaders)
-    })
+    }).await;
 }
 
 /// Skip blocks until condition not true
-pub fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
+pub async fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
 where
     F: FnMut(&mut Sandbox) -> bool,
 {
@@ -190,7 +129,7 @@ where
             break;
         }
         info!("Skipping microlock.");
-        s.partition().skip_micro_block()
+        s.partition().skip_micro_block().await;
     }
     assert!(ready, "Not enought micriblocks found");
 }
@@ -210,14 +149,16 @@ mod test_framework {
     #[tokio::test]
     async fn test_partition() {
         let config: SandboxConfig = Default::default();
-
-        Sandbox::start(config, |mut s| {
-            s.partition().poll();
-            let leader_pk = s.nodes[0].node_service.state().chain.leader();
-            let r = s.split(&[leader_pk]);
+        let mut sb = Sandbox::new(config);
+        let mut part = sb.partition();
+        async {
+            part.poll().await;
+            let first = part.first();
+            let leader_pk = first.node_service.state().chain.leader();
+            let r = part.split(&[leader_pk]);
             assert_eq!(r.parts.0.nodes.len(), 1);
             assert_eq!(r.parts.1.nodes.len(), 3);
-            s.partition().filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        });
+            part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+        }.await
     }
 }

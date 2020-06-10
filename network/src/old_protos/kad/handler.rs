@@ -410,9 +410,7 @@ where
                         _ => unreachable!(),
                     };
 
-                    let msg = KadResponseMsg::FindNode {
-                        closer_peers,
-                    };
+                    let msg = KadResponseMsg::FindNode { closer_peers };
                     self.substreams
                         .push(SubstreamState::InPendingSend(conn_id, substream, msg));
                 }
@@ -451,10 +449,7 @@ where
                 }
             }
             KademliaHandlerIn::AddProvider { key, provider_peer } => {
-                let msg = KadRequestMsg::AddProvider {
-                    key,
-                    provider_peer,
-                };
+                let msg = KadRequestMsg::AddProvider { key, provider_peer };
                 self.substreams
                     .push(SubstreamState::OutPendingOpen(msg, None));
             }

@@ -384,9 +384,8 @@ impl NetworkBehaviour for Discovery {
                     if let Some(p) = node_info.peer_id() {
                         if !self.connected_peers.contains(&p) {
                             debug!(target: "stegos_network::discovery", "connecting to known closest peer: {}, distance: {}", p, &my_id.distance_with(node));
-                            self.out_events.push_back(DiscoveryOutEvent::DialPeer {
-                                peer_id: p.clone(),
-                            });
+                            self.out_events
+                                .push_back(DiscoveryOutEvent::DialPeer { peer_id: p.clone() });
                         } else {
                             debug!(target: "stegos_network::discovery", "already connected to closest peer: {}, distance: {}", p, &my_id.distance_with(node));
                         }

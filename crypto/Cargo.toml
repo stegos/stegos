@@ -63,6 +63,6 @@ name = "pbc"
 harness = false
 
 [features]
-default = ["flint", "old_crypto"]
+default = ["flint",]
 flint= ["flint-sys", "gmp-mpfr-sys"]
 old_crypto= ["base58check"]

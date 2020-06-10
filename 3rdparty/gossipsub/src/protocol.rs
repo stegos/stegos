@@ -19,9 +19,9 @@
 // DEALINGS IN THE SOFTWARE.
 
 use crate::behaviour::GossipsubRpc;
+use crate::metrics;
 use crate::rpc_proto;
 use crate::topic::TopicHash;
-use crate::metrics;
 use byteorder::{BigEndian, ByteOrder};
 use bytes::Bytes;
 use bytes::BytesMut;
@@ -32,7 +32,6 @@ use libp2p_core::{InboundUpgrade, OutboundUpgrade, PeerId, UpgradeInfo};
 use prost::Message as ProtobufMessage;
 use std::{borrow::Cow, io, iter, pin::Pin};
 use unsigned_varint::codec;
-
 
 /// Implementation of the `ConnectionUpgrade` for the Gossipsub protocol.
 #[derive(Debug, Clone)]
@@ -121,7 +120,6 @@ impl Encoder for GossipsubCodec {
     type Error = io::Error;
 
     fn encode(&mut self, item: Self::Item, dst: &mut BytesMut) -> Result<(), Self::Error> {
-
         // messages
         let publish = item
             .messages
@@ -206,8 +204,7 @@ impl Encoder for GossipsubCodec {
 
         rpc.encode(&mut buf)
             .expect("Buffer has sufficient capacity");
-        metrics::OUTGOING_TRAFFIC
-            .add(buf.len() as i64);
+        metrics::OUTGOING_TRAFFIC.add(buf.len() as i64);
 
         // length prefix the protobuf message, ensuring the max limit is not hit
         self.length_codec.encode(Bytes::from(buf), dst)
@@ -219,14 +216,12 @@ impl Decoder for GossipsubCodec {
     type Error = io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-
         let packet = match self.length_codec.decode(src)? {
             Some(p) => p,
             None => return Ok(None),
         };
 
-        metrics::INCOMING_TRAFFIC
-        .add(packet.len() as i64);
+        metrics::INCOMING_TRAFFIC.add(packet.len() as i64);
 
         let rpc = rpc_proto::Rpc::decode(&packet[..])?;
 

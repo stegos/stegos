@@ -22,16 +22,17 @@
 // SOFTWARE.
 
 use super::*;
-use crate::*;
 use assert_matches::assert_matches;
-use std::time::Duration;
-use stegos_blockchain::Block;
-use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
-use stegos_crypto::pbc;
-use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
+use tokio::time::delay_for;
 
-#[test]
-fn smoke_test() {
+use stegos_blockchain::Block;
+//use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
+use stegos_consensus::{ConsensusMessageBody};
+//use stegos_crypto::pbc;
+//use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
+
+#[tokio::test]
+async fn smoke_test() {
     const NUM_RESTAKES: u64 = 3;
     let cfg = ChainConfig {
         micro_blocks_in_epoch: 1,
@@ -43,19 +44,22 @@ fn smoke_test() {
         num_nodes: 3,
         ..Default::default()
     };
-    Sandbox::start(config, |mut s| {
-        for _epoch in 1..=(1 + NUM_RESTAKES * s.config.chain.stake_epochs + 1) {
-            for _offset in 0..s.config.chain.micro_blocks_in_epoch {
-                s.poll();
-                s.skip_micro_block();
+    let cfg = config.clone();
+    let mut sb = Sandbox::new(config);
+    let mut p = sb.partition();
+    async {
+        for _epoch in 1..=(1 + NUM_RESTAKES * cfg.chain.stake_epochs + 1) {
+            for _offset in 0..cfg.chain.micro_blocks_in_epoch {
+                p.poll().await;
+                p.skip_micro_block().await;
             }
-            s.skip_macro_block();
+            p.skip_macro_block().await;
         }
-    });
+    }.await
 }
 
-#[test]
-fn autocommit() {
+#[tokio::test]
+async fn autocommit() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -63,56 +67,60 @@ fn autocommit() {
         num_nodes: 3,
         ..Default::default()
     };
+    let cfg = config.clone();
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut p = sb.partition();
+    async {
         // Create one micro block.
-        s.skip_micro_block();
+        p.skip_micro_block().await;
+        let first = p.first();
 
         let topic = crate::CONSENSUS_TOPIC;
-        let epoch = s.nodes[0].node_service.chain.epoch();
+        let epoch = first.node_service.state().chain.epoch();
 
-        let last_block_hash = s.nodes[0].node_service.chain.last_block_hash();
+        let last_block_hash = first.node_service.state().chain.last_block_hash();
 
-        let leader_pk = s.nodes[0].node_service.chain.leader();
-        let leader_node = s.node(&leader_pk).unwrap();
+        let leader_pk = first.node_service.state().chain.leader();
+        let leader_node = p.find_mut(&leader_pk).unwrap();
         // Check for a proposal from the leader.
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         debug!("Proposal: {:?}", proposal);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
         // Send this proposal to other nodes.
-        for node in s.iter_except(&[leader_pk]) {
+        for node in p.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
-            node.poll();
+            node.node_service.poll().await;
         }
 
-        for i in 0..s.num_nodes() {
-            let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+        for i in 0..p.len() {
+            let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            for j in 0..s.num_nodes() {
-                s.nodes[j]
+            for j in 0..p.len() {
+                p[j]
                     .network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
-        s.poll();
+        p.poll().await;
 
-        for i in 0..s.num_nodes() {
-            let precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
+        for i in 0..p.len() {
+            let precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
-            for j in 0..s.num_nodes() {
-                s.nodes[j]
+            for j in 0..p.len() {
+                p[j]
                     .network_service
                     .receive_broadcast(topic, precommit.clone());
             }
         }
-        s.poll();
+        p.poll().await;
 
         // Receive sealed block.
-        let block: Block = s
-            .node(&leader_pk)
+        let block: Block = p
+            .find_mut(&leader_pk)
             .unwrap()
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -120,30 +128,30 @@ fn autocommit() {
 
         info!("Starting checking of autocommit.");
         // dont send this block to any node, wait for autocommits.
-        let mut nodes_pk: Vec<_> = s.iter().map(|n| n.node_service.network_pkey).collect();
+        let mut nodes_pk: Vec<_> = p.iter().map(|n| n.node_service.state().network_pkey).collect();
         nodes_pk.sort();
 
         for pk in nodes_pk {
-            s.poll();
+            p.poll().await;
             // Wait for macro block timeout.
-            s.wait(s.config.node.macro_block_timeout);
+            delay_for(cfg.node.macro_block_timeout).await;
 
             info!("Checking autocommit of node {}.", pk);
             if pk == leader_pk {
                 continue;
             }
 
-            let node = s.node(&pk).unwrap();
+            let node = p.find_mut(&pk).unwrap();
 
             // The last node hasn't received sealed block.
-            assert_eq!(node.node_service.chain.epoch(), epoch);
-            assert_eq!(node.node_service.chain.last_block_hash(), last_block_hash);
+            assert_eq!(node.node_service.state().chain.epoch(), epoch);
+            assert_eq!(node.node_service.state().chain.last_block_hash(), last_block_hash);
 
             // poll to update node after macroblock_timeout waits
-            node.poll();
+            node.node_service.poll().await;
             // Check that the last node has auto-committed the block.
-            assert_eq!(node.node_service.chain.epoch(), epoch + 1);
-            assert_eq!(node.node_service.chain.last_block_hash(), block_hash);
+            assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
+            assert_eq!(node.node_service.state().chain.last_block_hash(), block_hash);
 
             // Check that the auto-committed block has been sent to the network.
             let block2: Block = node
@@ -153,15 +161,15 @@ fn autocommit() {
             assert_eq!(block_hash, block_hash2);
         }
         // wait more time, to check if counter will not overflow.
-        s.wait(s.config.node.macro_block_timeout);
+        delay_for(cfg.node.macro_block_timeout).await;
 
-        s.poll();
-        s.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
-    });
+        p.poll().await;
+        p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
+    }.await;
 }
-
-#[test]
-fn round() {
+/*
+#[tokio::test]
+async fn round() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -171,12 +179,14 @@ fn round() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
-        let topic = crate::CONSENSUS_TOPIC;
+        let topic = CONSENSUS_TOPIC;
 
         let leader_pk = s.nodes[0].node_service.chain.leader();
         let leader_node = s.node(&leader_pk).unwrap();
@@ -189,10 +199,10 @@ fn round() {
         s.wait(s.config.node.macro_block_timeout);
 
         info!("====== Waiting for keyblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -205,35 +215,35 @@ fn round() {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
-        for i in 0..s.num_nodes() {
+        for i in 0..s.len() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             assert_eq!(prevote.epoch, epoch);
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, proposal.block_hash);
-            for j in 0..s.num_nodes() {
+            for j in 0..s.len() {
                 s.nodes[j]
                     .network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
-        s.poll();
+        s.poll().await;
 
-        for i in 0..s.num_nodes() {
+        for i in 0..s.len() {
             let precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
             assert_eq!(precommit.epoch, epoch);
             assert_eq!(precommit.round, round);
             assert_eq!(precommit.block_hash, proposal.block_hash);
-            for j in 0..s.num_nodes() {
+            for j in 0..s.len() {
                 s.nodes[j]
                     .network_service
                     .receive_broadcast(topic, precommit.clone());
             }
         }
-        s.poll();
+        s.poll().await;
 
         // Receive sealed block.
         let block: Block = s
@@ -249,7 +259,7 @@ fn round() {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
-        s.poll();
+        s.poll().await;
 
         for node in s.iter_except(&[leader_pk]) {
             assert_eq!(node.node_service.chain.epoch(), epoch + 1);
@@ -262,8 +272,8 @@ fn round() {
 // first immediatly after micro block
 // second at macro_block_timeout
 // third at macro_block_timeout * 2
-#[test]
-fn multiple_rounds() {
+#[tokio::test]
+async fn multiple_rounds() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -272,9 +282,11 @@ fn multiple_rounds() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -287,18 +299,18 @@ fn multiple_rounds() {
 
         s.wait(s.config.node.macro_block_timeout - Duration::from_millis(1));
 
-        s.poll();
-        for i in 1..s.num_nodes() {
+        s.poll().await;
+        for i in 1..s.len() {
             s.nodes[i].network_service.assert_empty_queue()
         }
 
         s.wait(Duration::from_millis(1));
 
         info!("====== Waiting for keyblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 1);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -307,18 +319,18 @@ fn multiple_rounds() {
 
         s.wait(s.config.node.macro_block_timeout * 2 - Duration::from_millis(1));
 
-        s.poll();
-        for i in 1..s.num_nodes() {
+        s.poll().await;
+        for i in 1..s.len() {
             s.nodes[i].network_service.assert_empty_queue()
         }
 
         s.wait(Duration::from_millis(1));
 
         info!("====== Waiting for keyblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_pk = s.nodes[0].node_service.chain.select_leader(view_change + 2);
         let leader_node = s.node(&leader_pk).unwrap();
@@ -329,8 +341,8 @@ fn multiple_rounds() {
 
 // check if locked node will rebroadcast propose.
 //
-#[test]
-fn lock() {
+#[tokio::test]
+async fn lock() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -339,9 +351,11 @@ fn lock() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -365,12 +379,12 @@ fn lock() {
             }
 
             info!("skipping round {}, leader = {}", i, leader_pk);
-            s.poll();
+            s.poll().await;
             let leader_node = s.node(&leader_pk).unwrap();
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -382,12 +396,12 @@ fn lock() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
-        leader_node.poll();
+        leader_node.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -399,27 +413,27 @@ fn lock() {
             node.network_service
                 .receive_broadcast(topic, leader_proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         // for now, every node is locked at leader_propose
-        for i in 0..s.num_nodes() {
+        for i in 0..s.len() {
             let prevote: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             assert_eq!(prevote.epoch, epoch);
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, leader_proposal.block_hash);
-            for j in 0..s.num_nodes() {
+            for j in 0..s.len() {
                 s.nodes[j]
                     .network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
-        s.poll();
-        for i in 0..s.num_nodes() {
+        s.poll().await;
+        for i in 0..s.len() {
             let _precommit: ConsensusMessage = s.nodes[i].network_service.get_broadcast(topic);
         }
-        s.poll();
+        s.poll().await;
         s.wait(
             s.config.node.macro_block_timeout
                 * (round - s.nodes[0].node_service.chain.view_change() + 1),
@@ -427,10 +441,10 @@ fn lock() {
 
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&second_leader_pk).unwrap();
@@ -441,12 +455,12 @@ fn lock() {
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
         assert_eq!(proposal.round, leader_proposal.round + 1);
         assert_eq!(proposal.block_hash, leader_proposal.block_hash);
-        s.poll();
+        s.poll().await;
     });
 }
 
-#[test]
-fn lock_with_second_propose() {
+#[tokio::test]
+async fn lock_with_second_propose() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -455,9 +469,11 @@ fn lock_with_second_propose() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -481,12 +497,12 @@ fn lock_with_second_propose() {
             }
 
             info!("skipping round {}, leader = {}", i, leader_pk);
-            s.poll();
+            s.poll().await;
             let leader_node = s.node(&leader_pk).unwrap();
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -498,14 +514,14 @@ fn lock_with_second_propose() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&leader_pk).unwrap();
-        leader_node.poll();
+        leader_node.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -517,9 +533,9 @@ fn lock_with_second_propose() {
             node.network_service
                 .receive_broadcast(topic, leader_proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let mut prevotes = Vec::new();
         // for now, every node EXCEPT second_leader is locked at leader_propose
         for node in s.iter_except(&[second_leader_pk]) {
@@ -538,11 +554,11 @@ fn lock_with_second_propose() {
             }
         }
 
-        s.poll();
+        s.poll().await;
         for node in s.iter_except(&[second_leader_pk]) {
             let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
         }
-        s.poll();
+        s.poll().await;
         s.wait(
             s.config.node.macro_block_timeout
                 * (round - s.nodes[0].node_service.chain.view_change() + 1),
@@ -550,10 +566,10 @@ fn lock_with_second_propose() {
 
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -570,14 +586,14 @@ fn lock_with_second_propose() {
         }
 
         // assert that no unprocessed prevotes are received for this block
-        s.poll();
+        s.poll().await;
     });
 }
 
 /// Send pack of prevotes in hope that node will ignore messages.
 ///
-#[test]
-fn pack_of_prevotes() {
+#[tokio::test]
+async fn pack_of_prevotes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -586,9 +602,11 @@ fn pack_of_prevotes() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -612,12 +630,12 @@ fn pack_of_prevotes() {
             }
 
             info!("skipping round {}, leader = {}", i, leader_pk);
-            s.poll();
+            s.poll().await;
             let leader_node = s.node(&leader_pk).unwrap();
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -632,7 +650,7 @@ fn pack_of_prevotes() {
         info!("Starting test.");
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
-        leader_node.poll();
+        leader_node.poll().await;
         // skip proposal and prevote of last leader.
         let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
@@ -648,7 +666,7 @@ fn pack_of_prevotes() {
         }
         let mut prevotes = Vec::new();
         for node in split.parts.1.iter_mut() {
-            node.poll();
+            node.poll().await;
             let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
 
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
@@ -666,12 +684,12 @@ fn pack_of_prevotes() {
             }
         }
 
-        split.parts.1.poll();
+        split.parts.1.poll().await;
         for node in split.parts.1.iter_mut() {
             let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
         }
 
-        split.parts.1.poll();
+        split.parts.1.poll().await;
 
         let first_node = split.parts.0.iter_mut().next().unwrap();
 
@@ -685,7 +703,7 @@ fn pack_of_prevotes() {
             .network_service
             .receive_broadcast(topic, leader_proposal.clone());
 
-        first_node.poll();
+        first_node.poll().await;
 
         s.wait(
             s.config.node.macro_block_timeout
@@ -693,14 +711,14 @@ fn pack_of_prevotes() {
         );
 
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         s.filter_broadcast(&[topic]);
     });
 }
 
-#[test]
-fn lock_with_second_propose_and_pack_of_prevotes() {
+#[tokio::test]
+async fn lock_with_second_propose_and_pack_of_prevotes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -709,9 +727,11 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -735,12 +755,12 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             }
 
             info!("skipping round {}, leader = {}", i, leader_pk);
-            s.poll();
+            s.poll().await;
             let leader_node = s.node(&leader_pk).unwrap();
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -752,14 +772,14 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
         }
         assert!(ready);
         info!("Starting test.");
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
 
         let second_leader_pk = s.nodes[0].node_service.chain.select_leader(round + 1);
         let leader_node = s.node(&leader_pk).unwrap();
-        leader_node.poll();
+        leader_node.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&leader_pk).unwrap();
         // skip proposal and prevote of last leader.
@@ -771,9 +791,9 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             node.network_service
                 .receive_broadcast(topic, leader_proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let mut prevotes = Vec::new();
         // for now, every node EXCEPT second_leader is locked at leader_propose
         for node in s.iter_except(&[second_leader_pk]) {
@@ -792,7 +812,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
                 .receive_broadcast(topic, prevote.clone());
         }
 
-        s.poll();
+        s.poll().await;
         let leader_node = s.node(&leader_pk).unwrap();
         let _precommit: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         s.wait(
@@ -802,10 +822,10 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
 
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let leader_node = s.node(&second_leader_pk).unwrap();
         let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -818,7 +838,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
         // any node except of locked first leader, should vote for second propose
         let mut prevotes = Vec::new();
@@ -837,7 +857,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             }
         }
 
-        s.poll();
+        s.poll().await;
 
         // any node except of locked first leader, should confirm vote for second propose
         let mut precommits = Vec::new();
@@ -846,7 +866,7 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
             precommits.push(precommit);
         }
-        s.poll();
+        s.poll().await;
 
         let old_leader_node = s.node(&leader_pk).unwrap();
 
@@ -862,14 +882,14 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
             }
         }
 
-        s.poll();
+        s.poll().await;
         s.wait(
             s.config.node.macro_block_timeout
                 * (round - s.nodes[0].node_service.chain.view_change() + 2),
         );
 
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         s.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
     });
@@ -877,8 +897,8 @@ fn lock_with_second_propose_and_pack_of_prevotes() {
 
 /// Send pack of prevotes in hope that node will ignore messages.
 /// This test the same as `pack_of_prevotes` but also send precommits pack to handle autocommit.
-#[test]
-fn pack_of_prevotes_and_precommits() {
+#[tokio::test]
+async fn pack_of_prevotes_and_precommits() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -887,9 +907,11 @@ fn pack_of_prevotes_and_precommits() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -913,12 +935,12 @@ fn pack_of_prevotes_and_precommits() {
             }
 
             info!("skipping round {}, leader = {}", i, leader_pk);
-            s.poll();
+            s.poll().await;
             let leader_node = s.node(&leader_pk).unwrap();
 
             leader_node
                 .network_service
-                .filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
             let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
@@ -933,7 +955,7 @@ fn pack_of_prevotes_and_precommits() {
         info!("Starting test.");
         let leader_pk = s.nodes[0].node_service.chain.select_leader(round);
         let leader_node = s.node(&leader_pk).unwrap();
-        leader_node.poll();
+        leader_node.poll().await;
         // skip proposal and prevote of last leader.
         let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
@@ -949,7 +971,7 @@ fn pack_of_prevotes_and_precommits() {
         }
         let mut prevotes = Vec::new();
         for node in split.parts.1.iter_mut() {
-            node.poll();
+            node.poll().await;
             let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
 
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
@@ -967,14 +989,14 @@ fn pack_of_prevotes_and_precommits() {
             }
         }
 
-        split.parts.1.poll();
+        split.parts.1.poll().await;
         let mut precommits = Vec::new();
         for node in split.parts.1.iter_mut() {
             let precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
             precommits.push(precommit);
         }
 
-        split.parts.1.poll();
+        split.parts.1.poll().await;
 
         let first_node = split.parts.0.iter_mut().next().unwrap();
 
@@ -993,7 +1015,7 @@ fn pack_of_prevotes_and_precommits() {
             .network_service
             .receive_broadcast(topic, leader_proposal.clone());
 
-        first_node.poll();
+        first_node.poll().await;
 
         s.wait(
             s.config.node.macro_block_timeout
@@ -1001,14 +1023,14 @@ fn pack_of_prevotes_and_precommits() {
         );
 
         info!("====== Waiting for macroblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         s.filter_broadcast(&[topic, SEALED_BLOCK_TOPIC]);
     });
 }
 
-#[test]
-fn out_of_order_micro_block() {
+#[tokio::test]
+async fn out_of_order_micro_block() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 0;
     let config = SandboxConfig {
@@ -1017,10 +1039,12 @@ fn out_of_order_micro_block() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         let topic = crate::CONSENSUS_TOPIC;
-        s.poll();
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        s.poll().await;
+        s.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         let epoch = s.nodes[0].node_service.chain.epoch();
         let offset = s.nodes[0].node_service.chain.offset();
@@ -1065,7 +1089,7 @@ fn out_of_order_micro_block() {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
         }
-        s.poll();
+        s.poll().await;
 
         for node in &s.nodes {
             assert_eq!(node.node_service.chain.epoch(), epoch);
@@ -1257,7 +1281,7 @@ fn invalid_proposes_inner(s: &mut Sandbox, round: u32) {
             node.network_service.receive_broadcast(topic, msg.clone());
         }
 
-        r.parts.1.poll();
+        r.parts.1.poll().await;
         debug!("Checking state after {} message", id);
         r.parts.1.for_each(|node| {
             assert_consensus_state(&info, node);
@@ -1269,7 +1293,7 @@ fn invalid_proposes_inner(s: &mut Sandbox, round: u32) {
         node.network_service
             .receive_broadcast(topic, proposal.clone());
     }
-    r.parts.1.poll();
+    r.parts.1.poll().await;
     // node should produce prevote.
     info.prevotes_len += 1;
     info.state = ConsensusState::Prevote;
@@ -1284,8 +1308,8 @@ fn invalid_proposes_inner(s: &mut Sandbox, round: u32) {
 //
 // assert: that all this messages should not be accepted
 
-#[test]
-fn invalid_proposes() {
+#[tokio::test]
+async fn invalid_proposes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -1295,10 +1319,12 @@ fn invalid_proposes() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
 
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let round = s.nodes[0].node_service.chain.view_change();
@@ -1307,8 +1333,8 @@ fn invalid_proposes() {
     });
 }
 
-#[test]
-fn invalid_proposes_on_2nd_round() {
+#[tokio::test]
+async fn invalid_proposes_on_2nd_round() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -1318,10 +1344,12 @@ fn invalid_proposes_on_2nd_round() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
 
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -1334,7 +1362,7 @@ fn invalid_proposes_on_2nd_round() {
         s.wait(s.config.node.macro_block_timeout);
 
         info!("====== Waiting for keyblock timeout. =====");
-        s.poll();
+        s.poll().await;
 
         let round = s.nodes[0].node_service.chain.view_change() + 1;
         invalid_proposes_inner(&mut s, round);
@@ -1347,8 +1375,8 @@ fn invalid_proposes_on_2nd_round() {
 //
 // assert: that all this messages should not change state after first propose.
 
-#[test]
-fn multiple_proposes() {
+#[tokio::test]
+async fn multiple_proposes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -1358,10 +1386,12 @@ fn multiple_proposes() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
 
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -1386,7 +1416,7 @@ fn multiple_proposes() {
             assert_consensus_state(&info, node);
         });
 
-        r.parts.1.poll();
+        r.parts.1.poll().await;
         r.parts.1.for_each(|node| {
             assert_consensus_state(&info, node);
         });
@@ -1396,7 +1426,7 @@ fn multiple_proposes() {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
         }
-        r.parts.1.poll();
+        r.parts.1.poll().await;
         // node should produce prevote.
         info.prevotes_len += 1;
         info.state = ConsensusState::Prevote;
@@ -1425,7 +1455,7 @@ fn multiple_proposes() {
                 node.network_service.receive_broadcast(topic, msg.clone());
             }
         }
-        r.parts.1.poll();
+        r.parts.1.poll().await;
 
         r.parts.1.for_each(|node| {
             assert_consensus_state(&info, node);
@@ -1436,8 +1466,8 @@ fn multiple_proposes() {
 }
 
 // Test [multiple message on prevote]
-#[test]
-fn invalid_prevotes() {
+#[tokio::test]
+async fn invalid_prevotes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -1447,9 +1477,11 @@ fn invalid_prevotes() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -1470,7 +1502,7 @@ fn invalid_prevotes() {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
         let mut r = s.split(&[leader_pk]);
         let node_skey = r.parts.1.first().node_service.network_skey.clone();
@@ -1487,7 +1519,7 @@ fn invalid_prevotes() {
         }
         info.prevotes_len += 1;
 
-        r.parts.1.poll();
+        r.parts.1.poll().await;
         // skip first node, because it work as byzantine
         for node in r.parts.1.iter_mut().skip(1) {
             assert_consensus_state(&info, &mut node.node_service);
@@ -1500,20 +1532,20 @@ fn invalid_prevotes() {
                 node.network_service.receive_broadcast(topic, msg.clone());
             }
         }
-        r.parts.1.poll();
+        r.parts.1.poll().await;
 
         // skip first node, because it work as byzantine
         for node in r.parts.1.iter_mut().skip(1) {
             assert_consensus_state(&info, &mut node.node_service);
         }
 
-        s.poll();
+        s.poll().await;
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }
 // Test [multiple message on prevote (from leader)]
-#[test]
-fn invalid_prevotes_leader() {
+#[tokio::test]
+async fn invalid_prevotes_leader() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {
@@ -1523,9 +1555,11 @@ fn invalid_prevotes_leader() {
     };
     assert!(config.chain.stake_epochs > 1);
 
-    Sandbox::start(config, |mut s| {
+    let mut sb = Sandbox::new(config);
+    let mut part = sb.partition();
+    async {
         // Create one micro block.
-        s.poll();
+        s.poll().await;
         s.skip_micro_block();
 
         let topic = crate::CONSENSUS_TOPIC;
@@ -1546,7 +1580,7 @@ fn invalid_prevotes_leader() {
             node.network_service
                 .receive_broadcast(topic, proposal.clone());
         }
-        s.poll();
+        s.poll().await;
 
         let mut r = s.split(&[leader_pk]);
         let leader_skey = r.parts.0.first().node_service.network_skey.clone();
@@ -1563,7 +1597,7 @@ fn invalid_prevotes_leader() {
         }
         info.prevotes_len += 1;
 
-        r.parts.1.poll();
+        r.parts.1.poll().await;
         // skip first node, because it work as byzantine
         for node in r.parts.1.iter_mut().skip(1) {
             assert_consensus_state(&info, &mut node.node_service);
@@ -1576,14 +1610,14 @@ fn invalid_prevotes_leader() {
                 node.network_service.receive_broadcast(topic, msg.clone());
             }
         }
-        r.parts.1.poll();
+        r.parts.1.poll().await;
 
         // skip first node, because it work as byzantine
         for node in r.parts.1.iter_mut() {
             assert_consensus_state(&info, &mut node.node_service);
         }
 
-        s.poll();
+        s.poll().await;
         s.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     });
 }
@@ -1594,3 +1628,4 @@ fn invalid_prevotes_leader() {
 // TODO:
 // Test Keep some validator locked on round
 // Test multiple count of precommits for locked round (should save precommit from previuous round?).
+*/

@@ -28,8 +28,9 @@ mod sandbox;
 
 #[cfg(test)]
 extern crate tokio;
-/*
+
 mod consensus;
+/*
 mod integration;
 mod microblocks;
 */

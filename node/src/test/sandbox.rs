@@ -20,6 +20,7 @@
 // SOFTWARE.
 
 use std::time::Duration;
+use std::ops::{Index, IndexMut};
 use std::collections::HashSet;
 
 use rand_isaac::IsaacRng;
@@ -47,6 +48,7 @@ use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 
+#[derive(Clone)]
 pub struct SandboxConfig {
     pub node: NodeConfig,
     pub chain: ChainConfig,
@@ -283,7 +285,7 @@ impl<'p> Partition<'p> {
 
         filter_nodes.push(leader_pk);
         let mut r = part.split(&filter_nodes);
-        let leader = &mut r.parts.0.node_mut(&leader_pk).unwrap();
+        let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
         leader.handle_vdf();
         leader.node_service.step().await;
         let b1: Block = leader
@@ -412,8 +414,8 @@ impl<'p> Partition<'p> {
         ()
     }
 
-    pub fn num_nodes(&self) -> usize {
-        self.iter().count()
+    pub fn len(&self) -> usize {
+        self.nodes.len()
     }
 
     //TODO: This temporary solution is used to emulate broadcast in network. For example
@@ -473,10 +475,10 @@ impl<'p> Partition<'p> {
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
         let leader_pk = chain.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
-        self.node_mut(&leader_pk).unwrap().handle_vdf();
+        self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.poll().await;
         self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        let leader = self.node_mut(&leader_pk).unwrap();
+        let leader = self.find_mut(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -552,7 +554,7 @@ impl<'p> Partition<'p> {
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = chain.leader();
-        let leader_node = self.node_mut(&leader_pk).unwrap();
+        let leader_node = self.find_mut(&leader_pk).unwrap();
         // Check for a proposal from the leader.
         let proposal: ConsensusMessage = leader_node
             .network_service
@@ -570,7 +572,7 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         // Check for pre-votes.
-        let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
+        let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
             let prevote: ConsensusMessage =
                 node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
@@ -582,7 +584,7 @@ impl<'p> Partition<'p> {
         }
 
         // Send these pre-votes to nodes.
-        for i in 0..self.num_nodes() {
+        for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
                     node.network_service
@@ -593,7 +595,7 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         // Check for pre-commits.
-        let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.num_nodes());
+        let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
             let precommit: ConsensusMessage =
                 node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
@@ -614,7 +616,7 @@ impl<'p> Partition<'p> {
         }
 
         // Send these pre-commits to nodes.
-        for i in 0..self.num_nodes() {
+        for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
                     node.network_service
@@ -625,12 +627,12 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
-        let mut restakes: Vec<Transaction> = Vec::with_capacity(self.num_nodes());
+        let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
         // Process re-stakes.
         if restake_epoch {
             debug!("Re-stake should happen in this epoch: {}", epoch);
             let restake: Transaction = self
-                .node_mut(&leader_pk)
+                .find_mut(&leader_pk)
                 .unwrap()
                 .network_service
                 .get_broadcast(crate::TX_TOPIC);
@@ -640,7 +642,7 @@ impl<'p> Partition<'p> {
 
         // Receive sealed block.
         let block: Block = self
-            .node_mut(&leader_pk)
+            .find_mut(&leader_pk)
             .unwrap()
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -705,7 +707,7 @@ impl<'p> Partition<'p> {
         trace!("First leader pk = {}", leader_pk);
 
         for i in 0..idx {
-            let node = self.node_ref(&leader_pk)?;
+            let node = self.find(&leader_pk)?;
             let vrf = node.create_vrf_from_seed(random, view_change);
             random = vrf.rand;
             view_change = 0;
@@ -738,7 +740,7 @@ impl<'p> Partition<'p> {
     }
 
     /// Return node for publickey.
-    pub fn node_mut<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
+    pub fn find_mut<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
     where
         'p: 'a,
     {
@@ -747,16 +749,37 @@ impl<'p> Partition<'p> {
     }
 
     /// Return node for publickey.
-    pub fn node_ref<'a>(&'a self, pk: &pbc::PublicKey) -> Option<&'a NodeSandbox>
+    pub fn find<'a>(&'a self, pk: &pbc::PublicKey) -> Option<&'a NodeSandbox>
     where
         'p: 'a,
     {
         self.iter()
             .find(|node| node.node_service.state().network_pkey == *pk)
     }
+
+    pub fn index(&self, ix: usize) -> &NodeSandbox {
+        &self.nodes[ix]
+    }
+
+    pub fn index_mut(&mut self, ix: usize) -> &mut NodeSandbox {
+        &mut self.nodes[ix]
+    }
 }
 
-#[allow(unused)]
+impl<'a> Index<usize> for Partition<'a> {
+    type Output = NodeSandbox;
+
+    fn index(&self, ix: usize) -> &Self::Output {
+        &self.nodes[ix]
+    }
+}
+
+impl<'a> IndexMut<usize> for Partition<'a> {
+    fn index_mut(&mut self, ix: usize) -> &mut Self::Output {
+        &mut self.nodes[ix]
+    }
+}
+
 pub struct PartitionGuard<'p> {
     pub parts: (Partition<'p>, Partition<'p>),
 }

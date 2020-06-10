@@ -481,6 +481,11 @@ impl NodeService {
         }
     }
 
+    pub async fn poll(&mut self) {
+        self.step().await;
+        self.handle_outgoing().await;
+    }
+
     pub async fn step(&mut self) {
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.

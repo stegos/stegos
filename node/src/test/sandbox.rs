@@ -228,6 +228,24 @@ impl<'p> Partition<'p> {
             .expect("First node not found in the sandbox.")
     }
 
+    /// Return node for publickey.
+    pub fn find_mut<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
+    where
+        'p: 'a,
+    {
+        self.iter_mut()
+            .find(|node| node.node_service.state().network_pkey == *pk)
+    }
+
+    /// Return node for publickey.
+    pub fn find<'a>(&'a self, pk: &pbc::PublicKey) -> Option<&'a NodeSandbox>
+    where
+        'p: 'a,
+    {
+        self.iter()
+            .find(|node| node.node_service.state().network_pkey == *pk)
+    }
+
     /// Iterator among all nodes, except one of
     pub fn iter_except<'a>(&'a mut self, excl: &'a [pbc::PublicKey]) -> impl Iterator<Item = &'a mut NodeSandbox> 
     where
@@ -738,32 +756,6 @@ impl<'p> Partition<'p> {
             function(&node.node_service)
         }
     }
-
-    /// Return node for publickey.
-    pub fn find_mut<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
-    where
-        'p: 'a,
-    {
-        self.iter_mut()
-            .find(|node| node.node_service.state().network_pkey == *pk)
-    }
-
-    /// Return node for publickey.
-    pub fn find<'a>(&'a self, pk: &pbc::PublicKey) -> Option<&'a NodeSandbox>
-    where
-        'p: 'a,
-    {
-        self.iter()
-            .find(|node| node.node_service.state().network_pkey == *pk)
-    }
-
-    pub fn index(&self, ix: usize) -> &NodeSandbox {
-        &self.nodes[ix]
-    }
-
-    pub fn index_mut(&mut self, ix: usize) -> &mut NodeSandbox {
-        &mut self.nodes[ix]
-    }
 }
 
 impl<'a> Index<usize> for Partition<'a> {
@@ -860,12 +852,20 @@ impl NodeSandbox {
         &self.node_service.state().chain
     }
 
+    pub fn state(&self) -> &NodeState {
+        self.node_service.state()
+    }
+
     pub fn keys(&self) -> (&pbc::PublicKey, &pbc::SecretKey) {
         let state = self.node_service.state();
         (
             &state.network_pkey,
             &state.network_skey,
         )
+    }
+
+    pub async fn poll(&mut self) {
+        self.node_service.poll().await;
     }
 
     #[allow(dead_code)]

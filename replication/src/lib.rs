@@ -435,7 +435,7 @@ impl Replication {
 
         if connecting_nodes < needed_connections + 1 {
             debug!(
-                "Background connections count is not enought: needed={}, available={}",
+                "Not enough background connections: needed={}, available={}",
                 needed_connections, connecting_nodes
             );
             let potential_upstreams: Vec<PeerId> = self.registered_peers();

@@ -305,7 +305,7 @@ impl<'p> Partition<'p> {
         let mut r = part.split(&filter_nodes);
         let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
         leader.handle_vdf();
-        leader.node_service.step().await;
+        leader.node_service.poll().await;
         let b1: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -429,7 +429,6 @@ impl<'p> Partition<'p> {
         if let Some(auditor) = self.auditor_mut() {
             auditor.node_service.step().await;
         }
-        ()
     }
 
     pub fn len(&self) -> usize {
@@ -890,9 +889,4 @@ impl NodeSandbox {
         self.vdf_execution.try_produce();
         self.vdf_execution = VDFExecution::WaitForVDF;
     }
-
-    // pub async fn poll(&mut self) {
-    //     format!("node:{}", self.node_service.network_pkey());
-    //     self.node_service.poll()
-    // }
 }

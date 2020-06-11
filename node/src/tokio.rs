@@ -476,17 +476,11 @@ impl NodeService {
 
     pub async fn start(mut self) {
         loop {
-            self.step().await;
-            self.handle_outgoing().await;
+            self.poll().await;
         }
     }
 
     pub async fn poll(&mut self) {
-        self.step().await;
-        self.handle_outgoing().await;
-    }
-
-    pub async fn step(&mut self) {
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -621,6 +615,8 @@ impl NodeService {
             }
         }
 
+        self.handle_outgoing();
+
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
                 chain_readers.push(reader)
@@ -628,7 +624,7 @@ impl NodeService {
         }
     }
 
-    async fn handle_outgoing(&mut self) {
+    fn handle_outgoing(&mut self) {
         for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
             trace!("Outgoing event = {:?}", event);
             let result = match event {

@@ -19,38 +19,40 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::time::Duration;
-use std::ops::{Index, IndexMut};
-use std::collections::HashSet;
-use futures::stream::FuturesUnordered;
-use futures::select;
-use futures::StreamExt;
+use futures::task::Poll;
+use futures::future;
+use futures::future::FutureExt;
+use futures::pin_mut;
 
-use rand_isaac::IsaacRng;
-use rand_core::SeedableRng;
+use std::collections::HashSet;
+use std::ops::{Index, IndexMut};
+use std::time::Duration;
+
 use rand::{thread_rng, Rng};
+use rand_core::SeedableRng;
+use rand_isaac::IsaacRng;
 use tempdir::TempDir;
 //use stegos_crypto::pbc;
+use stegos_crypto::pbc::PublicKey;
+use stegos_crypto::pbc::VRF;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
-use stegos_crypto::pbc::VRF;
-use stegos_crypto::pbc::PublicKey;
 
-use crate::*;
 use super::logger;
 use super::VDFExecution;
+use crate::*;
 use log::*;
 pub use stegos_blockchain::test::*;
 
 use assert_matches::assert_matches;
 //use log::*;
 //use std::time::Duration;
+use super::tokio;
 pub use stegos_blockchain::test::*;
 use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
-
 #[derive(Clone)]
 pub struct SandboxConfig {
     pub node: NodeConfig,
@@ -90,6 +92,7 @@ impl Sandbox {
             Some("warn") => Some(Level::Warn),
             _ => Some(Level::Trace),
         };
+        tokio::time::pause();
 
         if let Some(level) = level {
             let _ = logger::init_with_level(level);
@@ -145,7 +148,7 @@ impl Sandbox {
         };
 
         for node in sandbox.nodes.iter() {
-            let chain = &node.node_service.state().chain; 
+            let chain = &node.node_service.state().chain;
             assert_eq!(chain.epoch(), 1);
             assert_eq!(chain.offset(), 0);
         }
@@ -191,7 +194,7 @@ impl<'p> Partition<'p> {
             arr.push(item.deref_mut())
         }
         arr.into_iter()
-    }    
+    }
 
     pub fn iter(&self) -> impl Iterator<Item = &NodeSandbox> {
         self.reborrow_nodes()
@@ -250,22 +253,21 @@ impl<'p> Partition<'p> {
     }
 
     /// Iterator among all nodes, except one of
-    pub fn iter_except<'a>(&'a mut self, excl: &'a [pbc::PublicKey]) -> impl Iterator<Item = &'a mut NodeSandbox> 
+    pub fn iter_except<'a>(
+        &'a mut self,
+        excl: &'a [pbc::PublicKey],
+    ) -> impl Iterator<Item = &'a mut NodeSandbox>
     where
-        'p: 'a
+        'p: 'a,
     {
         let keys: HashSet<&pbc::PublicKey> = excl.iter().collect();
-        self.iter_mut().filter(move |node| {
-            !keys.contains(&node.node_service.state().network_pkey)
-        })
+        self.iter_mut()
+            .filter(move |node| !keys.contains(&node.node_service.state().network_pkey))
     }
 
-    pub fn split<'a>(
-        &'a mut self,
-        first_partitions_nodes: &[pbc::PublicKey],
-    ) -> PartitionGuard<'a> 
-    where 
-        'p: 'a
+    pub fn split<'a>(&'a mut self, first_partitions_nodes: &[pbc::PublicKey]) -> PartitionGuard<'a>
+    where
+        'p: 'a,
     {
         let divider = |key| {
             first_partitions_nodes
@@ -298,9 +300,9 @@ impl<'p> Partition<'p> {
         part: &'a mut Partition<'a>,
         leader_pk: PublicKey,
         mut filter_nodes: Vec<PublicKey>,
-    ) -> PartitionGuard<'a> 
+    ) -> PartitionGuard<'a>
     where
-        'p: 'a
+        'p: 'a,
     {
         part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
@@ -360,10 +362,7 @@ impl<'p> Partition<'p> {
         let node = self.first();
         let chain = &node.node_service.state().chain;
         let epoch = chain.epoch();
-        let awards = chain
-            .epoch_info(epoch - 1)
-            .unwrap()
-            .unwrap();
+        let awards = chain.epoch_info(epoch - 1).unwrap().unwrap();
         let offset = chain.offset();
         let last_block = chain.last_block_hash();
         for node in self.iter() {
@@ -371,27 +370,15 @@ impl<'p> Partition<'p> {
             trace!("Checking node = {:?}", node.validator_id());
 
             assert_eq!(chain.epoch(), epoch);
-            assert_eq!(
-                chain
-                    .epoch_info(epoch - 1)
-                    .unwrap()
-                    .unwrap(),
-                awards
-            );
+            assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
             assert_eq!(chain.offset(), offset);
             assert_eq!(chain.last_block_hash(), last_block);
         }
 
         if let Some(auditor) = self.auditor() {
-            let chain = &auditor.node_service.state().chain; 
+            let chain = &auditor.node_service.state().chain;
             assert_eq!(chain.epoch(), epoch);
-            assert_eq!(
-                chain
-                    .epoch_info(epoch - 1)
-                    .unwrap()
-                    .unwrap(),
-                awards
-            );
+            assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
             assert_eq!(chain.offset(), offset);
             assert_eq!(chain.last_block_hash(), last_block);
         }
@@ -421,19 +408,36 @@ impl<'p> Partition<'p> {
 
     /// poll each node for updates.
     pub async fn poll(&mut self) {
-        let mut f: FuturesUnordered<_> = self.nodes.iter_mut().map(|x| x.poll()).collect();
-        if let Some(auditor) = &mut self.auditor {
-            use std::ops::DerefMut;
-            f.push(auditor.deref_mut().poll())
-        }
-        let mut i = 0;
-        loop {
-            trace!(">>> i = {}", i);
-            select! {
-                _ = f.select_next_some() => (),
-                complete => break,
+
+        for node in self.nodes.iter_mut() {
+            // poll future one time
+            // - if it pending, then it waits for external event, we can drop it for now.
+            // - if it complete, then it processed some event, and we can recreate it for new event
+            loop {
+                let future = node.poll();
+
+                pin_mut!(future);
+                let result = futures::poll!(future);
+
+                if result == Poll::Pending {
+                    break;
+                }
             }
-            i += 1;
+        }
+
+        if let Some(auditor) = &mut self.auditor {
+        
+            loop {
+
+                let future = auditor.poll();
+                pin_mut!(future);
+
+                let result = futures::poll!(future);
+                
+                if result == Poll::Pending {
+                    break;
+                }
+            }
         }
     }
 
@@ -525,9 +529,7 @@ impl<'p> Partition<'p> {
         let epoch = chain.epoch();
         let offset = chain.offset();
         assert!(offset > 0);
-        let block = chain
-            .micro_block(epoch, offset - 1)
-            .unwrap();
+        let block = chain.micro_block(epoch, offset - 1).unwrap();
         let chain_info = ChainInfo {
             epoch: block.header.epoch,
             offset: block.header.offset,
@@ -537,17 +539,13 @@ impl<'p> Partition<'p> {
         for node in self.iter() {
             // chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey
             let validator_id = node.validator_id().unwrap() as u32;
-            let msg =
-                ViewChangeMessage::new(chain_info, validator_id, &state.network_skey);
+            let msg = ViewChangeMessage::new(chain_info, validator_id, &state.network_skey);
             view_changes.push(msg)
         }
         let signatures = view_changes
             .iter()
             .map(|msg| (msg.validator_id, &msg.signature));
-        let proof = ViewChangeProof::new(
-            signatures,
-            chain.validators().len(),
-        );
+        let proof = ViewChangeProof::new(signatures, chain.validators().len());
         let view_change_proof = SealedViewChangeProof {
             chain: chain_info,
             proof,
@@ -691,7 +689,7 @@ impl<'p> Partition<'p> {
 
         // Check state of all nodes.
         for node in self.iter() {
-            let chain = &node.node_service.state().chain; 
+            let chain = &node.node_service.state().chain;
             assert_eq!(chain.epoch(), epoch + 1);
             assert_eq!(chain.offset(), 0);
             assert_eq!(chain.last_macro_block_hash(), block_hash);
@@ -735,9 +733,7 @@ impl<'p> Partition<'p> {
             random = vrf.rand;
             view_change = 0;
 
-            let mut election = chain
-                .election_result()
-                .clone();
+            let mut election = chain.election_result().clone();
             election.random = vrf;
             leader_pk = election.select_leader(view_change);
             trace!("Leader {} pk = {}", i + 1, leader_pk);
@@ -863,10 +859,7 @@ impl NodeSandbox {
 
     pub fn keys(&self) -> (&pbc::PublicKey, &pbc::SecretKey) {
         let state = self.node_service.state();
-        (
-            &state.network_pkey,
-            &state.network_skey,
-        )
+        (&state.network_pkey, &state.network_skey)
     }
 
     pub async fn poll(&mut self) {

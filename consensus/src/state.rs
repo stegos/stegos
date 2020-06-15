@@ -755,18 +755,20 @@ impl Consensus {
         &self,
         accepts: &BTreeMap<pbc::PublicKey, pbc::Signature>,
     ) -> (bool, i64) {
-        trace!(
-            "{}({}:{}): check for supermajority: accepts={:?}, total={:?}",
-            self.state.name(),
-            self.epoch,
-            self.round,
-            accepts.len(),
-            self.validators.len()
-        );
         let mut stake = 0;
         for (pk, _sign) in accepts {
             stake += self.validators.get(pk).expect("vote from validator");
         }
+        trace!(
+            "{}({}:{}): check for supermajority: accepted={:?}, total={:?}, ({})/({})",
+            self.state.name(),
+            self.epoch,
+            self.round,
+            accepts.len(),
+            self.validators.len(),
+            stake,
+            self.total_slots
+        );
         (check_supermajority(stake, self.total_slots), stake)
     }
 }

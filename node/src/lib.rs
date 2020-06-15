@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-#![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -30,10 +30,10 @@ mod error;
 mod mempool;
 pub mod metrics;
 pub mod protos;
-mod tokio;
-mod validation;
 #[cfg(test)]
 mod test;
+mod tokio;
+mod validation;
 
 pub use self::tokio::{Node, NodeService};
 pub use crate::api::*;
@@ -46,7 +46,7 @@ use futures::channel::oneshot;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
+use ::tokio::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{
@@ -1535,10 +1535,7 @@ impl NodeState {
     fn propose_macro_block(&mut self) -> Result<(), Error> {
         let timestamp = self.next_block_timestamp();
         let consensus = match &mut self.validation {
-            MacroBlockValidator {
-                consensus,
-                ..
-            } => consensus,
+            MacroBlockValidator { consensus, .. } => consensus,
             _ => panic!("Expected MacroBlockValidator state"),
         };
         assert!(self.chain.is_epoch_full());

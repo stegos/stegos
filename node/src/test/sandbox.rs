@@ -62,7 +62,12 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> SandboxConfig {
         SandboxConfig {
-            node: Default::default(),
+            node: NodeConfig {
+                micro_block_timeout: Duration::from_secs(1),
+                macro_block_timeout: Duration::from_secs(2),
+                sync_change_timeout: Duration::from_secs(3),
+                ..Default::default()
+            },
             chain: Default::default(),
             num_nodes: 4,
             log_level: Level::Trace,

@@ -22,6 +22,9 @@
 use std::time::Duration;
 use std::ops::{Index, IndexMut};
 use std::collections::HashSet;
+use futures::stream::FuturesUnordered;
+use futures::select;
+use futures::StreamExt;
 
 use rand_isaac::IsaacRng;
 use rand_core::SeedableRng;
@@ -418,16 +421,19 @@ impl<'p> Partition<'p> {
 
     /// poll each node for updates.
     pub async fn poll(&mut self) {
-        for node in self.iter_mut() {
-            info!(
-                "============ POLLING node={:?} ============",
-                node.validator_id()
-            );
-            node.node_service.step().await;
+        let mut f: FuturesUnordered<_> = self.nodes.iter_mut().map(|x| x.poll()).collect();
+        if let Some(auditor) = &mut self.auditor {
+            use std::ops::DerefMut;
+            f.push(auditor.deref_mut().poll())
         }
-        info!("============ POLLING auditor ============");
-        if let Some(auditor) = self.auditor_mut() {
-            auditor.node_service.step().await;
+        let mut i = 0;
+        loop {
+            trace!(">>> i = {}", i);
+            select! {
+                _ = f.select_next_some() => (),
+                complete => break,
+            }
+            i += 1;
         }
     }
 

@@ -23,7 +23,8 @@
 
 use super::*;
 use assert_matches::assert_matches;
-use tokio::time::delay_for;
+use tokio;
+use super::delay_for;
 
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};
@@ -55,7 +56,8 @@ async fn smoke_test() {
             }
             p.skip_macro_block().await;
         }
-    }.await
+    }
+    .await
 }
 
 #[tokio::test]
@@ -100,8 +102,7 @@ async fn autocommit() {
             let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
             assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
             for j in 0..p.len() {
-                p[j]
-                    .network_service
+                p[j].network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
@@ -111,8 +112,7 @@ async fn autocommit() {
             let precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
             assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
             for j in 0..p.len() {
-                p[j]
-                    .network_service
+                p[j].network_service
                     .receive_broadcast(topic, precommit.clone());
             }
         }
@@ -165,7 +165,8 @@ async fn autocommit() {
 
         p.poll().await;
         p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
-    }.await;
+    }
+    .await;
 }
 
 #[tokio::test]
@@ -225,8 +226,7 @@ async fn round() {
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, proposal.block_hash);
             for j in 0..p.len() {
-                p[j]
-                    .network_service
+                p[j].network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
@@ -239,8 +239,7 @@ async fn round() {
             assert_eq!(precommit.round, round);
             assert_eq!(precommit.block_hash, proposal.block_hash);
             for j in 0..p.len() {
-                p[j]
-                    .network_service
+                p[j].network_service
                     .receive_broadcast(topic, precommit.clone());
             }
         }
@@ -266,7 +265,8 @@ async fn round() {
             assert_eq!(node.state().chain.epoch(), epoch + 1);
             assert_eq!(node.state().chain.last_block_hash(), block_hash);
         }
-    }.await
+    }
+    .await
 }
 
 // check if rounds started at correct timeout
@@ -338,7 +338,8 @@ async fn multiple_rounds() {
         let leader_node = p.find_mut(&leader_pk).unwrap();
         let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-    }.await
+    }
+    .await
 }
 
 // check if locked node will rebroadcast propose.
@@ -395,7 +396,8 @@ async fn lock() {
             delay_for(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
-            ).await;
+            )
+            .await;
         }
         assert!(ready);
         info!("Starting test.");
@@ -427,8 +429,7 @@ async fn lock() {
             assert_eq!(prevote.round, round);
             assert_eq!(prevote.block_hash, leader_proposal.block_hash);
             for j in 0..p.len() {
-                p[j]
-                    .network_service
+                p[j].network_service
                     .receive_broadcast(topic, prevote.clone());
             }
         }
@@ -440,7 +441,8 @@ async fn lock() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
-        ).await;
+        )
+        .await;
 
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
@@ -459,7 +461,8 @@ async fn lock() {
         assert_eq!(proposal.round, leader_proposal.round + 1);
         assert_eq!(proposal.block_hash, leader_proposal.block_hash);
         p.poll().await;
-    }.await
+    }
+    .await
 }
 
 #[tokio::test]
@@ -514,7 +517,8 @@ async fn lock_with_second_propose() {
             delay_for(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
-            ).await;
+            )
+            .await;
         }
         assert!(ready);
         info!("Starting test.");
@@ -566,7 +570,8 @@ async fn lock_with_second_propose() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
-        ).await;
+        )
+        .await;
 
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
@@ -591,7 +596,8 @@ async fn lock_with_second_propose() {
 
         // assert that no unprocessed prevotes are received for this block
         p.poll().await;
-    }.await
+    }
+    .await
 }
 
 /// Send pack of prevotes in hope that node will ignore messages.
@@ -648,7 +654,8 @@ async fn pack_of_prevotes() {
             delay_for(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
-            ).await;
+            )
+            .await;
         }
 
         assert!(ready);
@@ -713,13 +720,15 @@ async fn pack_of_prevotes() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
-        ).await;
+        )
+        .await;
 
         info!("====== Waiting for macroblock timeout. =====");
         p.poll().await;
 
         p.filter_broadcast(&[topic]);
-    }.await
+    }
+    .await
 }
 
 #[tokio::test]
@@ -774,7 +783,8 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
             delay_for(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
-            ).await;
+            )
+            .await;
         }
         assert!(ready);
         info!("Starting test.");
@@ -824,7 +834,8 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
-        ).await;
+        )
+        .await;
 
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
         info!("====== Waiting for macroblock timeout. =====");
@@ -892,13 +903,15 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 2),
-        ).await;
+        )
+        .await;
 
         info!("====== Waiting for macroblock timeout. =====");
         p.poll().await;
 
         p.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 /// Send pack of prevotes in hope that node will ignore messages.
@@ -955,7 +968,8 @@ async fn pack_of_prevotes_and_precommits() {
             delay_for(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
-            ).await;
+            )
+            .await;
         }
 
         assert!(ready);
@@ -1027,13 +1041,15 @@ async fn pack_of_prevotes_and_precommits() {
         delay_for(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
-        ).await;
+        )
+        .await;
 
         info!("====== Waiting for macroblock timeout. =====");
         p.poll().await;
 
         p.filter_broadcast(&[topic, SEALED_BLOCK_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 #[tokio::test]
@@ -1109,7 +1125,8 @@ async fn out_of_order_micro_block() {
         leader_node
             .network_service
             .filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 fn resign_msg(msg: ConsensusMessage, key: &SecretKey) -> ConsensusMessage {
@@ -1339,7 +1356,8 @@ async fn invalid_proposes() {
         let round = p.first_mut().state().chain.view_change();
         invalid_proposes_inner(&mut p, round).await;
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 #[tokio::test]
@@ -1377,7 +1395,8 @@ async fn invalid_proposes_on_2nd_round() {
         let round = p.first_mut().state().chain.view_change() + 1;
         invalid_proposes_inner(&mut p, round).await;
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 // Test [multiple leaders on proposes]
@@ -1473,7 +1492,8 @@ async fn multiple_proposes() {
         });
 
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 // Test [multiple message on prevote]
@@ -1553,7 +1573,8 @@ async fn invalid_prevotes() {
 
         p.poll().await;
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 // Test [multiple message on prevote (from leader)]
@@ -1633,7 +1654,8 @@ async fn invalid_prevotes_leader() {
 
         p.poll().await;
         p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    }.await
+    }
+    .await
 }
 
 // Test [multiple message on precomit]

@@ -30,12 +30,12 @@ use crate::{
 };
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
+use futures::stream::SelectAll;
 use futures::{
     future::{self, Fuse},
     stream,
 };
 use futures::{select, task::Poll, FutureExt, SinkExt, Stream, StreamExt};
-use futures::stream::SelectAll;
 use log::*;
 use std::pin::Pin;
 use std::thread;
@@ -46,7 +46,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Interval, Delay};
+use tokio::time::{self, Delay, Interval};
 
 // ----------------------------------------------------------------
 // Public API.
@@ -185,7 +185,6 @@ pub struct NodeService {
     macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
     micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
     micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
-
 }
 
 impl NodeService {
@@ -278,7 +277,7 @@ impl NodeService {
             macro_propose_timer: Box::pin(Fuse::terminated()),
             macro_view_change_timer: Box::pin(Fuse::terminated()),
             micro_propose_timer: Box::pin(Fuse::terminated()),
-            micro_view_change_timer: Box::pin(Fuse::terminated()),        
+            micro_view_change_timer: Box::pin(Fuse::terminated()),
         };
 
         Ok((service, node))
@@ -296,7 +295,7 @@ impl NodeService {
 
     #[cfg(test)]
     pub fn network(&self) -> &Network {
-        return &self.network
+        return &self.network;
     }
 
     /// Notify all subscribers about new event.
@@ -481,6 +480,7 @@ impl NodeService {
     }
 
     pub async fn poll(&mut self) {
+        self.handle_outgoing();
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -610,12 +610,10 @@ impl NodeService {
                     let event = NodeIncomingEvent::DecodedBlock(block);
                     self.state.handle_event(event);
                 }
-                Poll::Ready(None) => return (), // Shutdown main feature (replication failure).
+                Poll::Ready(None) => panic!(), // Shutdown main feature (replication failure).
                 Poll::Pending => break 'inner,
             }
         }
-
-        self.handle_outgoing();
 
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
@@ -628,9 +626,7 @@ impl NodeService {
         for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
             trace!("Outgoing event = {:?}", event);
             let result = match event {
-                NodeOutgoingEvent::FacilitatorChanged { .. } => { 
-                    Ok(())
-                }
+                NodeOutgoingEvent::FacilitatorChanged { .. } => Ok(()),
                 NodeOutgoingEvent::ChangeUpstream {} => {
                     self.replication.change_upstream(true);
                     Ok(())
@@ -644,7 +640,8 @@ impl NodeService {
                     self.network.send(dest, &topic, data)
                 }
                 NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                    self.macro_propose_timer.set(time::delay_for(duration).fuse());
+                    self.macro_propose_timer
+                        .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
                     self.micro_view_change_timer.set(Fuse::terminated());
                     Ok(())
@@ -654,7 +651,8 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
-                    self.macro_view_change_timer.set(time::delay_for(duration).fuse());
+                    self.macro_view_change_timer
+                        .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
                     self.micro_view_change_timer.set(Fuse::terminated());
                     Ok(())
@@ -683,15 +681,14 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
-                    self.micro_view_change_timer.set(time::delay_for(duration).fuse());
+                    self.micro_view_change_timer
+                        .set(time::delay_for(duration).fuse());
                     self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())
                 }
-                NodeOutgoingEvent::ReplicationBlock { .. } => { 
-                    Ok(())
-                }
+                NodeOutgoingEvent::ReplicationBlock { .. } => Ok(()),
                 /*
                 NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
                     // TODO: refator on_block to be async fn.

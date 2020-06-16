@@ -32,11 +32,11 @@ extern crate tokio;
 mod consensus;
 /*
 mod integration;
-mod microblocks;
 */
+mod microblocks;
 
-use crate::*;
 use crate::CHAIN_LOADER_TOPIC;
+use crate::*;
 use log::*;
 pub use sandbox::*;
 pub use stegos_blockchain::test::*;
@@ -101,7 +101,8 @@ pub async fn precondition_n_different_block_leaders(s: &mut Sandbox, different_l
             leaders
         );
         check_unique(leaders)
-    }).await;
+    })
+    .await;
 }
 
 pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
@@ -115,7 +116,8 @@ pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, differ
             leaders
         );
         check_unique(leaders)
-    }).await;
+    })
+    .await;
 }
 
 /// Skip blocks until condition not true
@@ -143,10 +145,23 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
     original_len == array.len()
 }
 
+async fn delay_for(d: Duration) {
+
+    tokio::time::advance(d).await;
+    tokio::task::yield_now().await;
+}
+
 // tests
 #[cfg(test)]
 mod test_framework {
     use super::*;
+    use tokio::time::{Duration};
+    use futures::pin_mut;
+    use futures::future::FutureExt;
+    use futures::future;
+    use futures::task::Poll;
+    use assert_matches::assert_matches;
+
     #[tokio::test]
     async fn test_partition() {
         let config: SandboxConfig = Default::default();
@@ -160,6 +175,24 @@ mod test_framework {
             assert_eq!(r.parts.0.nodes.len(), 1);
             assert_eq!(r.parts.1.nodes.len(), 3);
             part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        }.await
+        }
+        .await
+    }
+
+
+    #[tokio::test]
+    async fn test_fake_timer() {
+        let timer = Duration::from_secs(30);
+        tokio::time::pause();
+        
+        let mut future = tokio::time::delay_for(timer);
+
+        let result = futures::poll!(&mut future);
+        assert_matches!(result, Poll::Pending);
+        delay_for(timer).await;
+        
+        let result = futures::poll!(future);
+
+        assert_matches!(result, Poll::Ready(_));
     }
 }

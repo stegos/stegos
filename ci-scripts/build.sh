@@ -304,7 +304,11 @@ do_test() {
     cargo test --all
 }
 
-do_release() {
+do_build_release() {
+    #
+    # Set enviroment variables
+    #
+
     do_builddep
     extension=""
     dylib="libstegos.so"
@@ -343,43 +347,65 @@ do_release() {
         exit 1
         ;;
     esac
+
+    #
+    # Build release
+    #
+
     rustup target add $target
     cargo build --bins --lib --release --target $target
     ls -lah target/$target/release
-    mkdir -p release
-    for bin in stegos stegosd bootstrap; do
-        mv target/$target/release/$bin$extension release/$bin-$1.debug$extension
-        $strip -S release/$bin-$1.debug$extension -o release/$bin-$1$extension
-        zip $bin-$1 release/$bin-$1$extension
-    done
-    mv target/$target/release/$dylib release/$dylib.debug
-    $strip -S release/$dylib.debug -o release/$dylib
 
+    #
+    # Create generic artifacts
+    #
+
+    mkdir -p artifacts
+    for bin in stegos stegosd bootstrap; do
+        mv target/$target/release/$bin$extension artifacts/$bin.debug$extension
+        $strip -S artifacts/$bin.debug$extension -o artifacts/$bin$extension
+    done
+    mv target/$target/release/$dylib artifacts/$dylib.debug
+    $strip -S artifacts/$dylib.debug -o artifacts/$dylib
+
+
+    ls -lah artifacts
+
+    mkdir -p release
     case $1 in
+    linux-x64 | macos-x64)
+        files=()
+        for bin in stegos stegosd; do
+            files+=("$bin$extension")
+        done
+        tar -czvf release/stegos.tar.gz -C artifacts "${files[@]}"
+        ;;
     win-x64)
-        for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
-            cp /mingw64/bin/lib$lib.dll ./release/
+        for bin in stegos stegosd; do
+            zip release/stegos.zip -j artifacts/$bin$extension
         done
 
-        for bin in stegos stegosd; do
-            pushd release
-            zip $bin-$1 $bin-$1$extension
-            for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
-                zip $bin-$1 lib$lib.dll
-            done
-            popd
+        for lib in gcc_s_seh-1 lz4 zstd snappy stdc++-6 winpthread-1; do
+            zip release/stegos.zip -j /mingw64/bin/lib$lib.dll
         done
         ;;
     android-x64)
-        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so ./release
+        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/x86_64-linux-android/libc++_shared.so ./artifacts
+        tar -czvf release/libstegos.tar.gz -C artifacts $dylib libc++_shared.so
 
         ;;
     android-aarch64)
-        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./release
+
+        cp $ANDROID_SDK_DIR/ndk-bundle/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so ./artifacts
+        tar -czvf release/libstegos.tar.gz  -C artifacts $dylib libc++_shared.so
         ;;
     *)
+        echo 2>&1 "Unknown platform: $1"
+        exit 1
         ;;
     esac
+
+    
     ls -lah release
 }
 
@@ -444,7 +470,7 @@ do_docker() {
 }
 
 case $1 in
-builddep | androiddep | docker | docker_base | build | test | install | coverage | coverage_push | release)
+builddep | androiddep | docker | docker_base | build | test | install | coverage | coverage_push | build_release)
     set -xe
     do_$1 $2
     ;;

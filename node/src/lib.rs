@@ -85,27 +85,27 @@ pub(crate) const CHAIN_LOADER_TOPIC: &str = "chain-loader";
 //
 macro_rules! strace {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
-        log::log!(log::Level::Trace, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+        log::log!(log::Level::Trace, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
 macro_rules! sdebug {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
-        log::log!(log::Level::Debug, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+        log::log!(log::Level::Debug, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
 macro_rules! sinfo {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
-        log::log!(log::Level::Info, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+        log::log!(log::Level::Info, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
 macro_rules! swarn {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
-        log::log!(log::Level::Warn, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+        log::log!(log::Level::Warn, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
 macro_rules! serror {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
-        log::log!(log::Level::Error, concat!("[{}:{}:{}:{}] ", $fmt), $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
+        log::log!(log::Level::Error, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
 
@@ -997,7 +997,7 @@ impl NodeState {
         let outputs_len: usize = block.transactions.iter().map(|tx| tx.txouts().len()).sum();
         let txs_len = block.transactions.len();
         sdebug!(self,
-            "Validating a micro block: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
+            "Validating microblock: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
             epoch, offset, &hash, inputs_len, outputs_len, txs_len
         );
         let start_clock = Instant::now();
@@ -1035,13 +1035,13 @@ impl NodeState {
         match r {
             Ok(()) => {
                 sdebug!(self,
-                    "The micro block is valid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}",
+                    "Microblock is valid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}",
                     epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration
                 );
             }
             Err(e) => {
                 serror!(self,
-                    "The micro block is invalid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}, e={}",
+                    "Microblock is invalid: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}, duration={:.3}, e={}",
                     epoch, offset, &hash, inputs_len, outputs_len, txs_len, duration, e
                 );
                 return Err(e.into());
@@ -1201,10 +1201,10 @@ impl NodeState {
 
     /// Handler for NodeMessage::RevertMicroBlock.
     fn handle_pop_micro_block(&mut self) -> Result<(), Error> {
-        swarn!(self, "Received a request to revert the latest block");
+        swarn!(self, "Received equest to revert the latest block");
         if self.chain.offset() == 0 {
             return Err(format_err!(
-                "Attempt to revert a macro block: epoch={}",
+                "Attempt to revert macroblock: epoch={}",
                 self.chain.epoch()
             ));
         }
@@ -1224,7 +1224,7 @@ impl NodeState {
             Block::MacroBlock(ref block) => {
                 sinfo!(
                     self,
-                    "Sent macro block to the network: epoch={}, block={}, previous={}",
+                    "Sent macroblock to the network: epoch={}, block={}, previous={}",
                     block.header.epoch,
                     block_hash,
                     block.header.previous
@@ -1233,7 +1233,7 @@ impl NodeState {
             Block::MicroBlock(ref block) => {
                 sinfo!(
                     self,
-                    "Sent micro block to the network: epoch={}, offset={}, block={}, previous={}",
+                    "Sent microblock to the network: epoch={}, offset={}, block={}, previous={}",
                     block.header.epoch,
                     block.header.offset,
                     block_hash,
@@ -1253,7 +1253,7 @@ impl NodeState {
         let leader = self.chain.leader();
         if leader == self.network_pkey {
             sinfo!(self,
-                "I'm leader, collecting transactions for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
+                "I'm the leader. Collecting txs for the next microblock: epoch={}, offset={}, view_change={}, last_block={}",
                 self.chain.epoch(),
                 self.chain.offset(),
                 self.chain.view_change(),
@@ -1268,7 +1268,7 @@ impl NodeState {
                     difficulty: self.chain.difficulty(),
                 });
         } else {
-            sinfo!(self, "I'm validator, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
+            sinfo!(self, "I'm a validator. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
                   self.chain.offset(),
                   self.chain.view_change(),
@@ -1304,7 +1304,7 @@ impl NodeState {
 
         if consensus.is_leader() {
             sinfo!(self,
-                "I'm leader, proposing the next macro block: epoch={}, view_change={}, last_block={}",
+                "I'm the leader. Proposing the next macroblock: epoch={}, view_change={}, last_block={}",
                 self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash()
@@ -1325,7 +1325,7 @@ impl NodeState {
             }
         } else {
             sinfo!(self,
-                "I'm validator, waiting for the next macro block: epoch={}, view_change={}, last_block={}, leader={}",
+                "I'm a validator. Waiting for the next macroblock: epoch={}, view_change={}, last_block={}, leader={}",
                 self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash(),
@@ -1360,7 +1360,7 @@ impl NodeState {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroBlockAuditor);
             if !self.chain.is_validator(&self.network_pkey) {
-                sinfo!(self, "I'm auditor, waiting for the next micro block: epoch={}, offset={}, view_change={}, last_block={}",
+                sinfo!(self, "I'm an auditor. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}",
                       self.chain.epoch(),
                       self.chain.offset(),
                       self.chain.view_change(),
@@ -1385,7 +1385,7 @@ impl NodeState {
             if !self.chain.is_validator(&self.network_pkey) {
                 sinfo!(
                     self,
-                    "I'm auditor, waiting for the next macro block: epoch={}, last_block={}",
+                    "I'm an auditor. Waiting for the next macroblock: epoch={}, last_block={}",
                     self.chain.epoch(),
                     self.chain.last_block_hash()
                 );
@@ -1465,7 +1465,7 @@ impl NodeState {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             sdebug!(
                 self,
-                "Validating a macro block proposal: epoch={}, block={}",
+                "Validating macroblock proposal: epoch={}, block={}",
                 epoch,
                 &block_hash
             );
@@ -1484,7 +1484,7 @@ impl NodeState {
                 Ok(macro_block) => {
                     sdebug!(
                         self,
-                        "The macro block proposal is valid: epoch={}, block={}, duration={:.3}",
+                        "Macroblock proposal is valid: epoch={}, block={}, duration={:.3}",
                         epoch,
                         &block_hash,
                         duration
@@ -1493,7 +1493,7 @@ impl NodeState {
                 }
                 Err(e) => {
                     serror!(self,
-                        "The macro block proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
+                        "Macroblock proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
                         epoch, &block_hash, duration, e
                     );
                     // TODO(vldm): Didn't go to state Prevote before checking proposed macro block.
@@ -1548,7 +1548,7 @@ impl NodeState {
             .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
         sdebug!(
             self,
-            "Creating a new macro block proposal: epoch={}, view_change={}",
+            "Creating a new macroblock proposal: epoch={}, view_change={}",
             self.chain.epoch(),
             consensus.round()
         );
@@ -1581,7 +1581,7 @@ impl NodeState {
         metrics::MACRO_BLOCK_CREATE_TIME_HG.observe(duration);
         sinfo!(
             self,
-            "Created a new macro block proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
+            "Created a new macroblock proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
             self.chain.epoch(),
             consensus.round(),
             block_hash,
@@ -1630,7 +1630,7 @@ impl NodeState {
             if !is_relay {
                 *autocommit += 1;
                 strace!(self,
-                    "It's not my time to send macro block, wait for next autocommit timer, current_leader={}",
+                    "It's not my time to send macroblock, waiting for next autocommit timer, current_leader={}",
                     leader.0
                 );
                 let relevant_round = 1 + consensus.round();
@@ -1647,7 +1647,7 @@ impl NodeState {
         }
 
         swarn!(self,
-            "Timed out while waiting for a macro block, going to the next round: epoch={}, view_change={}",
+            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}",
             self.chain.epoch(), consensus.round() + 1
         );
 
@@ -1733,7 +1733,7 @@ impl NodeState {
         let leader = self.chain.leader();
         swarn!(
             self,
-            "Timed out while waiting for a micro block: epoch={}, leader={}, elapsed={:?}",
+            "Timed out while waiting for a microblock: epoch={}, leader={}, elapsed={:?}",
             self.chain.epoch(),
             leader,
             elapsed
@@ -1780,7 +1780,7 @@ impl NodeState {
                 last_block: self.chain.last_block_hash(),
             };
 
-            sdebug!(self, "Broadcasting view change proof proof={:?}", proof);
+            sdebug!(self, "Broadcasting view change proof: {:?}", proof);
             let view_change_proof = SealedViewChangeProof {
                 chain: chain_info,
                 proof: proof.clone(),
@@ -1818,7 +1818,7 @@ impl NodeState {
         let view_change_proof = self.chain.view_change_proof().clone();
         sdebug!(
             self,
-            "Creating a new micro block: epoch={}, offset={}, view_change={}, last_block={}",
+            "Creating a new microblock: epoch={}, offset={}, view_change={}, last_block={}",
             epoch,
             offset,
             view_change,
@@ -1871,7 +1871,7 @@ impl NodeState {
         metrics::MICRO_BLOCK_CREATE_TIME.set(duration);
         metrics::MICRO_BLOCK_CREATE_TIME_HG.observe(duration);
         sinfo!(self,
-            "Created a micro block: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
+            "Created a microblock: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
             epoch,
             offset,
             view_change,
@@ -1910,7 +1910,7 @@ impl NodeState {
 
     fn handle_macro_block_info(&self, epoch: u64) -> Result<ExtendedMacroBlock, Error> {
         if epoch >= self.chain.epoch() {
-            return Err(format_err!("Macro block doesn't exists: epoch={}", epoch));
+            return Err(format_err!("Macroblock does not exist: epoch={}", epoch));
         }
 
         let block = self.chain.macro_block(epoch)?.into_owned();
@@ -1931,7 +1931,7 @@ impl NodeState {
     fn handle_micro_block_info(&self, epoch: u64, offset: u32) -> Result<MicroBlock, Error> {
         if epoch != self.chain.epoch() || offset >= self.chain.offset() {
             return Err(format_err!(
-                "Micro block doesn't exists: epoch={}, offset={}",
+                "Microblock does not exist: epoch={}, offset={}",
                 epoch,
                 offset
             ));
@@ -2025,7 +2025,7 @@ impl NodeState {
                             match self.chain.output_by_hash(&item) {
                                 Ok(Some(item)) => outputs.push(item),
                                 Ok(None) => {
-                                    error = format!("Output was not found hash={}", item).into();
+                                    error = format!("Output not found for hash {}", item).into();
                                     break;
                                 }
                                 Err(e) => {
@@ -2113,7 +2113,7 @@ impl NodeState {
                     NodeRequest::EnableRestaking {} => {
                         if self.is_restaking_enabled {
                             NodeResponse::Error {
-                                error: format!("Re-staking is already enabled"),
+                                error: format!("Re-staking already enabled"),
                             }
                         } else {
                             sinfo!(self, "Re-staking enabled");
@@ -2124,7 +2124,7 @@ impl NodeState {
                     NodeRequest::DisableRestaking {} => {
                         if !self.is_restaking_enabled {
                             NodeResponse::Error {
-                                error: format!("Re-staking is already disabled"),
+                                error: format!("Re-staking already disabled"),
                             }
                         } else {
                             sinfo!(self, "Re-staking disabled");
@@ -2216,7 +2216,7 @@ impl NodeState {
             NodeIncomingEvent::DecodedBlock(msg) => {
                 let result = self.handle_block(msg);
                 if let Err(error) = &result {
-                    sinfo!(self, "Error during processing block from replication, changing upstream: error = {}", error);
+                    sinfo!(self, "Failed to process block from replication, changing upstream: error = {}", error);
                     self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
                 }
                 result

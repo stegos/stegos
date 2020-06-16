@@ -42,6 +42,8 @@ use pretty_env_logger::env_logger::{self, Env};
 
 use super::VDFExecution;
 use crate::*;
+use crate::shorthex::*;
+
 use log::*;
 pub use stegos_blockchain::test::*;
 
@@ -102,7 +104,7 @@ impl Sandbox {
         // to reproduce test, just uncomment this line,
         // and replace this variable from the output seed.
         //            let starting_seed = [98, 205, 131, 252, 208, 247, 228, 95, 76, 184, 202, 37, 219, 148, 172, 68, 132, 207, 102, 110, 93, 159, 16, 56, 2, 52, 104, 216, 246, 44, 148, 40];
-        trace!("Start test with seed = {:?}", starting_seed);
+        trace!("Start test with seed = {:x}", starting_seed.short_hex());
 
         let mut prng = IsaacRng::from_seed(starting_seed);
         let (keychains, genesis) = fake_genesis(

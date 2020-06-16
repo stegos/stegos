@@ -34,8 +34,12 @@ pub mod protos;
 mod test;
 mod tokio;
 mod validation;
+mod shorthex;
+
+use std::fmt;
 
 pub use self::tokio::{Node, NodeService};
+pub use self::shorthex::*;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -586,14 +590,14 @@ impl NodeState {
             if remote_hash == local_hash {
                 sdebug!(
                     self,
-                    "Skip a duplicate block with the same hash: offset={}, block={}",
+                    "Skip duplicate block with the same hash: offset={}, block={}",
                     offset,
                     remote_hash
                 );
                 return Err(ForkError::Canceled);
             }
 
-            swarn!(self, "Two micro-blocks from the same leader detected: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+            swarn!(self, "Detected two microblocks from the same leader: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local_hash,
@@ -608,7 +612,7 @@ impl NodeState {
             let proof = SlashingProof::new_unchecked(remote.clone(), local.into_owned());
 
             if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
-                sdebug!(self, "Cheater was already detected: cheater={}", leader);
+                sdebug!(self, "Cheater has already been detected: cheater={}", leader);
             }
 
             return Err(ForkError::Canceled);
@@ -701,7 +705,7 @@ impl NodeState {
 
         // Check previous hash.
         if proof.chain.last_block != local.last_block {
-            swarn!(self, "Found a proof with invalid previous hash: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+            swarn!(self, "Found proof with invalid previous hash: epoch={}, offset={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local.last_block,
@@ -751,7 +755,7 @@ impl NodeState {
             let block_hash = Hash::digest(&block);
             sdebug!(
                 self,
-                "Skip an outdated macro block: block={}, epoch={}",
+                "Skip outdated macroblock: block={}, epoch={}",
                 block_hash,
                 block.header.epoch
             );
@@ -762,7 +766,7 @@ impl NodeState {
             let block_hash = Hash::digest(&block);
             sdebug!(
                 self,
-                "Skip a macro block from the future: block={}, epoch={}",
+                "Skip macroblock from the future: block={}, epoch={}",
                 block_hash,
                 block.header.epoch
             );
@@ -775,7 +779,7 @@ impl NodeState {
         let block_hash = Hash::digest(&block);
         if block.header.epoch < self.chain.epoch() {
             sdebug!(self,
-                "Ignore an outdated micro block: block={}, epoch={}, offset={}, view_change={}, previous={}",
+                "Ignore outdated microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
                 block.header.offset,
@@ -787,7 +791,7 @@ impl NodeState {
             || block.header.offset > self.chain.offset()
         {
             sdebug!(self,
-                "Ignore a micro block from the future: block={}, epoch={}, offset={}, view_change={}, previous={}",
+                "Ignore microblock from the future: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
                 block.header.offset,
@@ -804,7 +808,7 @@ impl NodeState {
 
         sdebug!(
             self,
-            "Process a micro block: block={}, epoch={}, offset={}, view_change={}, previous={}",
+            "Process microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
             block_hash,
             block.header.epoch,
             block.header.offset,
@@ -828,22 +832,22 @@ impl NodeState {
                 Ok(()) => {
                     sdebug!(
                         self,
-                        "Fork resolution decide that remote chain is better: fork_offset={}",
+                        "Fork resolution. Remote chain is better: fork_offset={}",
                         offset
                     );
                     assert_eq!(
                         offset,
                         self.chain.offset(),
-                        "Fork resolution rollback our chain"
+                        "Fork resolution. Roll back our chain"
                     );
                 }
                 Err(ForkError::Canceled) => {
                     sdebug!(
                         self,
-                        "Fork resolution decide that our chain is better: fork_offset={}",
+                        "Fork resolution. Our chain is better: fork_offset={}",
                         offset
                     );
-                    assert!(offset < self.chain.offset(), "Fork didn't remove any block");
+                    assert!(offset < self.chain.offset(), "Fork did notremove any blocks");
                     return Ok(());
                 }
                 Err(ForkError::Error(e)) => return Err(e),
@@ -856,7 +860,7 @@ impl NodeState {
         if let Err(e) = self.apply_micro_block(block) {
             serror!(
                 self,
-                "Failed to apply micro block: block={}, error={}",
+                "Failed to apply microblock: block={}, error={}",
                 block_hash,
                 e
             );
@@ -871,7 +875,7 @@ impl NodeState {
                     assert!(self.chain.view_change() > 0);
                     assert!(view_change < self.chain.view_change());
                     let leader = self.chain.select_leader(view_change);
-                    swarn!(self, "Discarded a block with lesser view_change: block_view_change={}, our_view_change={}",
+                    swarn!(self, "Discarded block with lesser view_change: block_view_change={}, our_view_change={}",
                           view_change, self.chain.view_change());
                     let chain_info = ChainInfo {
                         epoch: self.chain.epoch(),
@@ -1998,7 +2002,7 @@ impl NodeState {
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
     fn handle_event(&mut self, event: NodeIncomingEvent) {
-        strace!(self, "Handle event = {:?}", event);
+        strace!(self, "Handle event = {}", event);
         let result: Result<(), Error> = match event {
             NodeIncomingEvent::Request { request, tx } => {
                 strace!(self, "=> {:?}", request);
@@ -2253,3 +2257,51 @@ impl NodeState {
         }
     }
 }
+
+impl fmt::Display for NodeIncomingEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NodeIncomingEvent::")?;
+        use NodeIncomingEvent as e;
+        match self {
+            e::Request { .. } => f.write_str("Request"),
+            e::Transaction (..) => f.write_str("Transaction"),
+            e::Consensus (..) => f.write_str("Consensus"),
+            e::Block (..) => f.write_str("Block"),
+            e::DecodedBlock (..) => f.write_str("DecodedBlock"),
+            e::ViewChangeMessage (..) => f.write_str("ViewChangeMessage"),
+            e::ViewChangeProof (..) => f.write_str("ViewChangeProof"),
+            e::ViewChangeProofMessage { from, .. } => write!(f, "ViewChangeProofMessage({})", from),
+            e::ChainLoaderMessage { from, .. } => write!(f, "ChainLoaderMessage({})", from),
+            e::CheckSyncTimer => f.write_str("CheckSyncTimer"),
+            e::MacroBlockProposeTimer => f.write_str("MacroBlockProposeTimer"),
+            e::MacroBlockViewChangeTimer => f.write_str("MacroBlockViewChangeTimer"),
+            e::MicroBlockProposeTimer (..) => f.write_str("MicroBlockProposeTimer"),
+            e::MicroBlockViewChangeTimer => f.write_str("MicroBlockViewChangeTimer"),
+        }
+    }
+}
+
+impl fmt::Display for NodeOutgoingEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "NodeOutgoingEvent::")?;
+        use NodeOutgoingEvent as e;
+        match self {
+            e::Publish{ topic, data } => write!(f, "Publish({}, {:x})", topic, data.short_hex()),
+            e::ChangeUpstream { .. } => f.write_str("ChangeUpstream"),
+            e::Send{ dest, topic, data } => write!(f, "Send({}, {}, {:x})", dest, topic, data.short_hex()),
+            e::FacilitatorChanged{ facilitator } => write!(f, "FacilitatorChanged({})", facilitator),
+            e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
+            e::ChainNotification (..) => f.write_str("ChainNotification"),
+            e::StatusNotification (..) => f.write_str("StatusNotification"),
+            e::MacroBlockProposeTimer (d) => write!(f, "MacroBlockProposeTimer({:?})", d),
+            e::MacroBlockProposeTimerCancel => f.write_str("MacroBlockProposeTimerCancel"),
+            e::MacroBlockViewChangeTimer (d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
+            e::MicroBlockProposeTimer { .. } => f.write_str("MicroBlockProposeTimer"),
+            e::MicroBlockProposeTimerCancel => f.write_str("MicroBlockProposeTimerCancel"),
+            e::MicroBlockViewChangeTimer (d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
+            e::RequestBlocksFrom { from } => write!(f, "RequestBlocksFrom({})", from),
+            e::SendBlocksTo { to, epoch, offset } => write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset),
+        }
+    }
+}
+

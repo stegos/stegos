@@ -153,7 +153,7 @@ impl Consensus {
         assert!(validators.contains_key(&pkey));
         let state = ConsensusState::Propose;
         metrics::CONSENSUS_STATE.set(metrics::ConsensusState::Propose as i64);
-        debug!("New => {}({}:{})", state.name(), epoch, 0);
+        debug!("New consensus protocol => {}({}:{})", state.name(), epoch, 0);
         let prevotes: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let precommits: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
         let total_slots = validators.iter().map(|v| v.1).sum();

@@ -1872,7 +1872,7 @@ impl Blockchain {
             }
 
             debug!(
-                "Registered UXTO: epoch={}, block={}, utxo={}",
+                "Registered UTXO: epoch={}, block={}, utxo={}",
                 epoch, &block_hash, &output_hash
             );
         }
@@ -2055,7 +2055,7 @@ impl Blockchain {
         metrics::EMISSION.set(self.balance().block_reward);
 
         info!(
-            "Registered a micro block: epoch={}, offset={}, block={}, txs={:?}, inputs={:?}, outputs={:?}",
+            "Registered microblock: epoch={}, offset={}, block={}, txs={:?}, inputs={:?}, outputs={:?}",
             epoch,
             offset,
             block_hash,

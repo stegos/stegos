@@ -23,7 +23,6 @@
 //#![feature(async_closure)]
 #![allow(dead_code)]
 
-mod logger;
 mod sandbox;
 
 #[cfg(test)]
@@ -146,7 +145,6 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
 }
 
 async fn delay_for(d: Duration) {
-
     tokio::time::advance(d).await;
     tokio::task::yield_now().await;
 }
@@ -155,12 +153,12 @@ async fn delay_for(d: Duration) {
 #[cfg(test)]
 mod test_framework {
     use super::*;
-    use tokio::time::{Duration};
-    use futures::pin_mut;
-    use futures::future::FutureExt;
-    use futures::future;
-    use futures::task::Poll;
     use assert_matches::assert_matches;
+    use futures::future;
+    use futures::future::FutureExt;
+    use futures::pin_mut;
+    use futures::task::Poll;
+    use tokio::time::Duration;
 
     #[tokio::test]
     async fn test_partition() {
@@ -179,18 +177,17 @@ mod test_framework {
         .await
     }
 
-
     #[tokio::test]
     async fn test_fake_timer() {
         let timer = Duration::from_secs(30);
         tokio::time::pause();
-        
+
         let mut future = tokio::time::delay_for(timer);
 
         let result = futures::poll!(&mut future);
         assert_matches!(result, Poll::Pending);
         delay_for(timer).await;
-        
+
         let result = futures::poll!(future);
 
         assert_matches!(result, Poll::Ready(_));

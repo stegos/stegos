@@ -19,10 +19,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use futures::task::Poll;
 use futures::future;
 use futures::future::FutureExt;
 use futures::pin_mut;
+use futures::task::Poll;
 
 use std::collections::HashSet;
 use std::ops::{Index, IndexMut};
@@ -38,7 +38,8 @@ use stegos_crypto::pbc::VRF;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
 
-use super::logger;
+use pretty_env_logger::env_logger::{self, Env};
+
 use super::VDFExecution;
 use crate::*;
 use log::*;
@@ -88,20 +89,8 @@ pub struct Sandbox {
 impl Sandbox {
     pub fn new(config: SandboxConfig) -> Self {
         stegos_crypto::init_test_network_prefix();
-        let var = std::env::var("STEGOS_TEST_LOGS_LEVEL")
-            .ok()
-            .map(|s| s.to_lowercase());
-        let level = match var.as_ref().map(AsRef::as_ref) {
-            Some("off") => None,
-            Some("error") => Some(Level::Error),
-            Some("warn") => Some(Level::Warn),
-            _ => Some(Level::Trace),
-        };
+        pretty_env_logger::init_custom_env("STEGOS_TEST_LOG");
         tokio::time::pause();
-
-        if let Some(level) = level {
-            let _ = logger::init_with_level(level);
-        }
 
         let num_nodes = config.num_nodes;
         let timestamp = Timestamp::now();
@@ -413,7 +402,6 @@ impl<'p> Partition<'p> {
 
     /// poll each node for updates.
     pub async fn poll(&mut self) {
-
         for node in self.nodes.iter_mut() {
             // poll future one time
             // - if it pending, then it waits for external event, we can drop it for now.
@@ -431,14 +419,12 @@ impl<'p> Partition<'p> {
         }
 
         if let Some(auditor) = &mut self.auditor {
-        
             loop {
-
                 let future = auditor.poll();
                 pin_mut!(future);
 
                 let result = futures::poll!(future);
-                
+
                 if result == Poll::Pending {
                     break;
                 }

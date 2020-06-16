@@ -22,7 +22,7 @@
 // SOFTWARE.
 
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-// #![deny(warnings)]
+                             // #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -41,12 +41,12 @@ pub use crate::config::NodeConfig;
 use crate::error::*;
 use crate::mempool::Mempool;
 use crate::validation::*;
+use ::tokio::time::{Duration, Instant};
 use failure::{bail, format_err, Error};
 use futures::channel::oneshot;
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
-use ::tokio::time::{Duration, Instant};
 use stegos_blockchain::Timestamp;
 use stegos_blockchain::*;
 use stegos_consensus::optimistic::{

@@ -46,6 +46,7 @@ tokio = "0.2.13"
 
 [dev-dependencies]
 tokio =  {version="0.2", features =["time", "rt-threaded", "macros", "test-util"]}
+pretty_env_logger = "*"
 
 [build-dependencies]
 stegos_serialization = { version = "1.0.0", path = "../serialization" }

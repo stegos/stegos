@@ -2386,6 +2386,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pretty_env_logger"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "926d36b9553851b8b0005f1275891b392ee4d2d833852c417ed025477350fb9d"
+dependencies = [
+ "env_logger",
+ "log",
+]
+
+[[package]]
 name = "proc-macro-hack"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3409,6 +3419,7 @@ dependencies = [
  "linked-hash-map",
  "log",
  "pin-utils",
+ "pretty_env_logger",
  "prometheus",
  "protobuf",
  "rand 0.7.3",

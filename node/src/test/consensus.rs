@@ -21,10 +21,10 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use super::delay_for;
 use super::*;
 use assert_matches::assert_matches;
 use tokio;
-use super::delay_for;
 
 use stegos_blockchain::Block;
 use stegos_consensus::{ConsensusInfo, ConsensusMessageBody, ConsensusState};

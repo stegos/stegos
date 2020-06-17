@@ -1308,10 +1308,11 @@ impl NodeState {
 
         if consensus.is_leader() {
             sinfo!(self,
-                "I'm the leader. Proposing the next macroblock: epoch={}, view_change={}, last_block={}",
+                "I'm the leader. Proposing macroblock: epoch={}, view_change={}, last_block={}, propose?={}",
                 self.chain.epoch(),
                 consensus.round(),
-                self.chain.last_block_hash()
+                self.chain.last_block_hash(),
+                consensus.should_propose()
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);

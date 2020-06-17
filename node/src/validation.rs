@@ -139,6 +139,7 @@ mod test {
             cfg.max_slot_count,
             1,
             timestamp,
+            cfg.awards_difficulty,
             None,
         );
         let keychain = keychains.pop().unwrap();

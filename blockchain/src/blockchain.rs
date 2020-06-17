@@ -606,11 +606,11 @@ impl Blockchain {
             return Ok(());
         }
 
-        debug!("Creating a new blockchain...");
+        debug!("Creating a new blockchain with difficulty={}...", self.difficulty);
         self.push_macro_block(genesis, timestamp)?;
         info!(
             "Initialized a new blockchain: epoch={}, offset={}, last_block={}",
-            self.epoch, self.offset, self.last_block_hash
+                self.epoch, self.offset, self.last_block_hash
         );
         Ok(())
     }

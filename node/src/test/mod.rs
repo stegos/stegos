@@ -96,7 +96,7 @@ pub async fn precondition_n_different_block_leaders(s: &mut Sandbox, different_l
             .collect();
 
         info!(
-            "Checking that all leader are different: leaders={:?}.",
+            "Checking that all leaders are different: leaders={:?}.",
             leaders
         );
         check_unique(leaders)
@@ -111,7 +111,7 @@ pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, differ
             .collect();
 
         info!(
-            "Checking that all leader are different: leaders={:?}.",
+            "Checking that all leaders are different: leaders={:?}.",
             leaders
         );
         check_unique(leaders)
@@ -130,10 +130,10 @@ where
             ready = true;
             break;
         }
-        info!("Skipping microlock.");
+        info!("Skipping microblock");
         s.partition().skip_micro_block().await;
     }
-    assert!(ready, "Not enought micriblocks found");
+    assert!(ready, "Not enough microblocks to skip");
 }
 
 pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {

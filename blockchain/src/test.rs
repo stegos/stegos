@@ -23,6 +23,8 @@
 
 #![allow(dead_code)]
 
+use std::convert::TryInto;
+
 use super::block::{Block, MacroBlock, MicroBlock};
 use super::blockchain::{Blockchain, OutputRecovery};
 use super::election::mix;
@@ -201,6 +203,7 @@ pub fn fake_genesis(
     max_slot_count: i64,
     num_nodes: usize,
     timestamp: Timestamp,
+    difficulty: usize,
     prng: Option<&mut dyn RngCore>,
 ) -> (Vec<KeyChain>, MacroBlock) {
     let mut stakers = Vec::with_capacity(num_nodes);
@@ -243,7 +246,6 @@ pub fn fake_genesis(
     let previous = Hash::digest("genesis");
     let seed = mix(last_macro_block_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
-    let difficulty = 1;
     let activity_map = BitVec::from_elem(keychains.len(), true);
 
     let validators = election::select_validators_slots(stakers, random, max_slot_count).validators;
@@ -255,7 +257,7 @@ pub fn fake_genesis(
         view_change,
         keychains[0].network_pkey.clone(),
         random,
-        difficulty,
+        difficulty.try_into().unwrap(),
         timestamp,
         coins,
         -outputs_gamma,

@@ -48,6 +48,32 @@ use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
 use tokio::time::{self, Delay, Interval};
 
+macro_rules! strace {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Trace, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
+    );
+}
+macro_rules! sdebug {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Debug, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
+    );
+}
+macro_rules! sinfo {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Info, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
+    );
+}
+macro_rules! swarn {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Warn, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
+    );
+}
+macro_rules! serror {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Error, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
+    );
+}
+
 // ----------------------------------------------------------------
 // Public API.
 // ----------------------------------------------------------------
@@ -307,7 +333,7 @@ impl NodeService {
                 Ok(_) => {}
                 Err(e /* SendError<ChainNotification> */) => {
                     if e.is_full() {
-                        log::warn!("Subscriber is slow, discarding message, and remove subscriber");
+                        warn!("Subscriber is slow, discarding message, and remove subscriber");
                     }
                     subscribers.swap_remove(i);
                     continue;
@@ -319,25 +345,25 @@ impl NodeService {
 
     /// Handler subscription to status.
     fn handle_subscription_to_status(
-        status_subscribers: &mut Vec<mpsc::Sender<StatusNotification>>,
+        &mut self, 
     ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
         let (tx, rx) = mpsc::channel(1);
-        status_subscribers.push(tx);
+        self.status_subscribers.push(tx);
         Ok(rx)
     }
 
     /// Handle subscription to chain.
     fn handle_subscription_to_chain(
-        state: &NodeState,
+        &mut self, 
         chain_readers: &mut Vec<ChainReader>,
         epoch: u64,
         offset: u32,
     ) -> Result<mpsc::Receiver<ChainNotification>, Error> {
-        if epoch > state.chain.epoch() {
+        if epoch > self.state.chain.epoch() {
             return Err(format_err!("Invalid epoch requested: epoch={}", epoch));
         }
         // Set buffer size to fit entire epoch plus some extra blocks.
-        let buffer = state.chain.cfg().micro_blocks_in_epoch as usize + 10;
+        let buffer = self.state.chain.cfg().micro_blocks_in_epoch as usize + 10;
         let (tx, rx) = mpsc::channel(buffer);
         let subscriber = ChainReader { tx, epoch, offset };
         chain_readers.push(subscriber);
@@ -349,43 +375,41 @@ impl NodeService {
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
     pub fn request_history_from(
-        network: &mut Network,
-        state: &NodeState,
+        &mut self, 
         from: pbc::PublicKey,
     ) -> Result<(), Error> {
-        let epoch = state.chain.epoch();
-        info!("Downloading blocks: from={}, epoch={}", &from, epoch);
+        let epoch = self.state.chain.epoch();
+        sinfo!(self, "Downloading blocks: from={}, epoch={}", &from, epoch);
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
-        network.send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+        self.network.send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(
-        network: &mut Network,
-        state: &NodeState,
+        &mut self, 
         pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
-        if request.epoch > state.chain.epoch() {
-            warn!(
+        if request.epoch > self.state.chain.epoch() {
+            swarn!(
+                self,
                 "Received a loader request with epoch >= our_epoch: remote_epoch={}, our_epoch={}",
                 request.epoch,
-                state.chain.epoch()
+                self.state.chain.epoch()
             );
             return Ok(());
         }
 
-        Self::send_blocks(network, state, pkey, request.epoch, 0)
+        self.send_blocks(pkey, request.epoch, 0)
     }
 
     pub fn send_blocks(
-        network: &mut Network,
-        state: &NodeState,
+        &mut self, 
         pkey: pbc::PublicKey,
         epoch: u64,
         offset: u32,
     ) -> Result<(), Error> {
         let mut blocks: Vec<Block> = Vec::new();
-        for block in state.chain.blocks_starting(epoch, offset) {
+        for block in self.state.chain.blocks_starting(epoch, offset) {
             blocks.push(block);
             // Feed the whole epoch.
             match blocks.last().unwrap() {
@@ -396,14 +420,14 @@ impl NodeService {
                 Block::MicroBlock(_) => {}
             }
         }
-        info!("Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
+        sinfo!(self, "Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
-        network.send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
+        self.network.send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())
     }
 
     fn handle_response_blocks(
-        state: &mut NodeState,
+        &mut self,
         pkey: pbc::PublicKey,
         response: ResponseBlocks,
     ) -> Result<(), Error> {
@@ -412,7 +436,8 @@ impl NodeService {
             Some(Block::MicroBlock(block)) => block.header.epoch,
             None => {
                 // Empty response
-                info!(
+                sinfo!(
+                    self,
                     "Received blocks: from={}, num_blocks={}",
                     pkey,
                     response.blocks.len()
@@ -425,29 +450,32 @@ impl NodeService {
             Some(Block::MicroBlock(block)) => block.header.epoch,
             None => unreachable!("Checked above"),
         };
-        if first_epoch > state.chain.epoch() {
-            warn!(
+        if first_epoch > self.state.chain.epoch() {
+            swarn!(
+                self,
                 "Received blocks from the future: from={}, our_epoch={}, first_epoch={}",
                 pkey,
-                state.chain.epoch(),
+                self.state.chain.epoch(),
                 first_epoch
             );
             return Ok(());
-        } else if last_epoch < state.chain.epoch() {
-            warn!(
+        } else if last_epoch < self.state.chain.epoch() {
+            swarn!(
+                self,
                 "Received blocks from the past: from={}, last_epoch={}, our_epoch={}",
                 pkey,
                 last_epoch,
-                state.chain.epoch()
+                self.state.chain.epoch()
             );
             return Ok(());
         }
 
-        info!(
+        sinfo!(
+            self,
             "Received blocks: from={}, first_epoch={}, our_epoch={}, last_epoch={}, num_blocks={}",
             pkey,
             first_epoch,
-            state.chain.epoch(),
+            self.state.chain.epoch(),
             last_epoch,
             response.blocks.len()
         );
@@ -455,21 +483,20 @@ impl NodeService {
         for block in response.blocks {
             // Fail on the first error.
             let event = NodeIncomingEvent::DecodedBlock(block);
-            state.handle_event(event);
+            self.state.handle_event(event);
         }
 
         Ok(())
     }
 
     pub fn handle_chain_loader_message(
-        network: &mut Network,
-        state: &mut NodeState,
+        &mut self,
         pkey: pbc::PublicKey,
         msg: ChainLoaderMessage,
     ) -> Result<(), Error> {
         match msg {
-            ChainLoaderMessage::Request(r) => Self::handle_request_blocks(network, state, pkey, r),
-            ChainLoaderMessage::Response(r) => Self::handle_response_blocks(state, pkey, r),
+            ChainLoaderMessage::Request(r) => self.handle_request_blocks(pkey, r),
+            ChainLoaderMessage::Response(r) => self.handle_response_blocks(pkey, r),
         }
     }
 
@@ -481,6 +508,7 @@ impl NodeService {
 
     pub async fn poll(&mut self) {
         self.handle_outgoing();
+
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -535,7 +563,7 @@ impl NodeService {
                             }
                             NodeRequest::SubscribeChain { epoch, offset } => {
                                 let response =
-                                    match Self::handle_subscription_to_chain(&mut self.state, &mut chain_readers, epoch, offset) {
+                                    match self.handle_subscription_to_chain(&mut chain_readers, epoch, offset) {
                                         Ok(rx) => NodeResponse::SubscribedChain {
                                             current_epoch: self.state.chain.epoch(),
                                             current_offset: self.state.chain.offset(),
@@ -549,7 +577,7 @@ impl NodeService {
                                 return;
                             }
                             NodeRequest::SubscribeStatus {} => {
-                                let response = match Self::handle_subscription_to_status(&mut self.status_subscribers) {
+                                let response = match self.handle_subscription_to_status() {
                                     Ok(rx) => {
                                         let status = self.state.chain.status();
                                         NodeResponse::SubscribedStatus {
@@ -572,9 +600,9 @@ impl NodeService {
                     }
                     NodeIncomingEvent::ChainLoaderMessage { from, data } => {
                         if let Err(e) = ChainLoaderMessage::from_buffer(&data)
-                            .map(|data| Self::handle_chain_loader_message(&mut self.network, &mut self.state, from, data))
+                            .map(|data| self.handle_chain_loader_message(from, data))
                         {
-                            error!("Invalid block from loader: {}", e);
+                            serror!(self, "Invalid block from loader: {}", e);
                         }
                     }
                     event => self.state.handle_event(event),
@@ -624,7 +652,7 @@ impl NodeService {
 
     fn handle_outgoing(&mut self) {
         for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
-            trace!("Outgoing event = {:?}", event);
+            strace!(self, "Outgoing event = {}", event);
             let result = match event {
                 NodeOutgoingEvent::FacilitatorChanged { .. } => Ok(()),
                 NodeOutgoingEvent::ChangeUpstream {} => {
@@ -670,6 +698,7 @@ impl NodeService {
                     };
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);
+                    strace!(self, "Solved VDF puzzle");
                     self.micro_propose_timer.set(rx.fuse());
                     self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
@@ -718,10 +747,10 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::RequestBlocksFrom { from } => {
-                    Self::request_history_from(&mut self.network, &self.state, from)
+                    self.request_history_from(from)
                 }
                 NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
-                    Self::send_blocks(&mut self.network, &mut self.state, to, epoch, offset)
+                    self.send_blocks(to, epoch, offset)
                 }
             };
             if let Err(e) = result {

@@ -35,6 +35,32 @@ use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
+macro_rules! strace {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Trace, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
+    );
+}
+macro_rules! sdebug {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Debug, concat!("[{}] ", $fmt), $self.state..lock().unwrap().pkey, $($arg),*);
+    );
+}
+macro_rules! sinfo {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Info, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
+    );
+}
+macro_rules! swarn {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Warn, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
+    );
+}
+macro_rules! serror {
+    ($self:expr, $fmt:expr $(,$arg:expr)*) => (
+        log::log!(log::Level::Error, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
+    );
+}
+
 #[derive(Debug, Clone)]
 pub struct LoopbackNetwork {
     state: Arc<Mutex<LoopbackState>>,
@@ -81,7 +107,7 @@ impl NetworkProvider for LoopbackNetwork {
     }
 
     fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
-        trace!("Received publish for topic = {}", topic);
+        strace!(self, "Received publish for topic = {}", topic);
         let topic: String = topic.to_string();
         let msg = MessageFromNode::Publish { topic, data };
         self.state.lock().unwrap().queue.push_back(msg);
@@ -125,6 +151,7 @@ struct LoopbackState {
     unicast_consumers: HashMap<String, Vec<mpsc::UnboundedSender<UnicastMessage>>>,
     queue: VecDeque<MessageFromNode>,
     replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+    pkey: pbc::PublicKey,
 }
 
 #[derive(Debug, Clone)]
@@ -133,7 +160,7 @@ pub struct Loopback {
 }
 
 impl Loopback {
-    pub fn new() -> (
+    pub fn new(pkey: &pbc::PublicKey) -> (
         Loopback,
         Network,
         PeerId,
@@ -152,6 +179,7 @@ impl Loopback {
             unicast_consumers,
             replication_tx,
             queue,
+            pkey: pkey.clone(),
         };
         let state = Arc::new(Mutex::new(state));
         let network = LoopbackNetwork {
@@ -212,20 +240,22 @@ impl Loopback {
     }
 
     pub fn try_get_broadcast_raw(&mut self, topic: &str) -> Option<Vec<u8>> {
-        let ref mut state = self.state.lock().unwrap();
-        loop {
-            match state.queue.pop_front() {
-                Some(MessageFromNode::Publish {
-                    topic: msg_topic,
-                    data: msg_data,
-                }) => {
-                    assert_eq!(topic, &msg_topic);
-                    return Some(msg_data.clone());
-                }
-                Some(x) => {
-                    panic!("Other message in queue = {:?}", x);
-                }
-                None => return None,
+        let msg = self.state.lock().unwrap().queue.pop_front();
+        match msg {
+            Some(MessageFromNode::Publish {
+                topic: msg_topic,
+                data: msg_data,
+            }) => {
+                assert_eq!(topic, &msg_topic);
+                strace!(self, "Got message for topic {}", msg_topic);
+                return Some(msg_data.clone());
+            }
+            Some(x) => {
+                panic!("Other message in queue = {:?}", x);
+            }
+            None => {
+                strace!(self, "No broadcast message found for topic {}!", topic);
+                return None
             }
         }
     }

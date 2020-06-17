@@ -37,6 +37,7 @@ async fn smoke_test() {
     let cfg = ChainConfig {
         micro_blocks_in_epoch: 1,
         stake_epochs: 2,
+        awards_difficulty: 0,
         ..Default::default()
     };
     let config = SandboxConfig {
@@ -51,8 +52,10 @@ async fn smoke_test() {
     async {
         for _epoch in 1..=(1 + NUM_RESTAKES * config.chain.stake_epochs + 1) {
             for _offset in 0..config.chain.micro_blocks_in_epoch {
-                p.poll().await;
+                //p.poll().await;
+                trace!(">>> Skipping microblock, epoch = {}, offset = {}", _epoch, _offset);
                 p.skip_micro_block().await;
+                trace!("Skipped microblock, epoch = {}, offset = {}", _epoch, _offset);
             }
             p.skip_macro_block().await;
         }

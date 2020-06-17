@@ -24,6 +24,7 @@ use futures::future::FutureExt;
 use futures::pin_mut;
 use futures::task::Poll;
 
+use std::convert::TryInto;
 use std::collections::HashSet;
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
@@ -67,12 +68,7 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> SandboxConfig {
         SandboxConfig {
-            node: NodeConfig {
-                micro_block_timeout: Duration::from_secs(1),
-                macro_block_timeout: Duration::from_secs(2),
-                sync_change_timeout: Duration::from_secs(3),
-                ..Default::default()
-            },
+            node: Default::default(),
             chain: Default::default(),
             num_nodes: 4,
             log_level: Level::Trace,
@@ -91,7 +87,13 @@ pub struct Sandbox {
 impl Sandbox {
     pub fn new(config: SandboxConfig) -> Self {
         stegos_crypto::init_test_network_prefix();
-        pretty_env_logger::init_custom_env("STEGOS_TEST_LOG");
+        pretty_env_logger::try_init_timed_custom_env("STEGOS_TEST_LOG").unwrap();
+        // let mut b = pretty_env_logger::formatted_timed_builder();
+        // if let Ok(s) = ::std::env::var("STEGOS_TEST_LOG") {
+        //     builder.parse_filters(&s);
+        // }
+
+        // freeze the time for testing
         tokio::time::pause();
 
         let num_nodes = config.num_nodes;
@@ -113,6 +115,7 @@ impl Sandbox {
             config.chain.max_slot_count,
             num_nodes,
             timestamp,
+            config.chain.awards_difficulty.try_into().unwrap(),
             Some(&mut prng),
         );
         let mut nodes = Vec::new();
@@ -363,7 +366,7 @@ impl<'p> Partition<'p> {
         let last_block = chain.last_block_hash();
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
-            trace!("Checking node = {:?}", node.validator_id());
+            trace!("Checking node = {}, {:?}", node.node_service.state().network_pkey, node.validator_id());
 
             assert_eq!(chain.epoch(), epoch);
             assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
@@ -404,6 +407,7 @@ impl<'p> Partition<'p> {
 
     /// poll each node for updates.
     pub async fn poll(&mut self) {
+        trace!(">>> Polling...");
         for node in self.nodes.iter_mut() {
             // poll future one time
             // - if it pending, then it waits for external event, we can drop it for now.
@@ -490,6 +494,7 @@ impl<'p> Partition<'p> {
     /// Should be used after block timeout.
     /// This function will poll() every node.
     pub async fn skip_micro_block(&mut self) {
+        trace!("Skipping microblock...");
         self.assert_synchronized();
         let chain = &self.first().node_service.state().chain;
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
@@ -497,21 +502,26 @@ impl<'p> Partition<'p> {
         trace!("Acording to partition info, next leader = {}", leader_pk);
         self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.poll().await;
+        trace!("Filtering unicast messages...");
         self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
+        trace!("Fetching microblock for broadcast...");
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        trace!("Delivering microblock to nodes");
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
+        trace!("Delivering microblock to the auditor");
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
-        self.poll().await;
+        //trace!("Successfully skipped microblock, polling again...");
+        //self.poll().await;
     }
 
     /// Emulate rollback of microblock, for wallet tests
@@ -561,6 +571,7 @@ impl<'p> Partition<'p> {
     }
 
     pub async fn skip_macro_block(&mut self) {
+        trace!("Skipping macroblock...");
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let stake_epochs = chain.cfg().stake_epochs;
@@ -568,23 +579,27 @@ impl<'p> Partition<'p> {
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = chain.leader();
+        self.poll().await;
         let leader_node = self.find_mut(&leader_pk).unwrap();
         // Check for a proposal from the leader.
+        trace!("Fetching macroblock proposal for broadcast...");
         let proposal: ConsensusMessage = leader_node
             .network_service
             .get_broadcast(crate::CONSENSUS_TOPIC);
-        debug!("Proposal: {:?}", proposal);
+        trace!("Proposal: {:?}", proposal);
         assert_eq!(proposal.epoch, epoch);
         assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
+        trace!("Delivering macroblock to nodes");
         // Send this proposal to other nodes.
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
         }
-        self.poll().await;
 
+        self.poll().await;
+        trace!("Checking for pre-votes...");
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
@@ -597,6 +612,7 @@ impl<'p> Partition<'p> {
             prevotes.push(prevote);
         }
 
+        trace!("Delivering pre-votes...");
         // Send these pre-votes to nodes.
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
@@ -608,6 +624,7 @@ impl<'p> Partition<'p> {
         }
         self.poll().await;
 
+        trace!("Checking for pre-commits...");
         // Check for pre-commits.
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
@@ -629,6 +646,7 @@ impl<'p> Partition<'p> {
             precommits.push(precommit);
         }
 
+        trace!("Delivering pre-committs...");
         // Send these pre-commits to nodes.
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
@@ -654,6 +672,7 @@ impl<'p> Partition<'p> {
             restakes.push(restake);
         }
 
+        trace!("Fetching published macroblock...");
         // Receive sealed block.
         let block: Block = self
             .find_mut(&leader_pk)
@@ -666,19 +685,19 @@ impl<'p> Partition<'p> {
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
 
+        trace!("Delivering macroblock to nodes...");
         // Send this sealed block to all other nodes expect the leader.
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
 
+        trace!("Delivering macroblock to the auditor...");
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
-
-        self.poll().await;
 
         // Check state of all nodes.
         for node in self.iter() {
@@ -689,20 +708,23 @@ impl<'p> Partition<'p> {
             assert_eq!(chain.last_block_hash(), block_hash);
         }
 
-        // Process re-stakes.
+        // Process re-stakes.        
         if restake_epoch {
+            self.poll().await;
+            trace!("Fetching restakes...");
             for node in self.iter_except(&[leader_pk]) {
                 let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
                 debug!("Got restake: {:?}", restake);
                 restakes.push(restake);
             }
+            trace!("Delivering restakes to nodes...");
             for node in self.iter_mut() {
                 for restake in restakes.iter() {
                     node.network_service
                         .receive_broadcast(crate::TX_TOPIC, restake.clone());
                 }
             }
-            self.poll().await;
+            //self.poll().await;
         }
     }
 
@@ -802,7 +824,7 @@ impl NodeSandbox {
         genesis: MacroBlock,
     ) -> Self {
         // init network
-        let (network_service, network, peer_id, replication_rx) = Loopback::new();
+        let (network_service, network, peer_id, replication_rx) = Loopback::new(&network_pkey);
 
         // Create node, with first node keychain.
         let timestamp = Timestamp::now();

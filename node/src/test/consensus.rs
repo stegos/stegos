@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::delay_for;
+use super::wait;
 use super::*;
 use assert_matches::assert_matches;
 use tokio;
@@ -137,7 +137,7 @@ async fn autocommit() {
         for pk in nodes_pk {
             p.poll().await;
             // Wait for macro block timeout.
-            delay_for(config.node.macro_block_timeout).await;
+            wait(config.node.macro_block_timeout).await;
 
             info!("Checking autocommit of node {}.", pk);
             if pk == leader_pk {
@@ -164,7 +164,7 @@ async fn autocommit() {
             assert_eq!(block_hash, block_hash2);
         }
         // wait more time, to check if counter will not overflow.
-        delay_for(config.node.macro_block_timeout).await;
+        wait(config.node.macro_block_timeout).await;
 
         p.poll().await;
         p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
@@ -201,7 +201,7 @@ async fn round() {
 
         let epoch = p.first().state().chain.epoch();
         let round = p.first().state().chain.view_change() + 1;
-        delay_for(config.node.macro_block_timeout).await;
+        wait(config.node.macro_block_timeout).await;
 
         info!("====== Waiting for keyblock timeout. =====");
         p.poll().await;
@@ -302,14 +302,14 @@ async fn multiple_rounds() {
         let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        delay_for(config.node.macro_block_timeout - Duration::from_millis(1)).await;
+        wait(config.node.macro_block_timeout - Duration::from_millis(1)).await;
 
         p.poll().await;
         for i in 1..p.len() {
             p[i].network_service.assert_empty_queue()
         }
 
-        delay_for(Duration::from_millis(1)).await;
+        wait(Duration::from_millis(1)).await;
 
         info!("====== Waiting for keyblock timeout. =====");
         p.poll().await;
@@ -322,14 +322,14 @@ async fn multiple_rounds() {
         let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
 
-        delay_for(config.node.macro_block_timeout * 2 - Duration::from_millis(1)).await;
+        wait(config.node.macro_block_timeout * 2 - Duration::from_millis(1)).await;
 
         p.poll().await;
         for i in 1..p.len() {
             p[i].network_service.assert_empty_queue()
         }
 
-        delay_for(Duration::from_millis(1)).await;
+        wait(Duration::from_millis(1)).await;
 
         info!("====== Waiting for keyblock timeout. =====");
         p.poll().await;
@@ -371,7 +371,7 @@ async fn lock() {
         let mut round = p.first_mut().state().chain.view_change();
 
         let mut ready = false;
-        for i in 0..1000u32 {
+        for i in 0..1000 {
             info!(
                 "Checking if leader of round {}, and {} is different",
                 i,
@@ -396,7 +396,7 @@ async fn lock() {
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
-            delay_for(
+            wait(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
             )
@@ -441,7 +441,7 @@ async fn lock() {
             let _precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
         }
         p.poll().await;
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
         )
@@ -492,7 +492,7 @@ async fn lock_with_second_propose() {
         let mut round = p.first_mut().state().chain.view_change();
 
         let mut ready = false;
-        for i in 0..1000 {
+        for i in 0..1000u32 {
             info!(
                 "Checking if leader of round {}, and {} is different",
                 i,
@@ -517,7 +517,7 @@ async fn lock_with_second_propose() {
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
-            delay_for(
+            wait(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
             )
@@ -570,7 +570,7 @@ async fn lock_with_second_propose() {
             let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
         }
         p.poll().await;
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
         )
@@ -654,7 +654,7 @@ async fn pack_of_prevotes() {
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
-            delay_for(
+            wait(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
             )
@@ -720,7 +720,7 @@ async fn pack_of_prevotes() {
 
         first_node.poll().await;
 
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
         )
@@ -783,7 +783,7 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
-            delay_for(
+            wait(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
             )
@@ -834,7 +834,7 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
         p.poll().await;
         let leader_node = p.find_mut(&leader_pk).unwrap();
         let _precommit: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
         )
@@ -903,7 +903,7 @@ async fn lock_with_second_propose_and_pack_of_prevotes() {
         }
 
         p.poll().await;
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 2),
         )
@@ -943,7 +943,7 @@ async fn pack_of_prevotes_and_precommits() {
         let mut round = p.first_mut().state().chain.view_change();
 
         let mut ready = false;
-        for i in 0..1000u32 {
+        for i in 0..1000 {
             info!(
                 "Checking if leader of round {}, and {} is different",
                 i,
@@ -968,7 +968,7 @@ async fn pack_of_prevotes_and_precommits() {
             let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
             round += 1;
             // wait for current round end
-            delay_for(
+            wait(
                 config.node.macro_block_timeout
                     * (round - p.first_mut().state().chain.view_change()),
             )
@@ -1041,7 +1041,7 @@ async fn pack_of_prevotes_and_precommits() {
 
         first_node.poll().await;
 
-        delay_for(
+        wait(
             config.node.macro_block_timeout
                 * (round - p.first_mut().state().chain.view_change() + 1),
         )
@@ -1390,7 +1390,7 @@ async fn invalid_proposes_on_2nd_round() {
         // skip proposal and prevote of last leader.
         let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        delay_for(config.node.macro_block_timeout).await;
+        wait(config.node.macro_block_timeout).await;
 
         info!("====== Waiting for keyblock timeout. =====");
         p.poll().await;

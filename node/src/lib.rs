@@ -1001,7 +1001,7 @@ impl NodeState {
         let outputs_len: usize = block.transactions.iter().map(|tx| tx.txouts().len()).sum();
         let txs_len = block.transactions.len();
         sdebug!(self,
-            "Validating microblock: epoch={}, offset={}, block={}, inputs_len={}, outputs_len={}, txs_len={}",
+            "Validating microblock: epoch = {}, offset = {}, block = {}, inputs_len = {}, outputs_len = {}, txs_len = {}",
             epoch, offset, &hash, inputs_len, outputs_len, txs_len
         );
         let start_clock = Instant::now();
@@ -1319,9 +1319,7 @@ impl NodeState {
             // Consensus may have locked proposal.
             if consensus.should_propose() {
                 self.outgoing
-                    .push(NodeOutgoingEvent::MacroBlockProposeTimer(Duration::new(
-                        0, 0,
-                    )));
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimer(Duration::new(0, 0)));
                 *block_timer = MacroBlockTimer::Propose;
             } else {
                 self.outgoing
@@ -1738,7 +1736,7 @@ impl NodeState {
         let leader = self.chain.leader();
         swarn!(
             self,
-            "Timed out while waiting for a microblock: epoch={}, leader={}, elapsed={:?}",
+            "Timed out while waiting for a microblock: epoch = {}, leader = {}, elapsed = {:?}",
             self.chain.epoch(),
             leader,
             elapsed

@@ -46,7 +46,8 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval};
+use tokio::time::{self, Delay, Interval, Instant};
+use futures::future::FusedFuture;
 
 macro_rules! strace {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
@@ -507,11 +508,17 @@ impl NodeService {
     }
 
     pub async fn poll(&mut self) {
-        self.handle_outgoing();
+        self.handle_outgoing().await;
 
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
+
+        strace!(self, ">>> Selecting at {:?}...", Instant::now());
+        let result = futures::poll!(&mut self.macro_propose_timer);
+        strace!(self, ">>> Macro propose timer: is_terminated? = {:?}, poll = {:?}", 
+        self.macro_propose_timer.is_terminated(), result);
+        //assert_matches!(result, Poll::Pending);
 
         // handle events, then flush responses.
         select! {
@@ -521,6 +528,7 @@ impl NodeService {
             // poll timers
             _ = self.macro_propose_timer.as_mut() => {
                 let event = NodeIncomingEvent::MacroBlockProposeTimer;
+                strace!(self, ">>> Got a macroblock propose timer, yay!");
                 self.state.handle_event(event);
             },
             _ = self.macro_view_change_timer.as_mut() => {
@@ -650,7 +658,7 @@ impl NodeService {
         }
     }
 
-    fn handle_outgoing(&mut self) {
+    async fn handle_outgoing(&mut self) {
         for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
             strace!(self, "Outgoing event = {}", event);
             let result = match event {
@@ -668,6 +676,7 @@ impl NodeService {
                     self.network.send(dest, &topic, data)
                 }
                 NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
+                    strace!(self, ">>> Setting the macroblock propose timer to {:?}, now = {:?}", duration, Instant::now());
                     self.macro_propose_timer
                         .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
@@ -679,6 +688,7 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
+                    strace!(self, ">>> Setting the macroblock view change timer to {:?}, now = {:?}", duration, Instant::now());
                     self.macro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
@@ -710,6 +720,7 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
+                    strace!(self, ">>> Setting the microblock view change timer to {:?}, now = {:?}", duration, Instant::now());
                     self.micro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.macro_propose_timer.set(Fuse::terminated());

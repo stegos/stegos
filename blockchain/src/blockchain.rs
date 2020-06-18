@@ -1476,7 +1476,7 @@ impl Blockchain {
         let block_hash = Hash::digest(&block);
 
         debug!(
-            "Registering a macro block: epoch={}, block={}",
+            "Registering macroblock: epoch={}, block={}",
             epoch, &block_hash
         );
         let block_clone = block.clone();

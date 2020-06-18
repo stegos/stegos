@@ -30,7 +30,7 @@ use stegos_blockchain::Block;
 // use stegos_consensus::MacroBlockProposal;
 // use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
 // use stegos_crypto::pbc::Signature;
-use super::delay_for;
+use super::wait;
 
 use crate::CHAIN_LOADER_TOPIC;
 // CASE partition:
@@ -62,7 +62,7 @@ async fn dead_leader() {
         // let leader shoot his block
         p.poll().await;
         // emulate timeout on other nodes, and wait for request
-        delay_for(config.node.micro_block_timeout).await;
+        wait(config.node.micro_block_timeout).await;
 
         info!("PARTITION BEGIN");
         p.poll().await;

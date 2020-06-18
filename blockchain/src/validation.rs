@@ -526,7 +526,7 @@ impl Blockchain {
         assert_eq!(self.offset(), 0);
 
         debug!(
-            "Validating a macro block: epoch={}, block={}",
+            "Validating macroblock: epoch={}, block={}",
             epoch, &block_hash
         );
 

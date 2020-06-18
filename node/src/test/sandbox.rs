@@ -57,6 +57,7 @@ use stegos_blockchain::view_changes::ViewChangeProof;
 use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
+
 #[derive(Clone)]
 pub struct SandboxConfig {
     pub node: NodeConfig,
@@ -68,7 +69,12 @@ pub struct SandboxConfig {
 impl Default for SandboxConfig {
     fn default() -> SandboxConfig {
         SandboxConfig {
-            node: Default::default(),
+            node: NodeConfig {
+                micro_block_timeout: Duration::from_nanos(1),
+                macro_block_timeout: Duration::from_nanos(1),
+                sync_change_timeout: Duration::from_nanos(1),
+                ..Default::default()
+            },
             chain: Default::default(),
             num_nodes: 4,
             log_level: Level::Trace,
@@ -88,10 +94,6 @@ impl Sandbox {
     pub fn new(config: SandboxConfig) -> Self {
         stegos_crypto::init_test_network_prefix();
         pretty_env_logger::try_init_timed_custom_env("STEGOS_TEST_LOG").unwrap();
-        // let mut b = pretty_env_logger::formatted_timed_builder();
-        // if let Ok(s) = ::std::env::var("STEGOS_TEST_LOG") {
-        //     builder.parse_filters(&s);
-        // }
 
         // freeze the time for testing
         tokio::time::pause();
@@ -407,7 +409,7 @@ impl<'p> Partition<'p> {
 
     /// poll each node for updates.
     pub async fn poll(&mut self) {
-        trace!(">>> Polling...");
+        trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
             // poll future one time
             // - if it pending, then it waits for external event, we can drop it for now.
@@ -436,6 +438,9 @@ impl<'p> Partition<'p> {
                 }
             }
         }
+
+        // turn the timer wheel
+        tokio::task::yield_now().await;
     }
 
     pub fn len(&self) -> usize {

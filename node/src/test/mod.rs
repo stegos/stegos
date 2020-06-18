@@ -144,7 +144,7 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
     original_len == array.len()
 }
 
-async fn delay_for(d: Duration) {
+async fn wait(d: Duration) {
     tokio::time::advance(d).await;
     tokio::task::yield_now().await;
 }
@@ -186,10 +186,11 @@ mod test_framework {
 
         let result = futures::poll!(&mut future);
         assert_matches!(result, Poll::Pending);
-        delay_for(timer).await;
+        wait(timer).await;
 
         let result = futures::poll!(future);
 
         assert_matches!(result, Poll::Ready(_));
     }
+    
 }

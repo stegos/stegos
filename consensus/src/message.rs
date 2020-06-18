@@ -21,6 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::fmt;
 use crate::error::*;
 use stegos_blockchain::{MacroBlockHeader, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};

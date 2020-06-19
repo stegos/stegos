@@ -153,9 +153,6 @@ async fn wait(d: Duration) {
 mod test_framework {
     use super::*;
     use assert_matches::assert_matches;
-    use futures::future;
-    use futures::future::FutureExt;
-    use futures::pin_mut;
     use futures::task::Poll;
     use tokio::time::Duration;
 

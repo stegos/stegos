@@ -88,26 +88,31 @@ pub(crate) const CHAIN_LOADER_TOPIC: &str = "chain-loader";
 //
 // Logging utils.
 //
+#[allow(unused_macros)]
 macro_rules! strace {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Trace, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sdebug {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Debug, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sinfo {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Info, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! swarn {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Warn, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! serror {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Error, concat!("[{}|{}:{}:{}:{}] ", $fmt), $self.network_pkey, $self.chain.epoch(), $self.chain.offset(), $self.chain.view_change(), $self.chain.last_block_hash(), $($arg),*);

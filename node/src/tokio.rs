@@ -21,8 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-#![warn(unused_macros)]
-
 use super::api::*;
 use super::protos::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use super::{NodeIncomingEvent, NodeOutgoingEvent, NodeRequest, NodeResponse, NodeState};
@@ -48,29 +46,33 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval, Duration, Instant};
-use futures::future::FusedFuture;
+use tokio::time::{self, Delay, Interval, Instant};
 
+#[allow(unused_macros)]
 macro_rules! strace {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Trace, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sdebug {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Debug, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sinfo {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Info, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! swarn {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Warn, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! serror {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Error, concat!("[{}] ", $fmt), $self.state.network_pkey, $($arg),*);

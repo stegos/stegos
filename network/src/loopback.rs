@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 #![allow(dead_code)]
-#![warn(unused_macros)]
 
 use crate::replication::ReplicationEvent;
 use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
@@ -29,7 +28,6 @@ use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
 use libp2p_core::identity::ed25519;
 use libp2p_core::{identity, PeerId};
-use log::*;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Debug;
 use std::mem;
@@ -37,26 +35,31 @@ use std::sync::{Arc, Mutex};
 use stegos_crypto::pbc;
 use stegos_serialization::traits::ProtoConvert;
 
+#[allow(unused_macros)]
 macro_rules! strace {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Trace, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sdebug {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Debug, concat!("[{}] ", $fmt), $self.state..lock().unwrap().pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! sinfo {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Info, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! swarn {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Warn, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);
     );
 }
+#[allow(unused_macros)]
 macro_rules! serror {
     ($self:expr, $fmt:expr $(,$arg:expr)*) => (
         log::log!(log::Level::Error, concat!("[{}] ", $fmt), $self.state.lock().unwrap().pkey, $($arg),*);

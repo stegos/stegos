@@ -19,8 +19,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use futures::future;
-use futures::future::FutureExt;
 use futures::pin_mut;
 use futures::task::Poll;
 
@@ -38,8 +36,6 @@ use stegos_crypto::pbc::PublicKey;
 use stegos_crypto::pbc::VRF;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
-
-use pretty_env_logger::env_logger::{self, Env};
 
 use super::VDFExecution;
 use crate::*;
@@ -599,6 +595,7 @@ impl<'p> Partition<'p> {
         }
 
         self.poll().await;
+
         trace!("Checking for pre-votes...");
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
@@ -622,6 +619,7 @@ impl<'p> Partition<'p> {
                 }
             }
         }
+
         self.poll().await;
 
         trace!("Checking for pre-commits...");

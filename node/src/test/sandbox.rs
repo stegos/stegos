@@ -700,9 +700,19 @@ impl<'p> Partition<'p> {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
 
+        self.poll().await;
+
+        trace!("Checking node state. Expecting epoch = {}, offset = 0, block hash = {}",
+            epoch + 1, block_hash,
+        );
+        
         // Check state of all nodes.
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
+            let pkey = &node.node_service.state().network_pkey;
+            trace!("[{}] epoch = {}, offset = {}, last macro hash = {}, last block hash = {}", 
+             pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(),
+            );
             assert_eq!(chain.epoch(), epoch + 1);
             assert_eq!(chain.offset(), 0);
             assert_eq!(chain.last_macro_block_hash(), block_hash);

@@ -1714,7 +1714,7 @@ impl Blockchain {
             inputs.insert(input_hash, input);
         }
         info!(
-            "Registered a macro block: epoch={}, block={}, inputs={:?}, outputs={:?}",
+            "Registered macro block: epoch={}, block={}, inputs={:?}, outputs={:?}",
             epoch,
             block_hash,
             inputs

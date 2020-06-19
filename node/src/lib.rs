@@ -1139,15 +1139,6 @@ impl NodeState {
             .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
 
         // Re-stake expiring stakes
-        strace!(
-            self, 
-            ">>> Chain offset = {}, restaking offset = {}, synchronized? = {}, was? = {}",
-            self.chain.offset(),
-            self.restaking_offset, 
-            was_synchronized,
-            self.chain.is_synchronized()
-        );
-    
         if self.chain.offset() == self.restaking_offset
             || !was_synchronized && self.chain.is_synchronized()
         {

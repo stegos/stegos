@@ -46,7 +46,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval, Instant};
+use tokio::time::{self, Delay, Interval};
 
 #[allow(unused_macros)]
 macro_rules! strace {
@@ -526,7 +526,6 @@ impl NodeService {
             // poll timers
             _ = self.macro_propose_timer.as_mut() => {
                 let event = NodeIncomingEvent::MacroBlockProposeTimer;
-                strace!(self, ">>> Got a macroblock propose timer, yay!");
                 self.state.handle_event(event);
             },
             _ = self.macro_view_change_timer.as_mut() => {

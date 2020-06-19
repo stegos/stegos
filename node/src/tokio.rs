@@ -48,7 +48,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval, Instant};
+use tokio::time::{self, Delay, Interval, Duration, Instant};
 use futures::future::FusedFuture;
 
 macro_rules! strace {

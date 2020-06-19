@@ -430,8 +430,10 @@ impl<'p> Partition<'p> {
             }
         }
 
-        // turn the timer wheel
-        tokio::task::yield_now().await;
+        // Turn the timer wheel to let timers get polled. 
+        // Do not use `tokio::task::yield_now().await` here 
+        // as it can advance test time per the timers, e.g. by 30s.
+        tokio::time::delay_for(Duration::from_secs(0)).await;
     }
 
     pub fn len(&self) -> usize {

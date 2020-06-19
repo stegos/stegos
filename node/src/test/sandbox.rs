@@ -570,6 +570,7 @@ impl<'p> Partition<'p> {
 
     pub async fn skip_macro_block(&mut self) {
         trace!("Skipping macroblock...");
+        self.poll().await;
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let stake_epochs = chain.cfg().stake_epochs;
@@ -577,14 +578,13 @@ impl<'p> Partition<'p> {
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = chain.leader();
-        self.poll().await;
         let leader_node = self.find_mut(&leader_pk).unwrap();
         // Check for a proposal from the leader.
-        trace!("Fetching macroblock proposal for broadcast...");
+        trace!("Fetching macroblock proposal from {}...", leader_pk);
         let proposal: ConsensusMessage = leader_node
             .network_service
             .get_broadcast(crate::CONSENSUS_TOPIC);
-        trace!("Proposal: {:?}", proposal);
+        trace!("Proposal: {}", proposal);
         assert_eq!(proposal.epoch, epoch);
         assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
@@ -721,7 +721,6 @@ impl<'p> Partition<'p> {
 
         // Process re-stakes.        
         if restake_epoch {
-            self.poll().await;
             trace!("Fetching restakes...");
             for node in self.iter_except(&[leader_pk]) {
                 let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
@@ -735,7 +734,7 @@ impl<'p> Partition<'p> {
                         .receive_broadcast(crate::TX_TOPIC, restake.clone());
                 }
             }
-            //self.poll().await;
+            self.poll().await;
         }
     }
 

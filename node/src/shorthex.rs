@@ -53,12 +53,13 @@ fn fmt(a: &[u8], fmt: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
 impl<'a> std::fmt::LowerHex for HexSlice<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
         f.write_str("[")?;
-        if self.0.len() <= 8 {
+        let len = self.0.len();
+        if len <= 8 {
             fmt(self.0, f)?
         } else {
             fmt(&self.0[0..8], f)?;
             f.write_str("...")?;
-            fmt(&self.0[..8], f)?;
+            fmt(&self.0[(len - 8)..], f)?;
         }
         f.write_str("]")?;
         Ok(())

@@ -2,6 +2,9 @@ name: Release
 on: 
   release:
     types: [published]
+  push:
+    branches:
+       - dev
 
 jobs:
   build:
@@ -97,8 +100,18 @@ jobs:
       - name: release
         run: ./ci-scripts/build.sh build_release ${{matrix.build}}
 
+      - name: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET: release/${{ matrix.file }}${{ matrix.archive }}
+          TITLE: ${{ matrix.build }}-${{ matrix.file }}-${{steps.get_version.outputs.VERSION}}${{ matrix.archive}}
+          TAG: nightly
+        run: ./ci-scripts/github-check-nightly-release.sh
+        if: github.event.action != 'published'
+
       - name: Upload
         uses: actions/upload-release-asset@v1.0.1
+        if: github.event.action == 'published'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -106,4 +119,5 @@ jobs:
           asset_name: ${{ matrix.build }}-${{ matrix.file }}-${{steps.get_version.outputs.VERSION}}${{ matrix.archive}}
           asset_path: release/${{ matrix.file }}${{ matrix.archive }}
           asset_content_type: ${{ matrix.type }}
+
 

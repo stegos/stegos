@@ -654,13 +654,14 @@ impl<'p> Partition<'p> {
                 }
             }
         }
+
         self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
         let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
         // Process re-stakes.
         if restake_epoch {
-            debug!("Re-stake should happen in this epoch: {}", epoch);
+            debug!("Leader {} should re-stake during this epoch: {}", leader_pk, epoch);
             let restake: Transaction = self
                 .find_mut(&leader_pk)
                 .unwrap()
@@ -669,8 +670,8 @@ impl<'p> Partition<'p> {
             debug!("Got restake: {:?}", restake);
             restakes.push(restake);
         }
-
-        trace!("Fetching published macroblock...");
+        
+        trace!("Fetching published macroblock from {}", leader_pk);
         // Receive sealed block.
         let block: Block = self
             .find_mut(&leader_pk)
@@ -789,13 +790,6 @@ impl<'a> IndexMut<usize> for Partition<'a> {
 pub struct PartitionGuard<'p> {
     pub parts: (Partition<'p>, Partition<'p>),
 }
-
-// #[allow(dead_code)]
-// impl<'p> PartitionGuard<'p> {
-//     pub fn wait(&mut self, duration: Duration) {
-//         wait(&mut *self.timer, duration)
-//     }
-// }
 
 pub struct NodeSandbox {
     pub network_service: Loopback,

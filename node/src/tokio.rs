@@ -513,16 +513,10 @@ impl NodeService {
 
     pub async fn poll(&mut self) {
         self.handle_outgoing().await;
-
+   
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
-
-        strace!(self, ">>> Selecting at {:?}...", Instant::now());
-        let result = futures::poll!(&mut self.macro_propose_timer);
-        strace!(self, ">>> Macro propose timer: is_terminated? = {:?}, poll = {:?}", 
-        self.macro_propose_timer.is_terminated(), result);
-        //assert_matches!(result, Poll::Pending);
 
         // handle events, then flush responses.
         select! {
@@ -680,7 +674,6 @@ impl NodeService {
                     self.network.send(dest, &topic, data)
                 }
                 NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                    strace!(self, ">>> Setting the macroblock propose timer to {:?}, now = {:?}", duration, Instant::now());
                     self.macro_propose_timer
                         .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
@@ -692,7 +685,6 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
-                    strace!(self, ">>> Setting the macroblock view change timer to {:?}, now = {:?}", duration, Instant::now());
                     self.macro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
@@ -724,7 +716,6 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
-                    strace!(self, ">>> Setting the microblock view change timer to {:?}, now = {:?}", duration, Instant::now());
                     self.micro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.macro_propose_timer.set(Fuse::terminated());

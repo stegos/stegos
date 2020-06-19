@@ -1357,6 +1357,12 @@ impl NodeState {
         }
 
         let relevant_round = 1 + consensus.round();
+        strace!(
+            self, 
+            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}", 
+            relevant_round, 
+            self.cfg.macro_block_timeout
+        );
         self.outgoing
             .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
                 self.cfg.macro_block_timeout * relevant_round,
@@ -1529,7 +1535,6 @@ impl NodeState {
             return self.commit_proposed_block();
         }
 
-        strace!(self, "Flushing pending consensus messages...");
         // Flush pending messages.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
@@ -1539,7 +1544,6 @@ impl NodeState {
                 data,
             });
         }
-        strace!(self, "Done handling consensus events");
     }
 
     /// Get a timestamp for the next block.
@@ -1670,8 +1674,8 @@ impl NodeState {
         }
 
         swarn!(self,
-            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}",
-            self.chain.epoch(), consensus.round() + 1
+            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}, instant = {:?}",
+            self.chain.epoch(), consensus.round() + 1, Instant::now()
         );
 
         // Go to the next round.
@@ -2270,7 +2274,6 @@ impl NodeState {
                 unreachable!("Must be handled by NodeService");
             }
         };
-        strace!(self, "Handle result event = {:?}", result);
         if let Err(e) = result {
             serror!(self, "Error: {}", e);
         }

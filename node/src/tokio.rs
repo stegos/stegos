@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![warn(unused_macros)]
+
 use super::api::*;
 use super::protos::{ChainLoaderMessage, RequestBlocks, ResponseBlocks};
 use super::{NodeIncomingEvent, NodeOutgoingEvent, NodeRequest, NodeResponse, NodeState};

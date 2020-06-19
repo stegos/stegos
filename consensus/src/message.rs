@@ -145,3 +145,20 @@ impl ConsensusMessage {
         Ok(())
     }
 }
+
+impl fmt::Display for ConsensusMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ConsensusMessage[")?;
+        match self.body {
+            ConsensusMessageBody::Proposal { .. } => write!(f, "Proposal")?,
+            ConsensusMessageBody::Prevote { .. } => write!(f, "Prevote")?,
+            ConsensusMessageBody::Precommit { .. } => write!(f, "Precommit")?,
+        };
+        write!(f, "] {{ ")?;
+        write!(f, "round: {}, epoch: {}, block: {}, pkey: {}",
+            self.round, self.epoch, self.block_hash, self.pkey,
+        )?;
+        write!(f, "}}")?;
+        Ok(())
+    }
+}

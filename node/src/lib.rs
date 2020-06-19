@@ -21,8 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#![feature(async_closure)]
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-                             // #![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -453,7 +454,7 @@ impl NodeState {
         }
         if !self.chain.is_synchronized() {
             // Don't re-stake during bootstrap, wait for the actual network state.
-            strace!(self, "Skipping restaking - Node is not synchronized");
+            strace!(self, "Skip restaking: node is not synchronized");
             return Ok(());
         }
         assert_eq!(self.cfg.min_stake_fee, 0);
@@ -468,7 +469,7 @@ impl NodeState {
             if self.chain.epoch() < active_until_epoch {
                 sdebug!(
                     self,
-                    "Skip restaking - stake is active: utxo={}, active_until_epoch={}",
+                    "Skip restaking: stake is active: utxo={}, active_until_epoch={}",
                     input_hash,
                     active_until_epoch
                 );
@@ -556,7 +557,7 @@ impl NodeState {
                 data: tx.into_buffer()?,
             });
         }
-        sdebug!(
+        strace!(
             self,
             "Next restaking: epoch={}, offset={}",
             self.chain.epoch() + 1,
@@ -1132,7 +1133,16 @@ impl NodeState {
         self.outgoing
             .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
 
-        // Re-stake expiring stakes.
+        // Re-stake expiring stakes
+        strace!(
+            self, 
+            ">>> Chain offset = {}, restaking offset = {}, synchronized? = {}, was? = {}",
+            self.chain.offset(),
+            self.restaking_offset, 
+            was_synchronized,
+            self.chain.is_synchronized()
+        );
+    
         if self.chain.offset() == self.restaking_offset
             || !was_synchronized && self.chain.is_synchronized()
         {
@@ -1495,7 +1505,8 @@ impl NodeState {
                     consensus.prevote(macro_block)
                 }
                 Err(e) => {
-                    serror!(self,
+                    serror!(
+                        self,
                         "Macroblock proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
                         epoch, &block_hash, duration, e
                     );
@@ -1509,9 +1520,11 @@ impl NodeState {
 
         // Check if we can commit a block.
         if consensus.is_leader() && consensus.should_commit() {
+            strace!(self, "I'm the leader! Committing proposed block.");
             return self.commit_proposed_block();
         }
 
+        strace!(self, "Flushing pending consensus messages...");
         // Flush pending messages.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
@@ -1521,6 +1534,7 @@ impl NodeState {
                 data,
             });
         }
+        strace!(self, "Done handling consensus events");
     }
 
     /// Get a timestamp for the next block.
@@ -1593,6 +1607,7 @@ impl NodeState {
 
         consensus.propose(block_hash, block_proposal);
         consensus.prevote(block);
+        strace!(self, ">>> Handling consensus events...");
         self.handle_consensus_events();
         Ok(())
     }

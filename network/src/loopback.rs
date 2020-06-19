@@ -21,6 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 #![allow(dead_code)]
+#![warn(unused_macros)]
+
 use crate::replication::ReplicationEvent;
 use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
 use failure::{format_err, Error};
@@ -107,7 +109,7 @@ impl NetworkProvider for LoopbackNetwork {
     }
 
     fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
-        strace!(self, "Received publish for topic = {}", topic);
+        strace!(self, "Received broadcast for topic = {}", topic);
         let topic: String = topic.to_string();
         let msg = MessageFromNode::Publish { topic, data };
         self.state.lock().unwrap().queue.push_back(msg);
@@ -247,7 +249,7 @@ impl Loopback {
                 data: msg_data,
             }) => {
                 assert_eq!(topic, &msg_topic);
-                strace!(self, "Got message for topic {}", msg_topic);
+                strace!(self, "Got broadcast message for topic {}", msg_topic);
                 return Some(msg_data.clone());
             }
             Some(x) => {

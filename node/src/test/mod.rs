@@ -20,7 +20,6 @@
 // SOFTWARE.
 
 // most of the code is used in tests, so it can false positive detected as unused during build.
-//#![feature(async_closure)]
 #![allow(dead_code)]
 
 mod sandbox;

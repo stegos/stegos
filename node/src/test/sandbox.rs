@@ -59,6 +59,7 @@ pub struct SandboxConfig {
     pub node: NodeConfig,
     pub chain: ChainConfig,
     pub num_nodes: usize,
+    pub realtime: bool,
     pub log_level: Level,
 }
 
@@ -69,6 +70,7 @@ impl Default for SandboxConfig {
             chain: Default::default(),
             num_nodes: 4,
             log_level: Level::Trace,
+            realtime: false,
         }
     }
 }
@@ -87,7 +89,12 @@ impl Sandbox {
         pretty_env_logger::try_init_timed_custom_env("STEGOS_TEST_LOG").unwrap();
 
         // freeze the time for testing
-        tokio::time::pause();
+        if !config.realtime {
+            info!("Using test time!");
+            tokio::time::pause();
+        } else {
+            info!("Using real time!");
+        }
 
         let num_nodes = config.num_nodes;
         let timestamp = Timestamp::now();
@@ -357,10 +364,17 @@ impl<'p> Partition<'p> {
         let awards = chain.epoch_info(epoch - 1).unwrap().unwrap();
         let offset = chain.offset();
         let last_block = chain.last_block_hash();
+        trace!("Matching node state to first node {}, leader = {}", 
+            node.node_service.state().network_pkey,
+            chain.leader()
+        );
+        trace!("Expecting epoch = {}, offset = {}, last block = {}", epoch, offset, last_block);
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
-            trace!("Checking node = {}, {:?}", node.node_service.state().network_pkey, node.validator_id());
-
+            trace!("[{}] epoch = {}, offset = {}, last block = {}, leader = {}", 
+                node.node_service.state().network_pkey, 
+                chain.epoch(), chain.offset(), chain.last_block_hash(), chain.leader()
+            );
             assert_eq!(chain.epoch(), epoch);
             assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
             assert_eq!(chain.offset(), offset);
@@ -518,8 +532,7 @@ impl<'p> Partition<'p> {
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
         }
-        //trace!("Successfully skipped microblock, polling again...");
-        //self.poll().await;
+        self.poll().await;
     }
 
     /// Emulate rollback of microblock, for wallet tests
@@ -570,7 +583,6 @@ impl<'p> Partition<'p> {
 
     pub async fn skip_macro_block(&mut self) {
         trace!("Skipping macroblock...");
-        self.poll().await;
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let stake_epochs = chain.cfg().stake_epochs;
@@ -702,23 +714,23 @@ impl<'p> Partition<'p> {
 
         self.poll().await;
 
-        trace!("Checking node state. Expecting epoch = {}, offset = 0, block hash = {}",
-            epoch + 1, block_hash,
+        trace!("Checking node state. Expecting epoch = {}, offset = 0, block hash = {}, leader = {}",
+            epoch + 1, block_hash, leader_pk,
         );
         
         // Check state of all nodes.
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
-            trace!("[{}] epoch = {}, offset = {}, last macro hash = {}, last block hash = {}", 
-             pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(),
+            trace!("[{}] epoch = {}, offset = {}, last macro hash = {}, last block hash = {}, leader = {}", 
+             pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
-            assert_eq!(chain.offset(), 0);
             assert_eq!(chain.last_macro_block_hash(), block_hash);
+            assert_eq!(chain.offset(), 0);
             assert_eq!(chain.last_block_hash(), block_hash);
         }
-
+        
         // Process re-stakes.        
         if restake_epoch {
             trace!("Fetching restakes...");

@@ -46,7 +46,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval};
+use tokio::time::{self, Delay, Interval, Instant};
 
 #[allow(unused_macros)]
 macro_rules! strace {
@@ -697,13 +697,16 @@ impl NodeService {
                 } => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
                     let challenge = random.to_bytes();
+                    let pkey = self.state.network_pkey.clone();
                     let solver = move || {
+                        let now = Instant::now();
                         let solution = vdf.solve(&challenge, difficulty);
                         tx.send(solution).ok(); // ignore errors.
+                        trace!("[{}] Solved VDF puzzle, elapsed {:?}", pkey, now.elapsed());
                     };
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);
-                    strace!(self, "Solved VDF puzzle");
+                    //strace!(self, "Solved VDF puzzle");
                     self.micro_propose_timer.set(rx.fuse());
                     self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());

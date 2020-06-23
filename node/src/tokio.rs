@@ -216,6 +216,8 @@ pub struct NodeService {
     macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
     micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
     micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
+
+    now: Instant,
 }
 
 impl NodeService {
@@ -309,6 +311,7 @@ impl NodeService {
             macro_view_change_timer: Box::pin(Fuse::terminated()),
             micro_propose_timer: Box::pin(Fuse::terminated()),
             micro_view_change_timer: Box::pin(Fuse::terminated()),
+            now: Instant::now(),
         };
 
         Ok((service, node))
@@ -512,8 +515,9 @@ impl NodeService {
     }
 
     pub async fn poll(&mut self) {
-        self.handle_outgoing().await;
-   
+        strace!(self, "Node polling. Elapsed {:?}", self.now.elapsed());
+        self.now = Instant::now();
+
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -648,6 +652,8 @@ impl NodeService {
             }
         }
 
+        self.handle_outgoing().await;
+   
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
                 chain_readers.push(reader)
@@ -698,6 +704,7 @@ impl NodeService {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
                     let challenge = random.to_bytes();
                     let pkey = self.state.network_pkey.clone();
+                    trace!("[{}] Solving VDF puzzle...", pkey);
                     let solver = move || {
                         let now = Instant::now();
                         let solution = vdf.solve(&challenge, difficulty);
@@ -706,7 +713,6 @@ impl NodeService {
                     };
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);
-                    //strace!(self, "Solved VDF puzzle");
                     self.micro_propose_timer.set(rx.fuse());
                     self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());

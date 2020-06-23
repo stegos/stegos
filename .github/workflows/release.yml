@@ -1,119 +1,88 @@
 name: Release
-on:
+on: 
+  release:
+    types: [published]
   push:
-    tags:
-      - 'v*'
-
+    branches:
+       - dev
 
 jobs:
-  create_release:
-    name: Create release page
-    runs-on: ubuntu-16.04
-    steps:
-      - name: Set tag name
-        shell: bash
-        run: echo "::set-env name=BRANCH_NAME::$(echo ${GITHUB_REF##*/})"
-
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ env.BRANCH_NAME }}
-          release_name: Release ${{ env.BRANCH_NAME }}
-          draft: true
-          
-  release:
-    name: Release
-    needs: create_release
+  build:
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        build: [linux, macos]
-        include:
-          - build: linux
-            os: ubuntu-16.04
-            target: x86_64-unknown-linux-gnu
-          - build: macos
-            os: macos-latest
-            target: x86_64-apple-darwin
-    steps:
-      # Checkout the source code
-      - uses: actions/checkout@v2
-
-      - name: Cache cargo registry
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-registry-
-      - name: Cache cargo index
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-index-
-      - name: Cache cargo build
-        uses: actions/cache@v1
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-release-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-release-target-
-
-      - name: Install missing packages
-        run: ./ci-scripts/build.sh builddep
-        shell: bash
-
-      - name: release
-        run: ./ci-scripts/build.sh release ${{matrix.build}}-x64
-        shell: bash
-
-      - name: Upload Release Assets
-        run: |
-          set -x
-          assets=()
-          for asset in ./release/*; do
-            title=${{matrix.build}}-$(basename $asset)
-            assets+=("-a" "$asset#$title")
-          done
-          tag_name="${GITHUB_REF##*/}"
-          hub release edit "${assets[@]}" -m '' "$tag_name"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-  win:
-    name: Release (windows)
-    needs: create_release
-    runs-on: windows-2019
-    env: 
-      target: x86_64-pc-windows-gnu
     defaults:
       run:
-        shell: bash.exe -eo pipefail "{0}"
+        shell: bash -eo pipefail "{0}"
+
+    strategy:
+      matrix:
+        build: [linux-x64, macos-x64, win-x64, android-x64, android-aarch64]
+
+        include:
+          - build: linux-x64
+            os: ubuntu-16.04
+            cargo_folder: ~/.cargo
+            file: stegos
+            archive: .tar.gz
+            type: application/gzip
+
+          - build: win-x64
+            os: windows-2019
+            cargo_folder: c:/Users/runneradmin/.cargo
+            file: stegos
+            archive: .zip
+            type: application/zip
+
+          - build: macos-x64
+            os: macos-latest
+            cargo_folder: ~/.cargo
+            file: stegos
+            archive: .tar.gz
+            type: application/gzip
+          
+          - build: android-x64
+            os: ubuntu-16.04
+            cargo_folder: ~/.cargo
+            file: libstegos
+            archive: .tar.gz
+            type: application/gzip
+
+          - build: android-aarch64
+            os: ubuntu-16.04
+            cargo_folder: ~/.cargo
+            file: libstegos
+            archive: .tar.gz
+            type: application/gzip
+            
+
     steps:
-      - name: Set up shell
+      - name: Set up windows shel
         run: | 
           echo ::add-path::C:\msys64\usr\bin\
           echo ::add-path::C:\msys64\mingw64\bin\
         shell: pwsh
-      # Checkout the source code
+        if: matrix.build == 'win-x64'
+
+      - name: Set up android build
+        run: echo "::set-env name=WITH_ANDROID::1"
+        if: startsWith(matrix.build, 'android')
+
+      - name: Set up version
+        id: get_version
+        run: echo ::set-output name=VERSION::$(echo ${GITHUB_REF##*/})
+
       - uses: actions/checkout@v2
 
       - name: Cache cargo registry
         uses: actions/cache@v1
         with:
-          path: c:/Users/runneradmin/.cargo/registry
+          path: ${{matrix.cargo_folder}}/registry
           key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
                 ${{ runner.os }}-cargo-registry-
       - name: Cache cargo index
         uses: actions/cache@v1
         with:
-          path: c:/Users/runneradmin/.cargo/git
+          path: ${{matrix.cargo_folder}}/git
           key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
                 ${{ runner.os }}-cargo-index-
@@ -129,78 +98,26 @@ jobs:
         run: ./ci-scripts/build.sh builddep
 
       - name: release
-        run: ./ci-scripts/build.sh release win-x64
+        run: ./ci-scripts/build.sh build_release ${{matrix.build}}
 
-      - name: Upload Release Assets
-        run: |
-          set -x
-          assets=()
-          for asset in ./release/*; do
-            title=win-$(basename $asset)
-            assets+=("-a" "$asset#$title")
-          done
-          tag_name="${GITHUB_REF##*/}"
-          hub release edit "${assets[@]}" -m '' "$tag_name"
+      - name: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET: release/${{ matrix.file }}${{ matrix.archive }}
+          TITLE: ${{ matrix.build }}-${{ matrix.file }}-${{steps.get_version.outputs.VERSION}}${{ matrix.archive}}
+          TAG: nightly
+        run: ./ci-scripts/github-check-nightly-release.sh
+        if: github.event.action != 'published'
 
-
-  android:
-    name: Release 
-    needs: create_release
-    runs-on: ubuntu-16.04
-    strategy:
-      matrix:
-        build: [android-x64, android-aarch64]
-        include:
-          - build: android-x64
-            os: ubuntu-16.04
-          - build: android-aarch64
-            os: ubuntu-16.04
-    steps:
-      # Checkout the source code
-      - uses: actions/checkout@v2
-
-      - name: Cache cargo registry
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/registry
-          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-registry-
-      - name: Cache cargo index
-        uses: actions/cache@v1
-        with:
-          path: ~/.cargo/git
-          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-index-
-      - name: Cache cargo build
-        uses: actions/cache@v1
-        with:
-          path: target
-          key: ${{ runner.os }}-cargo-release-target-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-                ${{ runner.os }}-cargo-release-target-
-
-      - name: Install missing packages
-        run: WITH_ANDROID=1 ./ci-scripts/build.sh builddep
-        shell: bash
-
-      - name: Test
-        run: WITH_ANDROID=1 ./ci-scripts/build.sh release ${{matrix.build}}
-        shell: bash
-
-      - name: Upload Release Assets
-        run: |
-          set -x
-          assets=()
-          for asset in ./release/*; do
-            title=${{matrix.build}}-$(basename $asset)
-            assets+=("-a" "$asset#$title")
-          done
-          tag_name="${GITHUB_REF##*/}"
-          hub release edit "${assets[@]}" -m '' "$tag_name"
+      - name: Upload
+        uses: actions/upload-release-asset@v1.0.1
+        if: github.event.action == 'published'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_name: ${{ matrix.build }}-${{ matrix.file }}-${{steps.get_version.outputs.VERSION}}${{ matrix.archive}}
+          asset_path: release/${{ matrix.file }}${{ matrix.archive }}
+          asset_content_type: ${{ matrix.type }}
+
 

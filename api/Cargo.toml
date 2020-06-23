@@ -30,7 +30,7 @@ async-trait="0.1.2"
 futures-retry="0.5.0"
 
 #tokio-tungstenite="0.10.1"
-tokio-tungstenite = { git = "https://github.com/joelreymont/tokio-tungstenite" }
+tokio-tungstenite = { git = "https://github.com/snapview/tokio-tungstenite" }
 tungstenite = { version = "0.10", default-features = false }
 [dev-dependencies]
 lipsum = "0.6"

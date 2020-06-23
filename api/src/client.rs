@@ -31,10 +31,10 @@ use futures::prelude::*;
 use futures::SinkExt;
 use log::*;
 use tokio::net::TcpStream;
-use tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Error as WsError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
+use tungstenite::protocol::WebSocketConfig;
 
 const RECONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 use futures_retry::{FutureRetry, RetryPolicy};
@@ -59,8 +59,13 @@ pub struct WebSocketClient {
 
 impl WebSocketClient {
     pub async fn new(endpoint: String, api_token: ApiToken) -> Result<Self, Error> {
-        let config = WebSocketConfig { max_frame_size: None, ..Default::default() };
-        let connection = tokio_tungstenite::connect_async_with_config(&endpoint, Some(config)).await?.0;
+        let config = WebSocketConfig {
+            max_frame_size: None,
+            ..Default::default()
+        };
+        let connection = tokio_tungstenite::connect_async_with_config(&endpoint, Some(config))
+            .await?
+            .0;
         let pending_notifications = VecDeque::new();
         Ok(Self {
             endpoint,

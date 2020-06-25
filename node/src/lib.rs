@@ -443,7 +443,7 @@ impl NodeState {
             .chain
             .election_result()
             .validators
-            .iter()
+            .0.iter()
             .find(|(key, _)| key == &self.network_pkey)
             .map(|(_, v)| *v)
             .unwrap_or(0);
@@ -1414,7 +1414,7 @@ impl NodeState {
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
                 self.chain.election_result().clone(),
-                self.chain.validators_at_epoch_start().into_iter().collect(),
+                self.chain.validators_at_epoch_start().0.into_iter().collect(),
             );
 
             // Flush pending messages.
@@ -1635,7 +1635,7 @@ impl NodeState {
                 .chain
                 .election_result()
                 .validators
-                .get(*autocommit)
+                .0.get(*autocommit)
                 .expect("to find our node in consensus group before overflow counter.");
 
             let is_relay = leader.0 == self.network_pkey;

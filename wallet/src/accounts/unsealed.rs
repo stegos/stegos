@@ -628,7 +628,7 @@ impl UnsealedAccountService {
         outputs_hashes: Vec<Hash>,
         canaries: Vec<Canary>,
         outputs: Vec<Output>, // TODO: split validate and apply methods.
-        validators: StakersGroup,
+        validators: Validators,
     ) -> Result<(), Error> {
         if header.epoch < self.database.epoch() {
             let block_hash = Hash::digest(&header);

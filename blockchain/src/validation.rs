@@ -707,10 +707,10 @@ impl Blockchain {
         }
 
         let validators_at_start = self.validators_at_epoch_start();
-        if header.activity_map.len() != validators_at_start.len() {
+        if header.activity_map.len() != validators_at_start.0.len() {
             return Err(BlockError::TooBigActivitymap(
                 header.activity_map.len(),
-                validators_at_start.len(),
+                validators_at_start.0.len(),
             )
             .into());
         }

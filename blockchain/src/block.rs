@@ -21,6 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use std::fmt::{Display, Formatter, Error};
+use std::iter::{Iterator, FromIterator};
+
 use crate::error::TransactionError;
 use crate::merkle::*;
 use crate::output::*;
@@ -334,7 +337,38 @@ impl From<MicroBlock> for LightMicroBlock {
 //--------------------------------------------------------------------------------------------------
 
 /// Group of validators, should be ordered and unique by pbc::PublicKey.
-pub type StakersGroup = Vec<(pbc::PublicKey, i64)>;
+pub type Validator = (pbc::PublicKey, i64);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Validators(pub Vec<Validator>);
+
+impl Validators {
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+}
+
+impl FromIterator<Validator> for Validators {
+    fn from_iter<I: IntoIterator<Item=Validator>>(iter: I) -> Self {
+        let mut vec = Vec::new();
+        for v in iter {
+            vec.push(v)
+        }
+        Validators(vec)
+    }
+}
+
+impl Display for Validators {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        write!(f, "[")?;
+        for v in &self.0[0..self.0.len() - 1] {
+            write!(f, "({}, {}), ", v.0, v.1)?;
+        }
+
+        let v = &self.0[self.0.len() - 1];
+        write!(f, "({}, {})]", v.0, v.1)
+    }
+}
 
 /// Macro Block Header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,7 +490,7 @@ pub struct LightMacroBlock {
     #[serde(serialize_with = "stegos_crypto::utils::serialize_bitvec")]
     pub multisigmap: BitVec,
     /// Validators for the new epoch.
-    pub validators: StakersGroup,
+    pub validators: Validators,
     /// Input hashes.
     pub input_hashes: Vec<Hash>,
     /// Output hashes.
@@ -476,7 +510,7 @@ impl MacroBlock {
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVec,
-        validators: StakersGroup,
+        validators: Validators,
     ) -> MacroBlock {
         let gamma = Fr::zero();
         let inputs: Vec<Hash> = Vec::new();
@@ -511,7 +545,7 @@ impl MacroBlock {
         timestamp: Timestamp,
         block_reward: i64,
         activity_map: BitVec,
-        validators: StakersGroup,
+        validators: Validators,
         transactions: &[Transaction],
     ) -> Result<MacroBlock, TransactionError> {
         //
@@ -578,15 +612,15 @@ impl MacroBlock {
         block_reward: i64,
         gamma: Fr,
         activity_map: BitVec,
-        validators: StakersGroup,
+        validators: Validators,
         mut inputs: Vec<Hash>,
         mut outputs: Vec<Output>,
     ) -> MacroBlock {
         // Validators are already sorted.
-        assert!(validators.len() < std::u32::MAX as usize);
-        let validators_len = validators.len() as u32;
+        assert!(validators.0.len() < std::u32::MAX as usize);
+        let validators_len = validators.0.len() as u32;
         // Calculate validators_range_hash.
-        let validators_range_hash = Merkle::root_hash_from_array(&validators);
+        let validators_range_hash = Merkle::root_hash_from_array(&validators.0);
 
         // Re-order all inputs to blur transaction boundaries.
         // Current algorithm just sorts this list.
@@ -645,7 +679,7 @@ impl MacroBlock {
         }
     }
 
-    pub fn into_light_macro_block(self, validators: StakersGroup) -> LightMacroBlock {
+    pub fn into_light_macro_block(self, validators: Validators) -> LightMacroBlock {
         let input_hashes: Vec<Hash> = self.inputs;
         let outputs: Vec<Output> = self.outputs;
         let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();

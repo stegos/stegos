@@ -175,7 +175,7 @@ impl ProtoConvert for ElectionResult {
         let mut msg = Self::Proto::new();
         msg.set_random(self.random.into_proto());
         msg.set_view_change(self.view_change);
-        for validator in &self.validators {
+        for validator in &self.validators.0 {
             let mut staker = blockchain::Staker::new();
             staker.set_network_pkey(validator.0.into_proto());
             staker.set_amount(validator.1);
@@ -190,9 +190,9 @@ impl ProtoConvert for ElectionResult {
         let view_change = proto.get_view_change();
         let facilitator = ProtoConvert::from_proto(proto.get_facilitator())?;
 
-        let mut validators = Vec::new();
+        let mut validators = Validators::new();
         for staker in &proto.stakers {
-            validators.push((
+            validators.0.push((
                 ProtoConvert::from_proto(staker.get_network_pkey())?,
                 staker.get_amount(),
             ))
@@ -410,7 +410,7 @@ impl ProtoConvert for LightEpochInfo {
         let mut msg = Self::Proto::new();
         msg.set_header(self.header.into_proto());
         msg.set_facilitator(self.facilitator.into_proto());
-        for validator in &self.validators {
+        for validator in &self.validators.0 {
             let mut validator_proto = blockchain::Staker::new();
             validator_proto.set_network_pkey(validator.0.into_proto());
             validator_proto.set_amount(validator.1);
@@ -422,9 +422,9 @@ impl ProtoConvert for LightEpochInfo {
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let header = MacroBlockHeader::from_proto(proto.get_header())?;
         let facilitator = ProtoConvert::from_proto(proto.get_facilitator())?;
-        let mut validators = Vec::new();
+        let mut validators = Validators::new();
         for validator in &proto.validators {
-            validators.push((
+            validators.0.push((
                 ProtoConvert::from_proto(validator.get_network_pkey())?,
                 validator.get_amount(),
             ))
@@ -1154,7 +1154,7 @@ impl ProtoConvert for LightMacroBlock {
         proto.set_header(self.header.into_proto());
         proto.set_multisig(self.multisig.into_proto());
         proto.multisigmap.extend(self.multisigmap.iter());
-        for validator in &self.validators {
+        for validator in &self.validators.0 {
             let mut staker = blockchain::Staker::new();
             staker.set_network_pkey(validator.0.into_proto());
             staker.set_amount(validator.1);
@@ -1180,9 +1180,9 @@ impl ProtoConvert for LightMacroBlock {
             pbc::Signature::zero()
         };
         let multisigmap = BitVec::from_iter(proto.multisigmap.iter().map(|x| *x));
-        let mut validators = Vec::new();
+        let mut validators = Validators::new();
         for staker in &proto.validators {
-            validators.push((
+            validators.0.push((
                 ProtoConvert::from_proto(staker.get_network_pkey())?,
                 staker.get_amount(),
             ))

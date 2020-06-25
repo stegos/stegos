@@ -82,7 +82,7 @@ pub struct LightDatabase {
     /// Copy of the last macro block timestamp.
     last_macro_block_timestamp: Timestamp,
     /// Validators on the start of the epoch.
-    validators: StakersGroup,
+    validators: Validators,
     /// Facilitator.
     facilitator_pkey: pbc::PublicKey,
     /// Micro blocks for the current epoch.
@@ -619,7 +619,7 @@ impl LightDatabase {
         input_hashes: &[Hash],
         output_hashes: &[Hash],
         canaries: &[Canary],
-        validators: &StakersGroup,
+        validators: &Validators,
     ) -> Result<(), Error> {
         let block_hash = Hash::digest(header);
 
@@ -909,7 +909,7 @@ impl LightDatabase {
         header: MacroBlockHeader,
         inputs_iter: InputsIter,
         outputs_iter: OutputsIter,
-        validators: StakersGroup,
+        validators: Validators,
         account_pkey: &scc::PublicKey,
         account_skey: &scc::SecretKey,
     ) -> HashMap<Hash, TransactionStatus>

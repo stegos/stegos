@@ -26,6 +26,7 @@
 use crate::error::BlockchainError;
 use crate::mvcc::MultiVersionedMap;
 use crate::output::Output;
+use crate::block::Validators;
 use log::*;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -230,7 +231,7 @@ impl Escrow {
         &self,
         epoch: u64,
         min_stake_amount: i64,
-    ) -> Vec<(pbc::PublicKey, i64)> {
+    ) -> Validators {
         let mut stakes: BTreeMap<pbc::PublicKey, i64> = BTreeMap::new();
         for (k, v) in self.escrow.iter() {
             if v.active_until_epoch < epoch {

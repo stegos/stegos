@@ -23,6 +23,7 @@
 
 use crate::error::MultisignatureError;
 use crate::ValidatorId;
+use crate::block::Validators;
 use bit_vec::BitVec;
 use log::warn;
 use std::collections::BTreeMap;
@@ -92,15 +93,15 @@ pub fn check_multi_signature(
     hash: &Hash,
     multisig: &pbc::Signature,
     multisigmap: &BitVec,
-    validators: &Vec<(pbc::PublicKey, i64)>,
+    validators: &Validators,
     total_slots: i64,
 ) -> Result<(), MultisignatureError> {
     // Check for trailing bits in the bitmap.
-    if multisigmap.len() > validators.len() {
+    if multisigmap.len() > validators.0.len() {
         warn!("multisigmap = {:?}", multisigmap);
         return Err(MultisignatureError::TooBigBitmap(
             multisigmap.len(),
-            validators.len(),
+            validators.0.len(),
         ));
     };
 
@@ -108,7 +109,7 @@ pub fn check_multi_signature(
     // total count of group slots
     let mut group_total_slots = 0;
 
-    for ((validator_pkey, slots), val) in validators.iter().zip(multisigmap.iter()) {
+    for ((validator_pkey, slots), val) in validators.0.iter().zip(multisigmap.iter()) {
         if !val {
             continue;
         }

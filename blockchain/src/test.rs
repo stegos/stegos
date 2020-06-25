@@ -25,7 +25,7 @@
 
 use std::convert::TryInto;
 
-use super::block::{Block, MacroBlock, MicroBlock};
+use super::block::{Block, MacroBlock, MicroBlock, Validators};
 use super::blockchain::{Blockchain, OutputRecovery};
 use super::election::mix;
 use super::error::BlockchainError;
@@ -248,6 +248,7 @@ pub fn fake_genesis(
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
 
+    let stakers = Validators(stakers);
     let validators = election::select_validators_slots(stakers, random, max_slot_count).validators;
 
     // Create a block.
@@ -278,7 +279,7 @@ pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychai
         let sig = pbc::sign_hash(&block_hash, &keychain.network_skey);
         signatures.insert(keychain.network_pkey.clone(), sig);
     }
-    let (multisig, multisigmap) = create_multi_signature(&validators, &signatures);
+    let (multisig, multisigmap) = create_multi_signature(&validators.0, &signatures);
     block.multisig = multisig;
     block.multisigmap = multisigmap;
 }

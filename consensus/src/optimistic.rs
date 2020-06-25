@@ -91,7 +91,7 @@ impl ViewChangeCollector {
         // get validator id, by public_key
         let validator_id = blockchain
             .validators()
-            .iter()
+            .0.iter()
             .enumerate()
             .find(|(_id, validator)| validator.0 == pkey)
             .map(|(id, _)| id as ValidatorId)
@@ -173,7 +173,7 @@ impl ViewChangeCollector {
         if self.actual_view_changes.get(&validator_id).is_none() {
             self.actual_view_changes
                 .insert(validator_id, message.clone());
-            self.collected_slots += blockchain.validators()[validator_id as usize].1;
+            self.collected_slots += blockchain.validators().0[validator_id as usize].1;
         }
         info!(
             "Collected view_changes: collected={}, total={},",
@@ -186,7 +186,7 @@ impl ViewChangeCollector {
                 .actual_view_changes
                 .iter()
                 .map(|(k, v)| (*k, &v.signature));
-            let proof = ViewChangeProof::new(signatures, blockchain.validators().len());
+            let proof = ViewChangeProof::new(signatures, blockchain.validators().0.len());
             self.actual_view_changes.clear();
             self.collected_slots = 0;
             return Ok(Some(proof));

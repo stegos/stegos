@@ -30,7 +30,7 @@ use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
     chain_to_prefix, create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output,
-    PaymentOutput, PaymentPayloadData, StakeOutput, StakersGroup, Timestamp,
+    PaymentOutput, PaymentPayloadData, StakeOutput, Validators, Timestamp,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
@@ -188,7 +188,7 @@ fn main() {
     stegos_crypto::set_network_prefix(chain_to_prefix(chain))
         .expect("Network prefix not initialised.");
 
-    let mut stakers: StakersGroup = Vec::with_capacity(keys as usize);
+    let mut stakers: Validators = Vec::with_capacity(keys as usize);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(
         scc::SecretKey,

@@ -21,7 +21,7 @@
 
 //! Leader election and group formation algorithms and tests.
 
-use crate::block::StakersGroup;
+use crate::block::Validators;
 use log::error;
 use serde_derive::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -47,7 +47,7 @@ pub struct ElectionResult {
     /// Count of retries, during creating new epoch.
     pub view_change: u32,
     /// List of Validators
-    pub validators: StakersGroup,
+    pub validators: Validators,
     /// Facilitator of the transaction pool
     pub facilitator: pbc::PublicKey,
 }
@@ -56,7 +56,7 @@ impl Default for ElectionResult {
     fn default() -> Self {
         let facilitator: pbc::PublicKey = pbc::G2::generator().into(); // some fake key
         let view_change = 0;
-        let validators = Vec::new();
+        let validators = Validators::new();
         let random = pbc::VRF {
             rand: Hash::digest("random"),
             proof: pbc::G1::zero(),
@@ -70,10 +70,10 @@ impl Default for ElectionResult {
     }
 }
 
-pub fn select_leader(validators: &StakersGroup, random: &Hash, view_change: u32) -> pbc::PublicKey {
+pub fn select_leader(validators: &Validators, random: &Hash, view_change: u32) -> pbc::PublicKey {
     let random = generate_u64(*random, view_change);
-    let leader_id = select_winner(validators.iter().map(|(_k, slots)| slots), random).unwrap();
-    validators[leader_id].0
+    let leader_id = select_winner(validators.0.iter().map(|(_k, slots)| slots), random).unwrap();
+    validators.0[leader_id].0
 }
 
 impl ElectionResult {
@@ -85,7 +85,7 @@ impl ElectionResult {
     #[inline]
     pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
         self.validators
-            .iter()
+            .0.iter()
             .find(|item| item.0 == *peer)
             .is_some()
     }
@@ -132,30 +132,30 @@ where
 /// Where PublicKey is unique among array network identifier of validators,
 /// slots_count is a count of slots owned by specific validator.
 pub fn select_validators_slots(
-    mut stakers: StakersGroup,
+    mut stakers: Validators,
     random: pbc::VRF,
     slot_count: i64,
 ) -> ElectionResult {
-    assert!(!stakers.is_empty(), "Have stakes");
+    assert!(!stakers.0.is_empty(), "Have stakes");
     assert!(slot_count > 0);
     // Sort the source list to get predictable result.
     // Does nothing if stakers were derived from Escrow.
-    stakers.sort();
+    stakers.0.sort();
     // Using BTreeMap to keep order.
     let mut validators = BTreeMap::new();
 
     let seed = random.rand;
     for i in 0..slot_count {
         let rand = generate_u64(seed, i as u32);
-        let index = select_winner(stakers.iter().map(|(_k, stake)| stake), rand).unwrap();
+        let index = select_winner(stakers.0.iter().map(|(_k, stake)| stake), rand).unwrap();
 
-        let winner = stakers[index].0;
+        let winner = stakers.0[index].0;
 
         // Increase slot counter of validator.
         *validators.entry(winner).or_insert(0) += 1;
     }
     // Convert Map -> Vec. Deterministically ordered.
-    let validators: Vec<_> = validators.into_iter().collect();
+    let validators: Validators = validators.into_iter().collect();
     let facilitator = select_facilitator(&seed, &validators);
     ElectionResult {
         validators,
@@ -165,15 +165,15 @@ pub fn select_validators_slots(
     }
 }
 
-pub fn select_facilitator(random: &Hash, validators: &StakersGroup) -> pbc::PublicKey {
+pub fn select_facilitator(random: &Hash, validators: &Validators) -> pbc::PublicKey {
     // generate special random for facilitator.
     let mut hasher = Hasher::new();
     random.hash(&mut hasher);
     "facilitator".hash(&mut hasher);
     let seed = hasher.result();
     let rand = shrink_hash(seed);
-    let facilitator_id = select_winner(validators.iter().map(|(_k, slots)| slots), rand).unwrap();
-    validators[facilitator_id].0.clone()
+    let facilitator_id = select_winner(validators.0.iter().map(|(_k, slots)| slots), rand).unwrap();
+    validators.0[facilitator_id].0.clone()
 }
 
 /// Mix seed hash with round value to produce new hash.

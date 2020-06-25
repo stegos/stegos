@@ -507,18 +507,20 @@ impl<'p> Partition<'p> {
     /// This function will poll() every node.
     pub async fn skip_micro_block(&mut self) {
         trace!("Skipping microblock...");
-        self.poll().await;
         self.assert_synchronized();
         let chain = &self.first().node_service.state().chain;
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
         let leader_pk = chain.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
         self.find_mut(&leader_pk).unwrap().handle_vdf();
-        self.poll().await;
+        {
+            let leader = self.find_mut(&leader_pk).unwrap();
+            leader.poll().await;
+        }
         trace!("Filtering unicast messages...");
         self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        let leader = self.find_mut(&leader_pk).unwrap();
         trace!("Fetching microblock for broadcast...");
+        let leader = self.find_mut(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -561,7 +563,7 @@ impl<'p> Partition<'p> {
         let signatures = view_changes
             .iter()
             .map(|msg| (msg.validator_id, &msg.signature));
-        let proof = ViewChangeProof::new(signatures, chain.validators().len());
+        let proof = ViewChangeProof::new(signatures, chain.validators().0.len());
         let view_change_proof = SealedViewChangeProof {
             chain: chain_info,
             proof,
@@ -585,7 +587,6 @@ impl<'p> Partition<'p> {
 
     pub async fn skip_macro_block(&mut self) {
         trace!("Skipping macroblock...");
-        self.poll().await;
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let stake_epochs = chain.cfg().stake_epochs;
@@ -594,6 +595,7 @@ impl<'p> Partition<'p> {
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = chain.leader();
         let leader = self.find_mut(&leader_pk).unwrap();
+        leader.poll().await;
         // Check for a proposal from the leader.
         trace!("Fetching macroblock proposal from {}...", leader_pk);
         let proposal: ConsensusMessage = leader
@@ -605,11 +607,16 @@ impl<'p> Partition<'p> {
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
         trace!("Delivering macroblock to nodes");
-        // Send this proposal to other nodes.
+        // Send this proposal to other nodes
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
             node.poll().await;
+        }
+
+        {
+            let leader = self.find_mut(&leader_pk).unwrap();
+            leader.poll().await;    
         }
 
         trace!("Checking for pre-votes...");
@@ -893,7 +900,17 @@ impl NodeSandbox {
     }
 
     pub async fn poll(&mut self) {
-        self.node_service.poll().await;
+        loop {
+            let future = self.node_service.poll();
+
+            pin_mut!(future);
+            let result = futures::poll!(future);
+
+            trace!("Result = {:?}", result);
+            if result == Poll::Pending {
+                break;
+            }
+        }
     }
 
     #[allow(dead_code)]
@@ -908,7 +925,7 @@ impl NodeSandbox {
         state
             .chain
             .validators()
-            .iter()
+            .0.iter()
             .enumerate()
             .find(|(_id, keys)| key == keys.0)
             .map(|(id, _)| id)

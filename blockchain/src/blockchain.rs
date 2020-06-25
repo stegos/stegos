@@ -38,6 +38,7 @@ use crate::timestamp::Timestamp;
 use crate::transaction::{CoinbaseTransaction, ServiceAwardTransaction, Transaction};
 use crate::view_changes::ViewChangeProof;
 use crate::BlockReader;
+
 use bit_vec::BitVec;
 use byteorder::{BigEndian, ByteOrder};
 use failure::Error;
@@ -91,7 +92,7 @@ pub struct EpochInfo {
 }
 
 impl EpochInfo {
-    pub fn into_stakers_group(&self) -> StakersGroup {
+    pub fn into_stakers_group(&self) -> Validators {
         self.validators
             .iter()
             .map(|v| (v.network_pkey, v.slots))
@@ -103,7 +104,7 @@ impl EpochInfo {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LightEpochInfo {
     pub header: MacroBlockHeader,
-    pub validators: StakersGroup,
+    pub validators: Validators,
     pub facilitator: pbc::PublicKey,
 }
 
@@ -510,9 +511,9 @@ impl Blockchain {
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
-                .len() as i64,
+                .0.len() as i64,
         );
-        for (key, stake) in self.validators().iter() {
+        for (key, stake) in self.validators().0.iter() {
             let key_str = key.to_string();
             metrics::VALIDATOR_SLOTS_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
@@ -894,7 +895,8 @@ impl Blockchain {
                         .expect("epoch info for macro block");
                     let epoch_info =
                         EpochInfo::from_buffer(&epoch_info).expect("couldn't deserialize block.");
-                    let validators: StakersGroup = epoch_info
+                    let validators: Validators = 
+                        epoch_info
                         .validators
                         .into_iter()
                         .map(|x| (x.network_pkey, x.slots))
@@ -953,18 +955,18 @@ impl Blockchain {
     /// Returns the validator network key, by validator_id.
     #[inline]
     pub fn validator_key_by_id(&self, id: usize) -> Option<pbc::PublicKey> {
-        self.validators().get(id).map(|v| v.0)
+        self.validators().0.get(id).map(|v| v.0)
     }
 
     /// Returns the current epoch validators with their stakes.
     #[inline]
-    pub fn validators(&self) -> &StakersGroup {
+    pub fn validators(&self) -> &Validators {
         &self.election_result().validators
     }
 
     /// Returns the validators list, at begining of the epoch
     #[inline]
-    pub fn validators_at_epoch_start(&self) -> StakersGroup {
+    pub fn validators_at_epoch_start(&self) -> Validators {
         let epoch_info = self.election_result_by_offset(0).unwrap();
         epoch_info.validators
     }
@@ -1112,6 +1114,7 @@ impl Blockchain {
         // Also remove cheater validators.
         let epoch_activity: HashMap<_, _> = self
             .validators()
+            .0
             .iter()
             .map(|(k, _)| {
                 (
@@ -1127,12 +1130,12 @@ impl Blockchain {
         let epoch_validators = self.validators_at_epoch_start();
         debug!(
             "Creating activity map: len = {}, current_validators_len={}",
-            epoch_validators.len(),
-            self.validators().len()
+            epoch_validators.0.len(),
+            self.validators().0.len()
         );
 
-        let mut activity_map = BitVec::from_elem(epoch_validators.len(), false);
-        for (validator_id, (validator, _)) in epoch_validators.iter().enumerate() {
+        let mut activity_map = BitVec::from_elem(epoch_validators.0.len(), false);
+        for (validator_id, (validator, _)) in epoch_validators.0.iter().enumerate() {
             match epoch_activity.get(validator) {
                 // if validator failed, or cheater, remove it from bitmap.
                 Some(ValidatorAwardState::Failed { .. }) | None => {}
@@ -1164,10 +1167,10 @@ impl Blockchain {
     ) -> Result<BTreeMap<PublicKey, ValidatorAwardState>, BlockchainError> {
         let mut validators_activity = BTreeMap::new();
         let validators = self.validators_at_epoch_start();
-        if activity_map.len() > validators.len() {
-            return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.len()).into());
+        if activity_map.len() > validators.0.len() {
+            return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.0.len()).into());
         };
-        for (id, (validator, _slots)) in validators.iter().enumerate() {
+        for (id, (validator, _slots)) in validators.0.iter().enumerate() {
             // Set failed if no activity was set.
             let activity = activity_map.get(id).unwrap_or(false);
             let validator_account =
@@ -1280,12 +1283,12 @@ impl Blockchain {
         let election = election.get(&()).unwrap().clone();
         trace!(
             "by_offset Validators_len = {}, rand = {}",
-            election.validators.len(),
+            election.validators.0.len(),
             election.random.rand
         );
         trace!(
             "current Validators_len = {}, rand = {}",
-            self.election_result().validators.len(),
+            self.election_result().validators.0.len(),
             self.election_result().random.rand
         );
         Ok(election)
@@ -1565,14 +1568,14 @@ impl Blockchain {
         // Check validators.
         //
         let election_result = self.next_election_result(block.header.random);
-        let validators_len = election_result.validators.len() as u32;
+        let validators_len = election_result.validators.0.len() as u32;
         if block.header.validators_len != validators_len {
             panic!(
                 "Invalid validators_len: expected={}, got={}",
                 validators_len, block.header.validators_len,
             );
         }
-        let validators_range_hash = Merkle::root_hash_from_array(&election_result.validators);
+        let validators_range_hash = Merkle::root_hash_from_array(&election_result.validators.0);
         if block.header.validators_range_hash != validators_range_hash {
             panic!(
                 "Invalid validators_range_hash: expected={}, got={}",
@@ -1617,10 +1620,10 @@ impl Blockchain {
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
-                .len() as i64,
+                .0.len() as i64,
         );
         metrics::VALIDATOR_SLOTS_GAUGEVEC.reset();
-        for (key, stake) in self.validators().iter() {
+        for (key, stake) in self.validators().0.iter() {
             let key_str = key.to_string();
             metrics::VALIDATOR_SLOTS_GAUGEVEC
                 .with_label_values(&[key_str.as_str()])
@@ -1667,7 +1670,7 @@ impl Blockchain {
         let validators = self
             .election_result()
             .validators
-            .iter()
+            .0.iter()
             .map(|v| {
                 let network_pkey = v.0;
                 let account_pkey = self
@@ -1726,7 +1729,7 @@ impl Blockchain {
                 .map(ToString::to_string)
                 .collect::<Vec<String>>(),
         );
-        debug!("Validators: {:?}", &self.validators());
+        debug!("Validators: {}", &self.validators());
 
         Ok((block.inputs, outputs))
     }
@@ -1977,10 +1980,10 @@ impl Blockchain {
                     );
                     let validators = &self.election_result().validators;
                     // remove cheater for current epoch.
-                    let new_validators = validators
-                        .into_iter()
+                    let new_validators: Validators = validators
+                        .0.iter()
                         .filter_map(|(k, v)| {
-                            if k != &tx.cheater() {
+                            if *k != tx.cheater() {
                                 Some((*k, *v))
                             } else {
                                 None

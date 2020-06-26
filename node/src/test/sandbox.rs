@@ -526,6 +526,7 @@ impl<'p> Partition<'p> {
     /// Should be used after block timeout.
     /// This function will poll() every node.
     pub async fn skip_micro_block(&mut self) {
+        trace!("Skipping microblock...");
         self.assert_synchronized();
         let chain = self.chain();
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
@@ -551,6 +552,7 @@ impl<'p> Partition<'p> {
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
             auditor.poll().await;
         }
+        trace!("Processed microblock...");
     }
 
     /// Emulate rollback of microblock, for wallet tests
@@ -600,6 +602,7 @@ impl<'p> Partition<'p> {
     }
 
     pub async fn skip_macro_block(&mut self) {
+        trace!("Skipping macroblock...");
         let chain = self.chain();
         let stake_epochs = chain.cfg().stake_epochs;
         let epoch = chain.epoch();
@@ -726,7 +729,8 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         // Check state of all nodes.
-        trace!("Checking node state after macroblock (leader = {})...", self.leader());
+        let leader_pk = self.leader();
+        trace!("Checking node state after macroblock (leader = {})...", leader_pk);
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
@@ -737,7 +741,6 @@ impl<'p> Partition<'p> {
             if *pkey == leader_pk {
                 assert_eq!(chain.offset(), 1);
                 assert_eq!(chain.last_macro_block_hash(), block_hash);
-                assert_eq!(chain.last_block_hash(), block_hash);    
             } else {
                 assert_eq!(chain.offset(), 0);
                 assert_eq!(chain.last_macro_block_hash(), block_hash);
@@ -760,6 +763,7 @@ impl<'p> Partition<'p> {
             }
             self.poll().await;
         }
+        trace!("Processed macroblock (leader = {})...", leader_pk);
     }
 
     pub fn leader(&self) -> pbc::PublicKey {

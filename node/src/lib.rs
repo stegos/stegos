@@ -1669,8 +1669,8 @@ impl NodeState {
         }
 
         swarn!(self,
-            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}, instant = {:?}",
-            self.chain.epoch(), consensus.round() + 1, Instant::now()
+            "Timed out while waiting for a macroblock from {}, going to the next round: epoch={}, view_change={}, instant = {:?}",
+            self.chain.leader(), self.chain.epoch(), consensus.round() + 1, Instant::now()
         );
 
         // Go to the next round.

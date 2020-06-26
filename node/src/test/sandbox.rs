@@ -37,7 +37,7 @@ use stegos_crypto::pbc::VRF;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
 
-use super::VDFExecution;
+use super::{VDFExecution, wait};
 use crate::*;
 use crate::shorthex::*;
 
@@ -159,6 +159,7 @@ impl Sandbox {
         Partition {
             nodes: self.nodes.iter_mut().collect(),
             auditor: None,
+            config: self.config.clone(),
         }
     }
 }
@@ -170,7 +171,9 @@ impl Sandbox {
 pub struct Partition<'p> {
     pub nodes: Vec<&'p mut NodeSandbox>,
     pub auditor: Option<&'p mut NodeSandbox>,
+    pub config: SandboxConfig,
 }
+
 #[allow(dead_code)]
 impl<'p> Partition<'p> {
     // rust borrowchecker is not smart enought to deduct that we need smaller iter lifetimes.
@@ -416,38 +419,14 @@ impl<'p> Partition<'p> {
     pub async fn poll(&mut self) {
         trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
-            // poll future one time
-            // - if it pending, then it waits for external event, we can drop it for now.
-            // - if it complete, then it processed some event, and we can recreate it for new event
-            loop {
-                let future = node.poll();
-
-                pin_mut!(future);
-                let result = futures::poll!(future);
-
-                if result == Poll::Pending {
-                    break;
-                }
-            }
+            node.poll().await;
         }
 
         if let Some(auditor) = &mut self.auditor {
-            loop {
-                let future = auditor.poll();
-                pin_mut!(future);
-
-                let result = futures::poll!(future);
-
-                if result == Poll::Pending {
-                    break;
-                }
-            }
+            auditor.poll().await;
         }
 
-        // Turn the timer wheel to let timers get polled. 
-        // Do not use `tokio::task::yield_now().await` here 
-        // as it can advance test time per the timers, e.g. by 30s.
-        tokio::time::delay_for(Duration::from_secs(0)).await;
+        wait(Duration::from_secs(0)).await;
     }
 
     pub fn len(&self) -> usize {
@@ -906,7 +885,6 @@ impl NodeSandbox {
             pin_mut!(future);
             let result = futures::poll!(future);
 
-            trace!("Result = {:?}", result);
             if result == Poll::Pending {
                 break;
             }

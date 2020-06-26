@@ -49,7 +49,7 @@ async fn smoke_test() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    wait(config.node.micro_block_timeout).await;
+    wait(Duration::from_secs(1)).await;
 
     trace!(
         ">>> Iterating through {} macroblocks, with {} microblocks each",

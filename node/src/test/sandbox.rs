@@ -22,7 +22,7 @@
 use futures::pin_mut;
 use futures::task::Poll;
 
-use std::collections::HashSet;
+use std::collections::{HashSet, BinaryHeap};
 use std::convert::TryInto;
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
@@ -236,6 +236,26 @@ impl<'p> Partition<'p> {
             .expect("First node not found in the sandbox.")
     }
 
+    pub fn first_except<'a>(&self, pk: &pbc::PublicKey) -> &NodeSandbox 
+    where
+        'p: 'a,
+    {
+        self.iter()
+            .filter(|node| node.node_service.state().network_pkey != *pk)
+            .next()
+            .expect("First node not found in the sandbox")
+    }
+
+    pub fn first_except_mut<'a>(&mut self, pk: &pbc::PublicKey) -> &mut NodeSandbox 
+    where
+        'p: 'a,
+    {
+        self.iter_mut()
+            .filter(|node| node.node_service.state().network_pkey != *pk)
+            .next()
+            .expect("First node not found in the sandbox")
+    }
+
     /// Return node for publickey.
     pub fn find_mut<'a>(&'a mut self, pk: &pbc::PublicKey) -> Option<&'a mut NodeSandbox>
     where
@@ -361,16 +381,17 @@ impl<'p> Partition<'p> {
 
     /// Checks if all sandbox nodes synchronized.
     pub fn assert_synchronized(&self) {
-        let node = self.first();
+        let leader_pk = self.leader();
+        let node = self.first_except(&leader_pk);
         let chain = &node.node_service.state().chain;
         let epoch = chain.epoch();
         let awards = chain.epoch_info(epoch - 1).unwrap().unwrap();
         let offset = chain.offset();
         let last_block = chain.last_block_hash();
         trace!(
-            "Matching node state to first node {}, leader = {}",
+            "Matching node state to first node {}, consensus leader = {}",
             node.node_service.state().network_pkey,
-            chain.leader()
+            leader_pk
         );
         trace!(
             "Expecting epoch = {}, offset = {}, last block = {}",
@@ -380,9 +401,10 @@ impl<'p> Partition<'p> {
         );
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
+            let pkey = node.node_service.state().network_pkey;
             trace!(
                 "[{}] epoch = {}, offset = {}, last block = {}, leader = {}",
-                node.node_service.state().network_pkey,
+                pkey,
                 chain.epoch(),
                 chain.offset(),
                 chain.last_block_hash(),
@@ -390,8 +412,12 @@ impl<'p> Partition<'p> {
             );
             assert_eq!(chain.epoch(), epoch);
             assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
-            assert_eq!(chain.offset(), offset);
-            assert_eq!(chain.last_block_hash(), last_block);
+            if epoch > 1 && pkey == leader_pk {
+                assert_eq!(chain.offset(), offset + 1);
+            } else {
+                assert_eq!(chain.offset(), offset);
+                assert_eq!(chain.last_block_hash(), last_block);
+            }
         }
 
         if let Some(auditor) = self.auditor() {
@@ -503,27 +529,28 @@ impl<'p> Partition<'p> {
         self.assert_synchronized();
         let chain = self.chain();
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
-        let leader_pk = chain.leader();
+        let leader_pk = self.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
-        self.find_mut(&leader_pk).unwrap().handle_vdf();
-        self.poll().await;
+        //self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
-        trace!("Fething block from leader {}", leader_pk);
+        leader.poll().await;
+        trace!("Fetching microblock from leader {}", leader_pk);
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+            node.poll().await;
         }
 
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+            auditor.poll().await;
         }
-        self.poll().await;
     }
 
     /// Emulate rollback of microblock, for wallet tests
@@ -578,9 +605,11 @@ impl<'p> Partition<'p> {
         let epoch = chain.epoch();
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
-        let leader_pk = chain.leader();
+        let leader_pk = self.leader();
         let leader_node = self.find_mut(&leader_pk).unwrap();
+        leader_node.poll().await;
         // Check for a proposal from the leader.
+        trace!("Fetching macroblock proposal from {}", leader_pk);
         let proposal: ConsensusMessage = leader_node
             .network_service
             .get_broadcast(crate::CONSENSUS_TOPIC);
@@ -594,11 +623,13 @@ impl<'p> Partition<'p> {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
         }
+
         self.poll().await;
 
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
+            trace!("Fetching pre-vote from {}...", node.node_service.state().network_pkey);
             let prevote: ConsensusMessage =
                 node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
             assert_eq!(prevote.epoch, epoch);
@@ -617,9 +648,10 @@ impl<'p> Partition<'p> {
                 }
             }
         }
+
         self.poll().await;
 
-        // Check for pre-commits.
+        // Check for pre-commits
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
             let precommit: ConsensusMessage =
@@ -649,6 +681,7 @@ impl<'p> Partition<'p> {
                 }
             }
         }
+
         self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
@@ -666,6 +699,7 @@ impl<'p> Partition<'p> {
         }
 
         // Receive sealed block.
+        trace!("Fetching finished macroblock from {}", leader_pk);
         let block: Block = self
             .find_mut(&leader_pk)
             .unwrap()
@@ -692,6 +726,7 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         // Check state of all nodes.
+        trace!("Checking node state after macroblock (leader = {})...", self.leader());
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
@@ -699,9 +734,15 @@ impl<'p> Partition<'p> {
              pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
-            assert_eq!(chain.offset(), 0);
-            assert_eq!(chain.last_macro_block_hash(), block_hash);
-            assert_eq!(chain.last_block_hash(), block_hash);
+            if *pkey == leader_pk {
+                assert_eq!(chain.offset(), 1);
+                assert_eq!(chain.last_macro_block_hash(), block_hash);
+                assert_eq!(chain.last_block_hash(), block_hash);    
+            } else {
+                assert_eq!(chain.offset(), 0);
+                assert_eq!(chain.last_macro_block_hash(), block_hash);
+                assert_eq!(chain.last_block_hash(), block_hash);    
+            }
         }
 
         // Process re-stakes.
@@ -721,8 +762,23 @@ impl<'p> Partition<'p> {
         }
     }
 
-    pub fn leader(&mut self) -> pbc::PublicKey {
-        self.first_mut().node_service.state().chain.leader()
+    pub fn leader(&self) -> pbc::PublicKey {
+        let mut hm = HashMap::new();
+        let mut bh = BinaryHeap::new();
+
+        for node in self.iter() {
+            let chain = &node.node_service.state().chain;
+            let leader_pk = chain.leader();
+            let n = hm.entry(leader_pk).or_insert(0);
+            *n += 1;
+        }
+
+        for v in hm {
+            bh.push((v.1, v.0))
+        }
+
+        let (_, leader_pk) = bh.pop().unwrap();
+        leader_pk
     }
 
     /// Returns next leader publicKey.
@@ -873,6 +929,7 @@ impl NodeSandbox {
             if result == Poll::Pending {
                 break;
             }
+            wait(Duration::from_secs(0)).await;
         }
     }
 

@@ -481,41 +481,39 @@ impl<'p> Partition<'p> {
         self.poll().await;
     }
 
+    #[inline]
+    fn chain(&self) -> &Blockchain {
+        &self.first().node_service.state().chain
+    }
+
     /// Take micro block from leader, rebroadcast to other nodes.
     /// Should be used after block timeout.
     /// This function will poll() every node.
     pub async fn skip_micro_block(&mut self) {
-        trace!("Skipping microblock...");
         self.assert_synchronized();
-        let chain = &self.first().node_service.state().chain;
+        let chain = self.chain();
         assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
         let leader_pk = chain.leader();
         trace!("Acording to partition info, next leader = {}", leader_pk);
         self.find_mut(&leader_pk).unwrap().handle_vdf();
-        {
-            let leader = self.find_mut(&leader_pk).unwrap();
-            leader.poll().await;
-        }
-        trace!("Filtering unicast messages...");
-        self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        trace!("Fetching microblock for broadcast...");
+        self.poll().await;
+        self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
+        trace!("Fething block from leader {}", leader_pk);
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        trace!("Delivering microblock to nodes");
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            node.poll().await;
         }
-        trace!("Delivering microblock to the auditor");
+
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            auditor.poll().await;
         }
+        self.poll().await;
     }
 
     /// Emulate rollback of microblock, for wallet tests
@@ -565,40 +563,29 @@ impl<'p> Partition<'p> {
     }
 
     pub async fn skip_macro_block(&mut self) {
-        trace!("Skipping macroblock...");
-        let state = self.first().node_service.state();
-        let chain = &state.chain;
+        let chain = self.chain();
         let stake_epochs = chain.cfg().stake_epochs;
         let epoch = chain.epoch();
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = chain.leader();
-        let leader = self.find_mut(&leader_pk).unwrap();
-        leader.poll().await;
+        let leader_node = self.find_mut(&leader_pk).unwrap();
         // Check for a proposal from the leader.
-        trace!("Fetching macroblock proposal from {}...", leader_pk);
-        let proposal: ConsensusMessage = leader
+        let proposal: ConsensusMessage = leader_node
             .network_service
             .get_broadcast(crate::CONSENSUS_TOPIC);
-        trace!("Proposal: {}", proposal);
+        debug!("Proposal: {:?}", proposal);
         assert_eq!(proposal.epoch, epoch);
         assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
-        trace!("Delivering macroblock to nodes");
-        // Send this proposal to other nodes
+        // Send this proposal to other nodes.
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
-            node.poll().await;
         }
+        self.poll().await;
 
-        {
-            let leader = self.find_mut(&leader_pk).unwrap();
-            leader.poll().await;    
-        }
-
-        trace!("Checking for pre-votes...");
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
@@ -611,19 +598,17 @@ impl<'p> Partition<'p> {
             prevotes.push(prevote);
         }
 
-        trace!("Delivering pre-votes...");
         // Send these pre-votes to nodes.
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
                     node.network_service
                         .receive_broadcast(crate::CONSENSUS_TOPIC, prevotes[i].clone());
-                    node.poll().await;
                 }
             }
         }
+        self.poll().await;
 
-        trace!("Checking for pre-commits...");
         // Check for pre-commits.
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
@@ -645,23 +630,22 @@ impl<'p> Partition<'p> {
             precommits.push(precommit);
         }
 
-        trace!("Delivering pre-committs...");
         // Send these pre-commits to nodes.
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
                     node.network_service
                         .receive_broadcast(crate::CONSENSUS_TOPIC, precommits[i].clone());
-                    node.poll().await;
                 }
             }
         }
+        self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
         let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
         // Process re-stakes.
         if restake_epoch {
-            debug!("Leader {} should re-stake during this epoch: {}", leader_pk, epoch);
+            debug!("Re-stake should happen in this epoch: {}", epoch);
             let restake: Transaction = self
                 .find_mut(&leader_pk)
                 .unwrap()
@@ -670,8 +654,7 @@ impl<'p> Partition<'p> {
             debug!("Got restake: {:?}", restake);
             restakes.push(restake);
         }
-        
-        trace!("Fetching published macroblock from {}", leader_pk);
+
         // Receive sealed block.
         let block: Block = self
             .find_mut(&leader_pk)
@@ -684,26 +667,20 @@ impl<'p> Partition<'p> {
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
 
-        trace!("Delivering macroblock to nodes...");
         // Send this sealed block to all other nodes expect the leader.
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            node.poll().await;
         }
 
-        trace!("Delivering macroblock to the auditor...");
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            auditor.poll().await;
         }
 
-        trace!("Checking node state. Expecting epoch = {}, offset = 0, block hash = {}, leader = {}",
-            epoch + 1, block_hash, leader_pk,
-        );
-        
+        self.poll().await;
+
         // Check state of all nodes.
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
@@ -712,27 +689,25 @@ impl<'p> Partition<'p> {
              pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
-            assert_eq!(chain.last_macro_block_hash(), block_hash);
             assert_eq!(chain.offset(), 0);
+            assert_eq!(chain.last_macro_block_hash(), block_hash);
             assert_eq!(chain.last_block_hash(), block_hash);
         }
-        
-        // Process re-stakes.        
+
+        // Process re-stakes.
         if restake_epoch {
-            trace!("Fetching restakes...");
             for node in self.iter_except(&[leader_pk]) {
                 let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
                 debug!("Got restake: {:?}", restake);
                 restakes.push(restake);
             }
-            trace!("Delivering restakes to nodes...");
-            for node in self.iter_except(&[leader_pk]) {
+            for node in self.iter_mut() {
                 for restake in restakes.iter() {
                     node.network_service
                         .receive_broadcast(crate::TX_TOPIC, restake.clone());
-                    node.poll().await;
                 }
             }
+            self.poll().await;
         }
     }
 

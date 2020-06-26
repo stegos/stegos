@@ -112,7 +112,7 @@ impl NetworkProvider for LoopbackNetwork {
     }
 
     fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
-        strace!(self, "Received broadcast for topic = {}", topic);
+        strace!(self, "Broadcasting message for topic = {}", topic);
         let topic: String = topic.to_string();
         let msg = MessageFromNode::Publish { topic, data };
         self.state.lock().unwrap().queue.push_back(msg);
@@ -252,7 +252,7 @@ impl Loopback {
                 data: msg_data,
             }) => {
                 assert_eq!(topic, &msg_topic);
-                strace!(self, "Got broadcast message for topic {}", msg_topic);
+                strace!(self, "Found broadcast message for topic {}", msg_topic);
                 return Some(msg_data.clone());
             }
             Some(x) => {

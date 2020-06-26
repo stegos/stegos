@@ -82,7 +82,7 @@ android_logger = "0.8"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
-
+rusty-hook = "^0.11.2"
 
 [build-dependencies]
 failure = "0.1"

@@ -51,7 +51,8 @@ async fn smoke_test() {
 
     wait(config.node.micro_block_timeout).await;
 
-    trace!(">>> Iterating through {} macroblocks, with {} microblocks each", 
+    trace!(
+        ">>> Iterating through {} macroblocks, with {} microblocks each",
         1 + NUM_RESTAKES * config.chain.stake_epochs + 1,
         config.chain.micro_blocks_in_epoch
     );

@@ -46,7 +46,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Interval, Instant};
+use tokio::time::{self, Delay, Instant, Interval};
 
 #[allow(unused_macros)]
 macro_rules! strace {
@@ -351,7 +351,7 @@ impl NodeService {
 
     /// Handler subscription to status.
     fn handle_subscription_to_status(
-        &mut self, 
+        &mut self,
     ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
         let (tx, rx) = mpsc::channel(1);
         self.status_subscribers.push(tx);
@@ -360,7 +360,7 @@ impl NodeService {
 
     /// Handle subscription to chain.
     fn handle_subscription_to_chain(
-        &mut self, 
+        &mut self,
         chain_readers: &mut Vec<ChainReader>,
         epoch: u64,
         offset: u32,
@@ -380,18 +380,16 @@ impl NodeService {
     // Loader
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
-    pub fn request_history_from(
-        &mut self, 
-        from: pbc::PublicKey,
-    ) -> Result<(), Error> {
+    pub fn request_history_from(&mut self, from: pbc::PublicKey) -> Result<(), Error> {
         let epoch = self.state.chain.epoch();
         sinfo!(self, "Downloading blocks: from={}, epoch={}", &from, epoch);
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
-        self.network.send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+        self.network
+            .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(
-        &mut self, 
+        &mut self,
         pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
@@ -409,7 +407,7 @@ impl NodeService {
     }
 
     pub fn send_blocks(
-        &mut self, 
+        &mut self,
         pkey: pbc::PublicKey,
         epoch: u64,
         offset: u32,
@@ -426,9 +424,15 @@ impl NodeService {
                 Block::MicroBlock(_) => {}
             }
         }
-        sinfo!(self, "Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
+        sinfo!(
+            self,
+            "Feeding blocks: to={}, num_blocks={}",
+            pkey,
+            blocks.len()
+        );
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
-        self.network.send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
+        self.network
+            .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())
     }
 
@@ -647,7 +651,7 @@ impl NodeService {
         }
 
         self.handle_outgoing().await;
-   
+
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
                 chain_readers.push(reader)
@@ -741,9 +745,7 @@ impl NodeService {
                     Self::notify_subscribers(&mut self.chain_subscribers, notification);
                     Ok(())
                 }
-                NodeOutgoingEvent::RequestBlocksFrom { from } => {
-                    self.request_history_from(from)
-                }
+                NodeOutgoingEvent::RequestBlocksFrom { from } => self.request_history_from(from),
                 NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
                     self.send_blocks(to, epoch, offset)
                 }

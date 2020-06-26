@@ -23,7 +23,7 @@
 
 #![feature(async_closure)]
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-// #![deny(warnings)]
+                             // #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -31,16 +31,16 @@ mod error;
 mod mempool;
 pub mod metrics;
 pub mod protos;
+mod shorthex;
 #[cfg(test)]
 mod test;
 mod tokio;
 mod validation;
-mod shorthex;
 
 use std::fmt;
 
-pub use self::tokio::{Node, NodeService};
 pub use self::shorthex::*;
+pub use self::tokio::{Node, NodeService};
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -439,7 +439,8 @@ impl NodeState {
             .chain
             .election_result()
             .validators
-            .0.iter()
+            .0
+            .iter()
             .find(|(key, _)| key == &self.network_pkey)
             .map(|(_, v)| *v)
             .unwrap_or(0);
@@ -614,7 +615,11 @@ impl NodeState {
             let proof = SlashingProof::new_unchecked(remote.clone(), local.into_owned());
 
             if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
-                sdebug!(self, "Cheater has already been detected: cheater={}", leader);
+                sdebug!(
+                    self,
+                    "Cheater has already been detected: cheater={}",
+                    leader
+                );
             }
 
             return Err(ForkError::Canceled);
@@ -849,7 +854,10 @@ impl NodeState {
                         "Fork resolution. Our chain is better: fork_offset={}",
                         offset
                     );
-                    assert!(offset < self.chain.offset(), "Fork did notremove any blocks");
+                    assert!(
+                        offset < self.chain.offset(),
+                        "Fork did notremove any blocks"
+                    );
                     return Ok(());
                 }
                 Err(ForkError::Error(e)) => return Err(e),
@@ -1323,7 +1331,7 @@ impl NodeState {
             // Consensus may have locked proposal.
             if consensus.should_propose() {
                 self.propose_macro_block()
-            } 
+            }
         } else {
             sinfo!(self,
                 "I'm a validator. Waiting for the next macroblock: epoch={}, view_change={}, last_block={}, leader={}",
@@ -1338,9 +1346,9 @@ impl NodeState {
         }
 
         strace!(
-            self, 
-            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}", 
-            relevant_round, 
+            self,
+            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}",
+            relevant_round,
             self.cfg.macro_block_timeout
         );
         self.outgoing
@@ -1403,7 +1411,11 @@ impl NodeState {
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
                 self.chain.election_result().clone(),
-                self.chain.validators_at_epoch_start().0.into_iter().collect(),
+                self.chain
+                    .validators_at_epoch_start()
+                    .0
+                    .into_iter()
+                    .collect(),
             );
 
             // Flush pending messages.
@@ -1499,7 +1511,10 @@ impl NodeState {
                     serror!(
                         self,
                         "Macroblock proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
-                        epoch, &block_hash, duration, e
+                        epoch,
+                        &block_hash,
+                        duration,
+                        e
                     );
                     // TODO(vldm): Didn't go to state Prevote before checking proposed macro block.
                     // for now we just return to Propose state, it's a bit hacky,
@@ -1623,7 +1638,8 @@ impl NodeState {
                 .chain
                 .election_result()
                 .validators
-                .0.get(*autocommit)
+                .0
+                .get(*autocommit)
                 .expect("to find our node in consensus group before overflow counter.");
 
             let is_relay = leader.0 == self.network_pkey;
@@ -2222,7 +2238,11 @@ impl NodeState {
             NodeIncomingEvent::DecodedBlock(msg) => {
                 let result = self.handle_block(msg);
                 if let Err(error) = &result {
-                    sinfo!(self, "Failed to process block from replication, changing upstream: error = {}", error);
+                    sinfo!(
+                        self,
+                        "Failed to process block from replication, changing upstream: error = {}",
+                        error
+                    );
                     self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
                 }
                 result
@@ -2261,17 +2281,17 @@ impl fmt::Display for NodeIncomingEvent {
         use NodeIncomingEvent as e;
         match self {
             e::Request { .. } => f.write_str("Request"),
-            e::Transaction (..) => f.write_str("Transaction"),
-            e::Consensus (..) => f.write_str("Consensus"),
-            e::Block (..) => f.write_str("Block"),
-            e::DecodedBlock (..) => f.write_str("DecodedBlock"),
-            e::ViewChangeMessage (..) => f.write_str("ViewChangeMessage"),
-            e::ViewChangeProof (..) => f.write_str("ViewChangeProof"),
+            e::Transaction(..) => f.write_str("Transaction"),
+            e::Consensus(..) => f.write_str("Consensus"),
+            e::Block(..) => f.write_str("Block"),
+            e::DecodedBlock(..) => f.write_str("DecodedBlock"),
+            e::ViewChangeMessage(..) => f.write_str("ViewChangeMessage"),
+            e::ViewChangeProof(..) => f.write_str("ViewChangeProof"),
             e::ViewChangeProofMessage { from, .. } => write!(f, "ViewChangeProofMessage({})", from),
             e::ChainLoaderMessage { from, .. } => write!(f, "ChainLoaderMessage({})", from),
             e::CheckSyncTimer => f.write_str("CheckSyncTimer"),
             e::MacroBlockViewChangeTimer => f.write_str("MacroBlockViewChangeTimer"),
-            e::MicroBlockProposeTimer (..) => f.write_str("MicroBlockProposeTimer"),
+            e::MicroBlockProposeTimer(..) => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockViewChangeTimer => f.write_str("MicroBlockViewChangeTimer"),
         }
     }
@@ -2282,20 +2302,25 @@ impl fmt::Display for NodeOutgoingEvent {
         write!(f, "NodeOutgoingEvent::")?;
         use NodeOutgoingEvent as e;
         match self {
-            e::Publish{ topic, data } => write!(f, "Publish({}, {:x})", topic, data.short_hex()),
+            e::Publish { topic, data } => write!(f, "Publish({}, {:x})", topic, data.short_hex()),
             e::ChangeUpstream { .. } => f.write_str("ChangeUpstream"),
-            e::Send{ dest, topic, data } => write!(f, "Send({}, {}, {:x})", dest, topic, data.short_hex()),
-            e::FacilitatorChanged{ facilitator } => write!(f, "FacilitatorChanged({})", facilitator),
+            e::Send { dest, topic, data } => {
+                write!(f, "Send({}, {}, {:x})", dest, topic, data.short_hex())
+            }
+            e::FacilitatorChanged { facilitator } => {
+                write!(f, "FacilitatorChanged({})", facilitator)
+            }
             e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
-            e::ChainNotification (..) => f.write_str("ChainNotification"),
-            e::StatusNotification (..) => f.write_str("StatusNotification"),
-            e::MacroBlockViewChangeTimer (d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
+            e::ChainNotification(..) => f.write_str("ChainNotification"),
+            e::StatusNotification(..) => f.write_str("StatusNotification"),
+            e::MacroBlockViewChangeTimer(d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
             e::MicroBlockProposeTimer { .. } => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockProposeTimerCancel => f.write_str("MicroBlockProposeTimerCancel"),
-            e::MicroBlockViewChangeTimer (d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
+            e::MicroBlockViewChangeTimer(d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
             e::RequestBlocksFrom { from } => write!(f, "RequestBlocksFrom({})", from),
-            e::SendBlocksTo { to, epoch, offset } => write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset),
+            e::SendBlocksTo { to, epoch, offset } => {
+                write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset)
+            }
         }
     }
 }
-

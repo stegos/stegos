@@ -22,8 +22,8 @@
 use futures::pin_mut;
 use futures::task::Poll;
 
-use std::convert::TryInto;
 use std::collections::HashSet;
+use std::convert::TryInto;
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
 
@@ -37,9 +37,9 @@ use stegos_crypto::pbc::VRF;
 use stegos_network::loopback::Loopback;
 use stegos_network::Network;
 
-use super::{VDFExecution, wait};
-use crate::*;
+use super::{wait, VDFExecution};
 use crate::shorthex::*;
+use crate::*;
 
 use log::*;
 pub use stegos_blockchain::test::*;
@@ -367,16 +367,26 @@ impl<'p> Partition<'p> {
         let awards = chain.epoch_info(epoch - 1).unwrap().unwrap();
         let offset = chain.offset();
         let last_block = chain.last_block_hash();
-        trace!("Matching node state to first node {}, leader = {}", 
+        trace!(
+            "Matching node state to first node {}, leader = {}",
             node.node_service.state().network_pkey,
             chain.leader()
         );
-        trace!("Expecting epoch = {}, offset = {}, last block = {}", epoch, offset, last_block);
+        trace!(
+            "Expecting epoch = {}, offset = {}, last block = {}",
+            epoch,
+            offset,
+            last_block
+        );
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
-            trace!("[{}] epoch = {}, offset = {}, last block = {}, leader = {}", 
-                node.node_service.state().network_pkey, 
-                chain.epoch(), chain.offset(), chain.last_block_hash(), chain.leader()
+            trace!(
+                "[{}] epoch = {}, offset = {}, last block = {}, leader = {}",
+                node.node_service.state().network_pkey,
+                chain.epoch(),
+                chain.offset(),
+                chain.last_block_hash(),
+                chain.leader()
             );
             assert_eq!(chain.epoch(), epoch);
             assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
@@ -878,7 +888,8 @@ impl NodeSandbox {
         state
             .chain
             .validators()
-            .0.iter()
+            .0
+            .iter()
             .enumerate()
             .find(|(_id, keys)| key == keys.0)
             .map(|(id, _)| id)

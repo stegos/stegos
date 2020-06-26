@@ -212,7 +212,6 @@ pub struct NodeService {
     /// Replication
     replication: Replication,
 
-    macro_propose_timer: Pin<Box<Fuse<Delay>>>,
     macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
     micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
     micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
@@ -307,7 +306,6 @@ impl NodeService {
             replication_rx,
             replication_tx,
             status_subscribers,
-            macro_propose_timer: Box::pin(Fuse::terminated()),
             macro_view_change_timer: Box::pin(Fuse::terminated()),
             micro_propose_timer: Box::pin(Fuse::terminated()),
             micro_view_change_timer: Box::pin(Fuse::terminated()),
@@ -528,10 +526,6 @@ impl NodeService {
                 let _ = self.replication_tx.send(ev.unwrap()).await;
             }
             // poll timers
-            _ = self.macro_propose_timer.as_mut() => {
-                let event = NodeIncomingEvent::MacroBlockProposeTimer;
-                self.state.handle_event(event);
-            },
             _ = self.macro_view_change_timer.as_mut() => {
                 let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
                 self.state.handle_event(event);
@@ -678,17 +672,6 @@ impl NodeService {
                     //
                     self.network.send(dest, &topic, data)
                 }
-                NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                    self.macro_propose_timer
-                        .set(time::delay_for(duration).fuse());
-                    self.micro_propose_timer.set(Fuse::terminated());
-                    self.micro_view_change_timer.set(Fuse::terminated());
-                    Ok(())
-                }
-                NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
-                    self.macro_propose_timer.set(Fuse::terminated());
-                    Ok(())
-                }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
                     self.macro_view_change_timer
                         .set(time::delay_for(duration).fuse());
@@ -714,7 +697,6 @@ impl NodeService {
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);
                     self.micro_propose_timer.set(rx.fuse());
-                    self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())
@@ -726,7 +708,6 @@ impl NodeService {
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
                     self.micro_view_change_timer
                         .set(time::delay_for(duration).fuse());
-                    self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())

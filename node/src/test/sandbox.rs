@@ -713,7 +713,7 @@ impl<'p> Partition<'p> {
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
 
-        // Send this sealed block to all other nodes expect the leader.
+        // Send this sealed block to all other nodes except the leader.
         for node in self.iter_except(&[leader_pk]) {
             let pkey = &node.node_service.state().network_pkey;
             trace!("Delivering finished macroblock to {}", pkey);

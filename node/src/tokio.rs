@@ -46,7 +46,7 @@ use stegos_network::{Network, ReplicationEvent};
 use stegos_replication::{Replication, ReplicationRow};
 use stegos_serialization::traits::ProtoConvert;
 pub use stegos_txpool::MAX_PARTICIPANTS;
-use tokio::time::{self, Delay, Instant, Interval};
+use tokio::time::{self, Delay, Interval, Instant};
 
 #[allow(unused_macros)]
 macro_rules! strace {
@@ -212,6 +212,7 @@ pub struct NodeService {
     /// Replication
     replication: Replication,
 
+    macro_propose_timer: Pin<Box<Fuse<Delay>>>,
     macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
     micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
     micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
@@ -306,6 +307,7 @@ impl NodeService {
             replication_rx,
             replication_tx,
             status_subscribers,
+            macro_propose_timer: Box::pin(Fuse::terminated()),
             macro_view_change_timer: Box::pin(Fuse::terminated()),
             micro_propose_timer: Box::pin(Fuse::terminated()),
             micro_view_change_timer: Box::pin(Fuse::terminated()),
@@ -351,7 +353,7 @@ impl NodeService {
 
     /// Handler subscription to status.
     fn handle_subscription_to_status(
-        &mut self,
+        &mut self, 
     ) -> Result<mpsc::Receiver<StatusNotification>, Error> {
         let (tx, rx) = mpsc::channel(1);
         self.status_subscribers.push(tx);
@@ -360,7 +362,7 @@ impl NodeService {
 
     /// Handle subscription to chain.
     fn handle_subscription_to_chain(
-        &mut self,
+        &mut self, 
         chain_readers: &mut Vec<ChainReader>,
         epoch: u64,
         offset: u32,
@@ -380,16 +382,18 @@ impl NodeService {
     // Loader
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
-    pub fn request_history_from(&mut self, from: pbc::PublicKey) -> Result<(), Error> {
+    pub fn request_history_from(
+        &mut self, 
+        from: pbc::PublicKey,
+    ) -> Result<(), Error> {
         let epoch = self.state.chain.epoch();
         sinfo!(self, "Downloading blocks: from={}, epoch={}", &from, epoch);
         let msg = ChainLoaderMessage::Request(RequestBlocks::new(epoch));
-        self.network
-            .send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
+        self.network.send(from, CHAIN_LOADER_TOPIC, msg.into_buffer()?)
     }
 
     fn handle_request_blocks(
-        &mut self,
+        &mut self, 
         pkey: pbc::PublicKey,
         request: RequestBlocks,
     ) -> Result<(), Error> {
@@ -407,7 +411,7 @@ impl NodeService {
     }
 
     pub fn send_blocks(
-        &mut self,
+        &mut self, 
         pkey: pbc::PublicKey,
         epoch: u64,
         offset: u32,
@@ -424,15 +428,9 @@ impl NodeService {
                 Block::MicroBlock(_) => {}
             }
         }
-        sinfo!(
-            self,
-            "Feeding blocks: to={}, num_blocks={}",
-            pkey,
-            blocks.len()
-        );
+        sinfo!(self, "Feeding blocks: to={}, num_blocks={}", pkey, blocks.len());
         let msg = ChainLoaderMessage::Response(ResponseBlocks::new(blocks));
-        self.network
-            .send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
+        self.network.send(pkey, CHAIN_LOADER_TOPIC, msg.into_buffer()?)?;
         Ok(())
     }
 
@@ -530,6 +528,10 @@ impl NodeService {
                 let _ = self.replication_tx.send(ev.unwrap()).await;
             }
             // poll timers
+            _ = self.macro_propose_timer.as_mut() => {
+                let event = NodeIncomingEvent::MacroBlockProposeTimer;
+                self.state.handle_event(event);
+            },
             _ = self.macro_view_change_timer.as_mut() => {
                 let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
                 self.state.handle_event(event);
@@ -651,7 +653,7 @@ impl NodeService {
         }
 
         self.handle_outgoing().await;
-
+   
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
                 chain_readers.push(reader)
@@ -675,6 +677,17 @@ impl NodeService {
                 NodeOutgoingEvent::Send { dest, topic, data } => {
                     //
                     self.network.send(dest, &topic, data)
+                }
+                NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
+                    self.macro_propose_timer
+                        .set(time::delay_for(duration).fuse());
+                    self.micro_propose_timer.set(Fuse::terminated());
+                    self.micro_view_change_timer.set(Fuse::terminated());
+                    Ok(())
+                }
+                NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
+                    self.macro_propose_timer.set(Fuse::terminated());
+                    Ok(())
                 }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
                     self.macro_view_change_timer
@@ -701,6 +714,7 @@ impl NodeService {
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);
                     self.micro_propose_timer.set(rx.fuse());
+                    self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())
@@ -712,6 +726,7 @@ impl NodeService {
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
                     self.micro_view_change_timer
                         .set(time::delay_for(duration).fuse());
+                    self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())
@@ -745,7 +760,9 @@ impl NodeService {
                     Self::notify_subscribers(&mut self.chain_subscribers, notification);
                     Ok(())
                 }
-                NodeOutgoingEvent::RequestBlocksFrom { from } => self.request_history_from(from),
+                NodeOutgoingEvent::RequestBlocksFrom { from } => {
+                    self.request_history_from(from)
+                }
                 NodeOutgoingEvent::SendBlocksTo { to, epoch, offset } => {
                     self.send_blocks(to, epoch, offset)
                 }

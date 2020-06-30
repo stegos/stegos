@@ -23,7 +23,7 @@
 
 #![feature(async_closure)]
 #![recursion_limit = "1024"] // used for `futures::select! macro`
-                             // #![deny(warnings)]
+// #![deny(warnings)]
 
 pub mod api;
 mod config;
@@ -31,16 +31,16 @@ mod error;
 mod mempool;
 pub mod metrics;
 pub mod protos;
-mod shorthex;
 #[cfg(test)]
 mod test;
 mod tokio;
 mod validation;
+mod shorthex;
 
 use std::fmt;
 
-pub use self::shorthex::*;
 pub use self::tokio::{Node, NodeService};
+pub use self::shorthex::*;
 pub use crate::api::*;
 pub use crate::config::NodeConfig;
 use crate::error::*;
@@ -140,6 +140,7 @@ pub enum NodeIncomingEvent {
         data: Vec<u8>,
     },
     CheckSyncTimer,
+    MacroBlockProposeTimer,
     MacroBlockViewChangeTimer,
     MicroBlockProposeTimer(Vec<u8>),
     MicroBlockViewChangeTimer,
@@ -166,6 +167,8 @@ pub enum NodeOutgoingEvent {
     },
     ChainNotification(ChainNotification),
     StatusNotification(StatusNotification),
+    MacroBlockProposeTimer(Duration),
+    MacroBlockProposeTimerCancel,
     MacroBlockViewChangeTimer(Duration),
     MicroBlockProposeTimer {
         random: Hash,
@@ -187,6 +190,7 @@ pub enum NodeOutgoingEvent {
 #[derive(Debug)]
 enum MacroBlockTimer {
     None,
+    Propose,
     ViewChange,
 }
 
@@ -439,8 +443,7 @@ impl NodeState {
             .chain
             .election_result()
             .validators
-            .0
-            .iter()
+            .0.iter()
             .find(|(key, _)| key == &self.network_pkey)
             .map(|(_, v)| *v)
             .unwrap_or(0);
@@ -615,11 +618,7 @@ impl NodeState {
             let proof = SlashingProof::new_unchecked(remote.clone(), local.into_owned());
 
             if let Some(_proof) = self.cheating_proofs.insert(leader, proof) {
-                sdebug!(
-                    self,
-                    "Cheater has already been detected: cheater={}",
-                    leader
-                );
+                sdebug!(self, "Cheater has already been detected: cheater={}", leader);
             }
 
             return Err(ForkError::Canceled);
@@ -854,10 +853,7 @@ impl NodeState {
                         "Fork resolution. Our chain is better: fork_offset={}",
                         offset
                     );
-                    assert!(
-                        offset < self.chain.offset(),
-                        "Fork did notremove any blocks"
-                    );
+                    assert!(offset < self.chain.offset(), "Fork did notremove any blocks");
                     return Ok(());
                 }
                 Err(ForkError::Error(e)) => return Err(e),
@@ -1316,8 +1312,6 @@ impl NodeState {
         // No autocommits with this leader.
         *autocommit_counter = 0;
 
-        let relevant_round = 1 + consensus.round();
-
         if consensus.is_leader() {
             sinfo!(self,
                 "I'm the leader. Proposing macroblock: epoch={}, view_change={}, last_block={}, propose?={}",
@@ -1330,7 +1324,13 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             // Consensus may have locked proposal.
             if consensus.should_propose() {
-                self.propose_macro_block()
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimer(Duration::new(0, 0)));
+                *block_timer = MacroBlockTimer::Propose;
+            } else {
+                self.outgoing
+                    .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
+                *block_timer = MacroBlockTimer::None;
             }
         } else {
             sinfo!(self,
@@ -1342,13 +1342,16 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
+            self.outgoing
+                .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
             *block_timer = MacroBlockTimer::ViewChange;
         }
 
+        let relevant_round = 1 + consensus.round();
         strace!(
-            self,
-            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}",
-            relevant_round,
+            self, 
+            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}", 
+            relevant_round, 
             self.cfg.macro_block_timeout
         );
         self.outgoing
@@ -1411,11 +1414,7 @@ impl NodeState {
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
                 self.chain.election_result().clone(),
-                self.chain
-                    .validators_at_epoch_start()
-                    .0
-                    .into_iter()
-                    .collect(),
+                self.chain.validators_at_epoch_start().0.into_iter().collect(),
             );
 
             // Flush pending messages.
@@ -1511,10 +1510,7 @@ impl NodeState {
                     serror!(
                         self,
                         "Macroblock proposal is invalid: epoch={}, block={}, duration={:.3}, e={}",
-                        epoch,
-                        &block_hash,
-                        duration,
-                        e
+                        epoch, &block_hash, duration, e
                     );
                     // TODO(vldm): Didn't go to state Prevote before checking proposed macro block.
                     // for now we just return to Propose state, it's a bit hacky,
@@ -1553,7 +1549,7 @@ impl NodeState {
     }
 
     /// Propose a new macro block.
-    fn propose_macro_block(&mut self) {
+    fn propose_macro_block(&mut self) -> Result<(), Error> {
         let timestamp = self.next_block_timestamp();
         let consensus = match &mut self.validation {
             MacroBlockValidator { consensus, .. } => consensus,
@@ -1613,6 +1609,7 @@ impl NodeState {
         consensus.prevote(block);
         strace!(self, ">>> Handling consensus events...");
         self.handle_consensus_events();
+        Ok(())
     }
 
     /// Checks if it's time to perform a view change on a micro block.
@@ -1638,8 +1635,7 @@ impl NodeState {
                 .chain
                 .election_result()
                 .validators
-                .0
-                .get(*autocommit)
+                .0.get(*autocommit)
                 .expect("to find our node in consensus group before overflow counter.");
 
             let is_relay = leader.0 == self.network_pkey;
@@ -1669,8 +1665,8 @@ impl NodeState {
         }
 
         swarn!(self,
-            "Timed out while waiting for a macroblock from {}, going to the next round: epoch={}, view_change={}, instant = {:?}",
-            self.chain.leader(), self.chain.epoch(), consensus.round() + 1, Instant::now()
+            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}, instant = {:?}",
+            self.chain.epoch(), consensus.round() + 1, Instant::now()
         );
 
         // Go to the next round.
@@ -2238,11 +2234,7 @@ impl NodeState {
             NodeIncomingEvent::DecodedBlock(msg) => {
                 let result = self.handle_block(msg);
                 if let Err(error) = &result {
-                    sinfo!(
-                        self,
-                        "Failed to process block from replication, changing upstream: error = {}",
-                        error
-                    );
+                    sinfo!(self, "Failed to process block from replication, changing upstream: error = {}", error);
                     self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
                 }
                 result
@@ -2252,6 +2244,10 @@ impl NodeState {
                     self.on_status_changed();
                 }
                 Ok(())
+            }
+            NodeIncomingEvent::MacroBlockProposeTimer => {
+                //
+                self.propose_macro_block()
             }
             NodeIncomingEvent::MacroBlockViewChangeTimer => {
                 //
@@ -2281,17 +2277,18 @@ impl fmt::Display for NodeIncomingEvent {
         use NodeIncomingEvent as e;
         match self {
             e::Request { .. } => f.write_str("Request"),
-            e::Transaction(..) => f.write_str("Transaction"),
-            e::Consensus(..) => f.write_str("Consensus"),
-            e::Block(..) => f.write_str("Block"),
-            e::DecodedBlock(..) => f.write_str("DecodedBlock"),
-            e::ViewChangeMessage(..) => f.write_str("ViewChangeMessage"),
-            e::ViewChangeProof(..) => f.write_str("ViewChangeProof"),
+            e::Transaction (..) => f.write_str("Transaction"),
+            e::Consensus (..) => f.write_str("Consensus"),
+            e::Block (..) => f.write_str("Block"),
+            e::DecodedBlock (..) => f.write_str("DecodedBlock"),
+            e::ViewChangeMessage (..) => f.write_str("ViewChangeMessage"),
+            e::ViewChangeProof (..) => f.write_str("ViewChangeProof"),
             e::ViewChangeProofMessage { from, .. } => write!(f, "ViewChangeProofMessage({})", from),
             e::ChainLoaderMessage { from, .. } => write!(f, "ChainLoaderMessage({})", from),
             e::CheckSyncTimer => f.write_str("CheckSyncTimer"),
+            e::MacroBlockProposeTimer => f.write_str("MacroBlockProposeTimer"),
             e::MacroBlockViewChangeTimer => f.write_str("MacroBlockViewChangeTimer"),
-            e::MicroBlockProposeTimer(..) => f.write_str("MicroBlockProposeTimer"),
+            e::MicroBlockProposeTimer (..) => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockViewChangeTimer => f.write_str("MicroBlockViewChangeTimer"),
         }
     }
@@ -2302,25 +2299,22 @@ impl fmt::Display for NodeOutgoingEvent {
         write!(f, "NodeOutgoingEvent::")?;
         use NodeOutgoingEvent as e;
         match self {
-            e::Publish { topic, data } => write!(f, "Publish({}, {:x})", topic, data.short_hex()),
+            e::Publish{ topic, data } => write!(f, "Publish({}, {:x})", topic, data.short_hex()),
             e::ChangeUpstream { .. } => f.write_str("ChangeUpstream"),
-            e::Send { dest, topic, data } => {
-                write!(f, "Send({}, {}, {:x})", dest, topic, data.short_hex())
-            }
-            e::FacilitatorChanged { facilitator } => {
-                write!(f, "FacilitatorChanged({})", facilitator)
-            }
+            e::Send{ dest, topic, data } => write!(f, "Send({}, {}, {:x})", dest, topic, data.short_hex()),
+            e::FacilitatorChanged{ facilitator } => write!(f, "FacilitatorChanged({})", facilitator),
             e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
-            e::ChainNotification(..) => f.write_str("ChainNotification"),
-            e::StatusNotification(..) => f.write_str("StatusNotification"),
-            e::MacroBlockViewChangeTimer(d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
+            e::ChainNotification (..) => f.write_str("ChainNotification"),
+            e::StatusNotification (..) => f.write_str("StatusNotification"),
+            e::MacroBlockProposeTimer (d) => write!(f, "MacroBlockProposeTimer({:?})", d),
+            e::MacroBlockProposeTimerCancel => f.write_str("MacroBlockProposeTimerCancel"),
+            e::MacroBlockViewChangeTimer (d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
             e::MicroBlockProposeTimer { .. } => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockProposeTimerCancel => f.write_str("MicroBlockProposeTimerCancel"),
-            e::MicroBlockViewChangeTimer(d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
+            e::MicroBlockViewChangeTimer (d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
             e::RequestBlocksFrom { from } => write!(f, "RequestBlocksFrom({})", from),
-            e::SendBlocksTo { to, epoch, offset } => {
-                write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset)
-            }
+            e::SendBlocksTo { to, epoch, offset } => write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset),
         }
     }
 }
+

@@ -1446,8 +1446,10 @@ impl NodeState {
     /// Handles incoming consensus requests received from network.
     ///
     fn handle_consensus_message(&mut self, msg: ConsensusMessage) -> Result<(), Error> {
+        strace!(self, "Handling consensus message. I'm a {}", self.validation);
         let consensus = match &mut self.validation {
             MicroBlockAuditor | MacroBlockAuditor => {
+                strace!(self, "I'm an auditor so doing nothing!");
                 return Ok(());
             }
             MicroBlockValidator {
@@ -1456,6 +1458,7 @@ impl NodeState {
             } => {
                 // if our consensus state is outdated, push message to future_consensus_messages.
                 // TODO: remove queue and use request-responses to get message from other nodes.
+                strace!(self, "I'm a microblock validator, must skip consensus messages!");
                 future_consensus_messages.push(msg);
                 return Ok(());
             }
@@ -1469,6 +1472,7 @@ impl NodeState {
     }
 
     fn handle_consensus_events(&mut self) {
+        strace!(self, "Handling consensus events...");
         let epoch = self.chain.epoch();
         let consensus = match &mut self.validation {
             MacroBlockValidator { consensus, .. } => consensus,
@@ -2319,3 +2323,14 @@ impl fmt::Display for NodeOutgoingEvent {
     }
 }
 
+impl fmt::Display for Validation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Validation::")?;
+        match self {
+            MicroBlockAuditor => write!(f, "MicroBlockAuditor"),
+            MicroBlockValidator { .. } => write!(f, "MicroBlockValidator"),
+            MacroBlockAuditor => write!(f, "MacroBlockAuditor"),
+            MacroBlockValidator { .. } => write!(f, "MacroBlockValidator"),
+        }
+    }
+}

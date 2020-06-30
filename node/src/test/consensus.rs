@@ -43,6 +43,12 @@ async fn smoke_test() {
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
+        node: NodeConfig {
+            micro_block_timeout: Duration::from_secs(300),
+            macro_block_timeout: Duration::from_secs(3000),
+            sync_change_timeout: Duration::from_secs(30000),
+            ..Default::default()
+        },
         ..Default::default()
     };
 

@@ -609,11 +609,11 @@ impl<'p> Partition<'p> {
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = self.leader();
-        let leader_node = self.find_mut(&leader_pk).unwrap();
-        leader_node.poll().await;
+        let leader = self.find_mut(&leader_pk).unwrap();
+        leader.poll().await;
         // Check for a proposal from the leader.
         trace!("Fetching macroblock proposal from {}", leader_pk);
-        let proposal: ConsensusMessage = leader_node
+        let proposal: ConsensusMessage = leader
             .network_service
             .get_broadcast(crate::CONSENSUS_TOPIC);
         debug!("Proposal: {:?}", proposal);
@@ -625,9 +625,8 @@ impl<'p> Partition<'p> {
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
+            node.poll().await;
         }
-
-        self.poll().await;
 
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
@@ -648,11 +647,10 @@ impl<'p> Partition<'p> {
                 if i != j {
                     node.network_service
                         .receive_broadcast(crate::CONSENSUS_TOPIC, prevotes[i].clone());
+                    node.poll().await;
                 }
             }
         }
-
-        self.poll().await;
 
         // Check for pre-commits
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
@@ -681,11 +679,10 @@ impl<'p> Partition<'p> {
                 if i != j {
                     node.network_service
                         .receive_broadcast(crate::CONSENSUS_TOPIC, precommits[i].clone());
+                    node.poll().await;
                 }
             }
         }
-
-        self.poll().await;
 
         let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
         let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
@@ -718,18 +715,19 @@ impl<'p> Partition<'p> {
         for node in self.iter_except(&[leader_pk]) {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+            node.poll().await;
         }
 
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+            auditor.poll().await;
         }
-
-        self.poll().await;
 
         // Check state of all nodes.
         let leader_pk = self.leader();
+        
         trace!("Checking node state after macroblock (leader = {})...", leader_pk);
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
@@ -759,9 +757,9 @@ impl<'p> Partition<'p> {
                 for restake in restakes.iter() {
                     node.network_service
                         .receive_broadcast(crate::TX_TOPIC, restake.clone());
+                    node.poll().await;
                 }
             }
-            self.poll().await;
         }
         trace!("Processed macroblock (leader = {})...", leader_pk);
     }

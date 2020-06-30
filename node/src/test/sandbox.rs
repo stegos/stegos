@@ -727,6 +727,7 @@ impl<'p> Partition<'p> {
         }
 
         // Check state of all nodes.
+        let old_leader_pk = leader_pk;
         let leader_pk = self.leader();
         
         trace!("Checking node state after macroblock (leader = {})...", leader_pk);
@@ -750,7 +751,7 @@ impl<'p> Partition<'p> {
         // Process re-stakes.
         if restake_epoch {
             trace!("Expecting restakes from non-leader nodes...");
-            for node in self.iter_except(&[leader_pk]) {
+            for node in self.iter_except(&[old_leader_pk]) {
                 let pkey = &node.node_service.state().network_pkey;
                 let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
                 debug!("[{}] Got restake: {:?}", pkey, restake);
@@ -764,7 +765,7 @@ impl<'p> Partition<'p> {
                 }
             }
         }
-        trace!("Processed macroblock (leader = {})...", leader_pk);
+        trace!("Processed macroblock (leader: {} -> {})...", old_leader_pk, leader_pk);
     }
 
     pub fn leader(&self) -> pbc::PublicKey {

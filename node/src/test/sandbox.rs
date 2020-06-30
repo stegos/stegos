@@ -54,6 +54,8 @@ use stegos_consensus::optimistic::AddressedViewChangeProof;
 use stegos_consensus::ConsensusMessageBody;
 use stegos_crypto::pbc;
 
+use stegos_serialization::traits::ProtoConvert;
+
 #[derive(Clone)]
 pub struct SandboxConfig {
     pub node: NodeConfig,
@@ -535,22 +537,21 @@ impl<'p> Partition<'p> {
         //self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
+        leader.poll().await; 
         leader.poll().await;
+
         trace!("Fetching microblock from leader {}", leader_pk);
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            node.poll().await;
+            let pkey = &node.node_service.state().network_pkey;
+            trace!("Delivering microblock to {}", pkey);
+            node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
         }
 
         if let Some(auditor) = self.auditor_mut() {
-            auditor
-                .network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            auditor.poll().await;
+            auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
         }
         trace!("Processed microblock...");
     }
@@ -611,6 +612,7 @@ impl<'p> Partition<'p> {
         let leader_pk = self.leader();
         let leader = self.find_mut(&leader_pk).unwrap();
         leader.poll().await;
+        leader.poll().await;
         // Check for a proposal from the leader.
         trace!("Fetching macroblock proposal from {}", leader_pk);
         let proposal: ConsensusMessage = leader
@@ -623,9 +625,9 @@ impl<'p> Partition<'p> {
 
         // Send this proposal to other nodes.
         for node in self.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::CONSENSUS_TOPIC, proposal.clone());
-            node.poll().await;
+            let pkey = &node.node_service.state().network_pkey;
+            trace!("Delivering macroblock proposal to {}", pkey);
+            node.process(crate::CONSENSUS_TOPIC, proposal.clone()).await;
         }
 
         // Check for pre-votes.
@@ -645,9 +647,9 @@ impl<'p> Partition<'p> {
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
-                    node.network_service
-                        .receive_broadcast(crate::CONSENSUS_TOPIC, prevotes[i].clone());
-                    node.poll().await;
+                    let pkey = &node.node_service.state().network_pkey;
+                    trace!("Delivering pre-vote to {}", pkey);
+                    node.process(crate::CONSENSUS_TOPIC, prevotes[i].clone()).await;
                 }
             }
         }
@@ -677,9 +679,9 @@ impl<'p> Partition<'p> {
         for i in 0..self.len() {
             for (j, node) in self.iter_mut().enumerate() {
                 if i != j {
-                    node.network_service
-                        .receive_broadcast(crate::CONSENSUS_TOPIC, precommits[i].clone());
-                    node.poll().await;
+                    let pkey = &node.node_service.state().network_pkey;
+                    trace!("Delivering pre-commit to {}", pkey);
+                    node.process(crate::CONSENSUS_TOPIC, precommits[i].clone()).await;
                 }
             }
         }
@@ -694,7 +696,7 @@ impl<'p> Partition<'p> {
                 .unwrap()
                 .network_service
                 .get_broadcast(crate::TX_TOPIC);
-            debug!("Got restake: {:?}", restake);
+            debug!("[{}] Got restake: {:?}", leader_pk, restake);
             restakes.push(restake);
         }
 
@@ -713,16 +715,15 @@ impl<'p> Partition<'p> {
 
         // Send this sealed block to all other nodes expect the leader.
         for node in self.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            node.poll().await;
+            let pkey = &node.node_service.state().network_pkey;
+            trace!("Delivering finished macroblock to {}", pkey);
+            node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
         }
 
         if let Some(auditor) = self.auditor_mut() {
-            auditor
-                .network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-            auditor.poll().await;
+            let pkey = &auditor.node_service.state().network_pkey;
+            trace!("Delivering finished macroblock to auditor {}", pkey);
+            auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
         }
 
         // Check state of all nodes.
@@ -748,16 +749,18 @@ impl<'p> Partition<'p> {
 
         // Process re-stakes.
         if restake_epoch {
+            trace!("Expecting restakes from non-leader nodes...");
             for node in self.iter_except(&[leader_pk]) {
+                let pkey = &node.node_service.state().network_pkey;
                 let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
-                debug!("Got restake: {:?}", restake);
+                debug!("[{}] Got restake: {:?}", pkey, restake);
                 restakes.push(restake);
             }
             for node in self.iter_mut() {
+                let pkey = &node.node_service.state().network_pkey;
+                trace!("Delivering restake to {}", pkey);
                 for restake in restakes.iter() {
-                    node.network_service
-                        .receive_broadcast(crate::TX_TOPIC, restake.clone());
-                    node.poll().await;
+                    node.process(crate::TX_TOPIC, restake.clone()).await;                    node.poll().await;
                 }
             }
         }
@@ -922,17 +925,22 @@ impl NodeSandbox {
     }
 
     pub async fn poll(&mut self) {
+        // drain the queue
         loop {
             let future = self.node_service.poll();
-
             pin_mut!(future);
             let result = futures::poll!(future);
-
             if result == Poll::Pending {
-                break;
+                break
             }
             wait(Duration::from_secs(0)).await;
         }
+    }
+
+    pub async fn process<M: ProtoConvert>(&mut self, topic: &str, msg: M) {
+        self.network_service.receive_broadcast(topic, msg);
+        //tokio::task::yield_now().await;
+        self.poll().await;
     }
 
     #[allow(dead_code)]

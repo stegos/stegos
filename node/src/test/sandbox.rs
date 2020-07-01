@@ -533,7 +533,9 @@ impl<'p> Partition<'p> {
         //self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
-        leader.poll().await; 
+        leader.advance().await; 
+        wait(Duration::from_secs(1)).await;
+        leader.poll().await;
 
         trace!("Fetching microblock from leader {}", leader_pk);
         let block: Block = leader
@@ -762,9 +764,12 @@ impl<'p> Partition<'p> {
             }
         }
 
-        for node in self.iter_mut() {
+        for node in self.iter_except(&[leader_pk]) {
             node.advance().await;
         }
+
+        let leader = self.find_mut(&leader_pk).unwrap();
+        leader.poll().await;
 
         trace!("Processed macroblock (leader: {} -> {})...", old_leader_pk, leader_pk);
     }

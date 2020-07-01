@@ -460,7 +460,7 @@ impl<'p> Partition<'p> {
             auditor.poll().await;
         }
 
-        wait(Duration::from_secs(0)).await;
+        wait(Duration::from_secs(1)).await;
     }
 
     pub fn len(&self) -> usize {
@@ -929,13 +929,16 @@ impl NodeSandbox {
     pub async fn poll(&mut self) {
         // drain the queue
         loop {
-            let future = self.node_service.poll();
-            pin_mut!(future);
-            let result = futures::poll!(future);
-            if result == Poll::Pending {
-                break
+            {
+                let future = self.node_service.poll();
+                pin_mut!(future);
+                let result = futures::poll!(future);
+                if result == Poll::Pending {
+                    break
+                }
             }
-            wait(Duration::from_secs(0)).await;
+            //self.node_service.handle_outgoing().await;
+            //wait(Duration::from_millis(0)).await;
         }
     }
 

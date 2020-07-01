@@ -537,7 +537,7 @@ impl NodeService {
             }
             // poll timers
             _ = self.macro_propose_timer.as_mut() => {
-                let event = NodeIncomingEvent::MacroBlockProposeTimer;
+                let event = NodeIncomingEvent::MacroBlockPropose;
                 self.state.handle_event(event);
             },
             _ = self.macro_view_change_timer.as_mut() => {
@@ -680,16 +680,12 @@ impl NodeService {
                     //
                     self.network.send(dest, &topic, data)
                 }
-                NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
+                NodeOutgoingEvent::MacroBlockPropose => {
                     let (tx, rx) = oneshot::channel::<()>();
                     tx.send(()).ok();
                     self.macro_propose_timer.set(rx.fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
                     self.micro_view_change_timer.set(Fuse::terminated());
-                    Ok(())
-                }
-                NodeOutgoingEvent::MacroBlockProposeTimerCancel => {
-                    self.macro_propose_timer.set(Fuse::terminated());
                     Ok(())
                 }
                 NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {

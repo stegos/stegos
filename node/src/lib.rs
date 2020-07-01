@@ -140,7 +140,7 @@ pub enum NodeIncomingEvent {
         data: Vec<u8>,
     },
     CheckSyncTimer,
-    MacroBlockProposeTimer,
+    MacroBlockPropose,
     MacroBlockViewChangeTimer,
     MicroBlockProposeTimer(Vec<u8>),
     MicroBlockViewChangeTimer,
@@ -167,8 +167,7 @@ pub enum NodeOutgoingEvent {
     },
     ChainNotification(ChainNotification),
     StatusNotification(StatusNotification),
-    MacroBlockProposeTimer(Duration),
-    MacroBlockProposeTimerCancel,
+    MacroBlockPropose,
     MacroBlockViewChangeTimer(Duration),
     MicroBlockProposeTimer {
         random: Hash,
@@ -188,13 +187,6 @@ pub enum NodeOutgoingEvent {
 }
 
 #[derive(Debug)]
-enum MacroBlockTimer {
-    None,
-    Propose,
-    ViewChange,
-}
-
-#[derive(Debug)]
 enum Validation {
     MicroBlockAuditor,
     MicroBlockValidator {
@@ -208,8 +200,6 @@ enum Validation {
     MacroBlockValidator {
         /// pBFT consensus,
         consensus: Consensus,
-        /// Propose or View Change timer
-        block_timer: MacroBlockTimer,
         /// Count of autocommits retries during current commit
         autocommit_counter: usize,
     },
@@ -1304,13 +1294,12 @@ impl NodeState {
 
     /// Called when a leader for the next macro block has changed.
     fn on_macro_block_leader_changed(&mut self) {
-        let (block_timer, consensus, autocommit_counter) = match &mut self.validation {
+        let (consensus, autocommit_counter) = match &mut self.validation {
             MacroBlockValidator {
-                block_timer,
                 consensus,
                 autocommit_counter,
                 ..
-            } => (block_timer, consensus, autocommit_counter),
+            } => (consensus, autocommit_counter),
             _ => panic!("Expected MacroBlockValidator State"),
         };
 
@@ -1330,12 +1319,7 @@ impl NodeState {
             // Consensus may have locked proposal.
             if consensus.should_propose() {
                 self.outgoing
-                    .push(NodeOutgoingEvent::MacroBlockProposeTimer(Duration::new(0, 0)));
-                *block_timer = MacroBlockTimer::Propose;
-            } else {
-                self.outgoing
-                    .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
-                *block_timer = MacroBlockTimer::None;
+                    .push(NodeOutgoingEvent::MacroBlockPropose);
             }
         } else {
             sinfo!(self,
@@ -1347,9 +1331,6 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
-            self.outgoing
-                .push(NodeOutgoingEvent::MacroBlockProposeTimerCancel);
-            *block_timer = MacroBlockTimer::ViewChange;
         }
 
         let relevant_round = 1 + consensus.round();
@@ -1449,7 +1430,6 @@ impl NodeState {
             // Set validator state.
             self.validation = MacroBlockValidator {
                 consensus,
-                block_timer: MacroBlockTimer::None,
                 autocommit_counter: 0,
             };
 
@@ -1639,13 +1619,12 @@ impl NodeState {
         );
 
         // Check that a block has been committed but haven't send by the leader.
-        let (consensus, block_timer, autocommit) = match &mut self.validation {
+        let (consensus, autocommit) = match &mut self.validation {
             MacroBlockValidator {
                 consensus,
-                block_timer,
                 autocommit_counter,
                 ..
-            } => (consensus, block_timer, autocommit_counter),
+            } => (consensus, autocommit_counter),
             _ => panic!("Expected MacroValidator state"),
         };
         if consensus.should_commit() {
@@ -1675,7 +1654,6 @@ impl NodeState {
                 let duration = relevant_round * self.cfg.macro_block_timeout;
                 self.outgoing
                     .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
-                *block_timer = MacroBlockTimer::ViewChange;
                 return Ok(());
             }
 
@@ -2266,7 +2244,7 @@ impl NodeState {
                 }
                 Ok(())
             }
-            NodeIncomingEvent::MacroBlockProposeTimer => {
+            NodeIncomingEvent::MacroBlockPropose => {
                 //
                 self.propose_macro_block()
             }
@@ -2307,7 +2285,7 @@ impl fmt::Display for NodeIncomingEvent {
             e::ViewChangeProofMessage { from, .. } => write!(f, "ViewChangeProofMessage({})", from),
             e::ChainLoaderMessage { from, .. } => write!(f, "ChainLoaderMessage({})", from),
             e::CheckSyncTimer => f.write_str("CheckSyncTimer"),
-            e::MacroBlockProposeTimer => f.write_str("MacroBlockProposeTimer"),
+            e::MacroBlockPropose => f.write_str("MacroBlockPropose"),
             e::MacroBlockViewChangeTimer => f.write_str("MacroBlockViewChangeTimer"),
             e::MicroBlockProposeTimer (..) => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockViewChangeTimer => f.write_str("MicroBlockViewChangeTimer"),
@@ -2327,8 +2305,7 @@ impl fmt::Display for NodeOutgoingEvent {
             e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
             e::ChainNotification (..) => f.write_str("ChainNotification"),
             e::StatusNotification (..) => f.write_str("StatusNotification"),
-            e::MacroBlockProposeTimer (d) => write!(f, "MacroBlockProposeTimer({:?})", d),
-            e::MacroBlockProposeTimerCancel => f.write_str("MacroBlockProposeTimerCancel"),
+            e::MacroBlockPropose => write!(f, "MacroBlockPropose"),
             e::MacroBlockViewChangeTimer (d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
             e::MicroBlockProposeTimer { .. } => f.write_str("MicroBlockProposeTimer"),
             e::MicroBlockProposeTimerCancel => f.write_str("MicroBlockProposeTimerCancel"),

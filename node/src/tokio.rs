@@ -328,6 +328,11 @@ impl NodeService {
     }
 
     #[cfg(test)]
+    pub fn state_mut(&mut self) -> &mut NodeState {
+        &mut self.state
+    }
+
+    #[cfg(test)]
     pub fn network(&self) -> &Network {
         return &self.network;
     }

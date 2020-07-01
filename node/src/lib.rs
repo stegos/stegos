@@ -244,6 +244,9 @@ pub struct NodeState {
     /// Automatic re-staking status.
     is_restaking_enabled: bool,
 
+    /// 
+    validation_status_changed: bool,
+
     pub(crate) outgoing: Vec<NodeOutgoingEvent>,
 }
 
@@ -268,6 +271,7 @@ impl NodeState {
 
         let restaking_offset = 0; // will be updated on init().
         let is_restaking_enabled = true;
+        let validation_status_changed = true;
 
         let state = NodeState {
             cfg,
@@ -281,6 +285,7 @@ impl NodeState {
             cheating_proofs,
             restaking_offset,
             is_restaking_enabled,
+            validation_status_changed,
             outgoing: Vec::new(),
         };
         state.update_stake_balance();
@@ -750,7 +755,7 @@ impl NodeState {
 
         self.chain
             .set_view_change(proof.chain.view_change + 1, proof.proof);
-        self.update_validation_status();
+        self.validation_status_changed = true;
         Ok(())
     }
 
@@ -1113,7 +1118,7 @@ impl NodeState {
         self.update_stake_balance();
 
         // Update validation status.
-        self.update_validation_status();
+        self.validation_status_changed = true;
 
         // Print "Synchronized" message.
         if !was_synchronized && self.chain.is_synchronized() {
@@ -1192,7 +1197,7 @@ impl NodeState {
         self.mempool.pop_micro_block(txs);
 
         // Update validation status.
-        self.update_validation_status();
+        self.validation_status_changed = true;
 
         // Send StatusChanged.
         self.on_status_changed();
@@ -1370,7 +1375,15 @@ impl NodeState {
     ///
     /// Change validation status after applying a new block or performing a view change.
     ///
-    fn update_validation_status(&mut self) {
+    pub fn update_validation_status(&mut self) {
+        if !self.validation_status_changed {
+            strace!(self, "No change, skipping consensus role update...");
+            return;
+        }
+
+        strace!(self, "Updating consensus role...");
+        self.validation_status_changed = false;
+
         if !self.chain.is_epoch_full() {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroBlockAuditor);
@@ -1409,12 +1422,15 @@ impl NodeState {
                 return;
             }
 
+            let validators = self.chain.validators_at_epoch_start();
+            strace!(self, "Validators: {}", validators);
+
             let mut consensus = Consensus::new(
                 self.chain.epoch(),
                 self.network_skey.clone(),
                 self.network_pkey.clone(),
                 self.chain.election_result().clone(),
-                self.chain.validators_at_epoch_start().0.into_iter().collect(),
+                validators.0.into_iter().collect(),
             );
 
             // Flush pending messages.

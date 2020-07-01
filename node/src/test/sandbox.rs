@@ -414,12 +414,8 @@ impl<'p> Partition<'p> {
             );
             assert_eq!(chain.epoch(), epoch);
             assert_eq!(chain.epoch_info(epoch - 1).unwrap().unwrap(), awards);
-            if epoch > 1 && pkey == leader_pk {
-                assert_eq!(chain.offset(), offset + 1);
-            } else {
-                assert_eq!(chain.offset(), offset);
-                assert_eq!(chain.last_block_hash(), last_block);
-            }
+            assert_eq!(chain.offset(), offset);
+            assert_eq!(chain.last_block_hash(), last_block);
         }
 
         if let Some(auditor) = self.auditor() {
@@ -538,7 +534,6 @@ impl<'p> Partition<'p> {
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
         leader.poll().await; 
-        leader.poll().await;
 
         trace!("Fetching microblock from leader {}", leader_pk);
         let block: Block = leader
@@ -548,11 +543,16 @@ impl<'p> Partition<'p> {
             let pkey = &node.node_service.state().network_pkey;
             trace!("Delivering microblock to {}", pkey);
             node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+            node.advance().await;
         }
 
         if let Some(auditor) = self.auditor_mut() {
             auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+            auditor.advance().await;
         }
+
+        let leader = self.find_mut(&leader_pk).unwrap();
+        leader.advance().await; 
         trace!("Processed microblock...");
     }
 
@@ -611,8 +611,8 @@ impl<'p> Partition<'p> {
         let last_macro_block_hash = chain.last_macro_block_hash();
         let leader_pk = self.leader();
         let leader = self.find_mut(&leader_pk).unwrap();
-        leader.poll().await;
-        leader.poll().await;
+        leader.advance().await;
+        
         // Check for a proposal from the leader.
         trace!("Fetching macroblock proposal from {}", leader_pk);
         let proposal: ConsensusMessage = leader
@@ -738,14 +738,9 @@ impl<'p> Partition<'p> {
              pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
-            if *pkey == leader_pk {
-                assert_eq!(chain.offset(), 1);
-                assert_eq!(chain.last_macro_block_hash(), block_hash);
-            } else {
-                assert_eq!(chain.offset(), 0);
-                assert_eq!(chain.last_macro_block_hash(), block_hash);
-                assert_eq!(chain.last_block_hash(), block_hash);    
-            }
+            assert_eq!(chain.offset(), 0);
+            assert_eq!(chain.last_macro_block_hash(), block_hash);
+            assert_eq!(chain.last_block_hash(), block_hash);    
         }
 
         // Process re-stakes.
@@ -761,10 +756,16 @@ impl<'p> Partition<'p> {
                 let pkey = &node.node_service.state().network_pkey;
                 trace!("Delivering restake to {}", pkey);
                 for restake in restakes.iter() {
-                    node.process(crate::TX_TOPIC, restake.clone()).await;                    node.poll().await;
+                    node.process(crate::TX_TOPIC, restake.clone()).await;                    
+                    node.poll().await;
                 }
             }
         }
+
+        for node in self.iter_mut() {
+            node.advance().await;
+        }
+
         trace!("Processed macroblock (leader: {} -> {})...", old_leader_pk, leader_pk);
     }
 
@@ -936,6 +937,15 @@ impl NodeSandbox {
             }
             wait(Duration::from_secs(0)).await;
         }
+    }
+
+    pub fn update_validation_status(&mut self) {
+        self.node_service.state_mut().update_validation_status();
+    }
+
+    pub async fn advance(&mut self) {
+        self.update_validation_status();
+        self.poll().await;
     }
 
     pub async fn process<M: ProtoConvert>(&mut self, topic: &str, msg: M) {

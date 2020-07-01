@@ -212,7 +212,7 @@ pub struct NodeService {
     /// Replication
     replication: Replication,
 
-    macro_propose_timer: Pin<Box<Fuse<Delay>>>,
+    macro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<()>>>>,
     macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
     micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
     micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
@@ -516,13 +516,16 @@ impl NodeService {
     pub async fn start(mut self) {
         loop {
             self.poll().await;
+            self.handle_outgoing().await;   
         }
     }
 
     pub async fn poll(&mut self) {
-        strace!(self, "Node polling. Elapsed {:?}", self.now.elapsed());
+        strace!(self, "Polling node. Elapsed {:?}", self.now.elapsed());
         self.now = Instant::now();
 
+        self.handle_outgoing().await;
+        
         // Subscribers for chain events which are fed from the disk.
         // Automatically promoted to chain_subscribers after synchronization.
         let mut chain_readers = Vec::<ChainReader>::new();
@@ -567,13 +570,11 @@ impl NodeService {
                                 self.replication.change_upstream(false);
                                 let response = NodeResponse::UpstreamChanged;
                                 tx.send(response).ok(); // ignore errors.
-                                return;
                             }
                             NodeRequest::ReplicationInfo {} => {
                                 let response =
                                     NodeResponse::ReplicationInfo(self.replication.info());
                                 tx.send(response).ok(); // ignore errors.
-                                return;
                             }
                             NodeRequest::SubscribeChain { epoch, offset } => {
                                 let response =
@@ -588,7 +589,6 @@ impl NodeService {
                                         },
                                     };
                                 tx.send(response).ok(); // ignore errors.
-                                return;
                             }
                             NodeRequest::SubscribeStatus {} => {
                                 let response = match self.handle_subscription_to_status() {
@@ -604,7 +604,6 @@ impl NodeService {
                                     },
                                 };
                                 tx.send(response).ok(); // ignore errors.
-                                return;
                             }
                             request => {
                                 let event = NodeIncomingEvent::Request { request, tx };
@@ -657,8 +656,6 @@ impl NodeService {
             }
         }
 
-        self.handle_outgoing().await;
-   
         for mut reader in std::mem::replace(&mut chain_readers, Vec::new()) {
             if let Ok(_) = reader.advance(&self.state.chain) {
                 chain_readers.push(reader)
@@ -684,8 +681,9 @@ impl NodeService {
                     self.network.send(dest, &topic, data)
                 }
                 NodeOutgoingEvent::MacroBlockProposeTimer(duration) => {
-                    self.macro_propose_timer
-                        .set(time::delay_for(duration).fuse());
+                    let (tx, rx) = oneshot::channel::<()>();
+                    tx.send(()).ok();
+                    self.macro_propose_timer.set(rx.fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
                     self.micro_view_change_timer.set(Fuse::terminated());
                     Ok(())

@@ -49,13 +49,6 @@ async fn smoke_test() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    wait(Duration::from_secs(1)).await;
-
-    trace!(
-        ">>> Iterating through {} macroblocks, with {} microblocks each",
-        1 + NUM_RESTAKES * config.chain.stake_epochs + 1,
-        config.chain.micro_blocks_in_epoch
-    );
     for _epoch in 1..=(1 + NUM_RESTAKES * config.chain.stake_epochs + 1) {
         for _offset in 0..config.chain.micro_blocks_in_epoch {
             p.skip_micro_block().await;

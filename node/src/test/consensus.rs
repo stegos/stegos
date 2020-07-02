@@ -117,11 +117,12 @@ async fn autocommit() {
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
     }
+
     // wait more time, to check if counter will not overflow.
     wait(config.node.macro_block_timeout).await;
 
     p.poll().await;
-    p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
+    p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC, CONSENSUS_TOPIC]);
 }
 
 #[tokio::test]

@@ -1627,7 +1627,7 @@ impl NodeState {
             } => (consensus, autocommit_counter),
             _ => panic!("Expected MacroValidator state"),
         };
-        
+
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
             // a more simpler round robin across nodes.
@@ -1747,6 +1747,9 @@ impl NodeState {
     /// Checks if it's time to perform a view change on a micro block.
     fn handle_micro_block_viewchange_timer(&mut self) -> Result<(), Error> {
         let elapsed = Instant::now().duration_since(self.last_block_clock);
+        strace!(self, "Elapsed {:?} since last block clock. Microblock timeout = {:?}", 
+            elapsed, self.cfg.micro_block_timeout);
+        #[cfg(not(test))]
         assert!(elapsed >= self.cfg.micro_block_timeout);
         let leader = self.chain.leader();
         swarn!(

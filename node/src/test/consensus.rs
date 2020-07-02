@@ -71,99 +71,57 @@ async fn autocommit() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    async {
-        // Create one micro block.
-        p.skip_micro_block().await;
-        let first = p.first();
+    // Create one micro block.
+    p.skip_micro_block().await;
 
-        let topic = crate::CONSENSUS_TOPIC;
-        let epoch = first.state().chain.epoch();
+    let chain = p.chain();
+    let epoch = chain.epoch();
+    let last_block_hash = chain.last_block_hash();
 
-        let last_block_hash = first.state().chain.last_block_hash();
+    let (_block, block_hash, _) = p.create_macro_block().await;
+    let leader_pk = p.leader();
 
-        let leader_pk = first.state().chain.leader();
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        // Check for a proposal from the leader.
-        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        debug!("Proposal: {:?}", proposal);
-        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+    trace!("Checking for autocommit...");
+    // dont send this block to any node, wait for autocommits.
+    let mut keys: Vec<_> = p.iter().map(|n| n.state().network_pkey).collect();
+    keys.sort();
 
-        // Send this proposal to other nodes.
-        for node in p.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(topic, proposal.clone());
-            node.poll().await;
-        }
-
-        for i in 0..p.len() {
-            let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
-            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            for j in 0..p.len() {
-                p[j].network_service
-                    .receive_broadcast(topic, prevote.clone());
-            }
-        }
+    for pk in keys {
         p.poll().await;
 
-        for i in 0..p.len() {
-            let precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
-            assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
-            for j in 0..p.len() {
-                p[j].network_service
-                    .receive_broadcast(topic, precommit.clone());
-            }
-        }
-        p.poll().await;
-
-        // Receive sealed block.
-        let block: Block = p
-            .find_mut(&leader_pk)
-            .unwrap()
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let block_hash = Hash::digest(&block);
-
-        info!("Starting checking of autocommit.");
-        // dont send this block to any node, wait for autocommits.
-        let mut nodes_pk: Vec<_> = p.iter().map(|n| n.state().network_pkey).collect();
-        nodes_pk.sort();
-
-        for pk in nodes_pk {
-            p.poll().await;
-            // Wait for macro block timeout.
-            wait(config.node.macro_block_timeout).await;
-
-            info!("Checking autocommit of node {}.", pk);
-            if pk == leader_pk {
-                continue;
-            }
-
-            let node = p.find_mut(&pk).unwrap();
-
-            // The last node hasn't received sealed block.
-            assert_eq!(node.state().chain.epoch(), epoch);
-            assert_eq!(node.state().chain.last_block_hash(), last_block_hash);
-
-            // poll to update node after macroblock_timeout waits
-            node.poll().await;
-            // Check that the last node has auto-committed the block.
-            assert_eq!(node.state().chain.epoch(), epoch + 1);
-            assert_eq!(node.state().chain.last_block_hash(), block_hash);
-
-            // Check that the auto-committed block has been sent to the network.
-            let block2: Block = node
-                .network_service
-                .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-            let block_hash2 = Hash::digest(&block2);
-            assert_eq!(block_hash, block_hash2);
-        }
-        // wait more time, to check if counter will not overflow.
+        // Wait for macro block timeout.
         wait(config.node.macro_block_timeout).await;
 
-        p.poll().await;
-        p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
+        trace!("[{}] Checking for autocommit, leader? = {}", pk,  pk == leader_pk);
+
+        if pk == leader_pk {
+            continue;
+        }
+
+        let node = p.find_mut(&pk).unwrap();
+
+        // The last node hasn't received sealed block.
+        assert_eq!(node.node_service.state().chain.epoch(), epoch);
+        assert_eq!(node.node_service.state().chain.last_block_hash(), last_block_hash);
+
+        // poll to update node after macroblock_timeout waits
+        node.advance().await;
+        // Check that the last node has auto-committed the block.
+        assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
+        assert_eq!(node.node_service.state().chain.last_block_hash(), block_hash);
+
+        // Check that the auto-committed block has been sent to the network.
+        let block2: Block = node
+            .network_service
+            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+        let block_hash2 = Hash::digest(&block2);
+        assert_eq!(block_hash, block_hash2);
     }
-    .await;
+    // wait more time, to check if counter will not overflow.
+    wait(config.node.macro_block_timeout).await;
+
+    p.poll().await;
+    p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC]);
 }
 
 #[tokio::test]
@@ -300,7 +258,8 @@ async fn multiple_rounds() {
 
         p.poll().await;
         for i in 1..p.len() {
-            p[i].network_service.assert_empty_queue()
+            let pkey = p[i].node_service.state().network_pkey;
+            p[i].network_service.assert_empty_queue(&pkey)
         }
 
         wait(Duration::from_millis(1)).await;
@@ -320,7 +279,8 @@ async fn multiple_rounds() {
 
         p.poll().await;
         for i in 1..p.len() {
-            p[i].network_service.assert_empty_queue()
+            let pkey = p[i].node_service.state().network_pkey;
+            p[i].network_service.assert_empty_queue(&pkey)
         }
 
         wait(Duration::from_millis(1)).await;

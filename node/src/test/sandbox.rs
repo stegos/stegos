@@ -453,14 +453,14 @@ impl<'p> Partition<'p> {
     pub async fn poll(&mut self) {
         trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
-            node.poll().await;
+            node.advance().await;
         }
 
         if let Some(auditor) = &mut self.auditor {
-            auditor.poll().await;
+            auditor.advance().await;
         }
 
-        wait(Duration::from_secs(1)).await;
+        wait(Duration::from_secs(0)).await;
     }
 
     pub fn len(&self) -> usize {
@@ -516,7 +516,7 @@ impl<'p> Partition<'p> {
     }
 
     #[inline]
-    fn chain(&self) -> &Blockchain {
+    pub fn chain(&self) -> &Blockchain {
         &self.first().node_service.state().chain
     }
 
@@ -604,8 +604,14 @@ impl<'p> Partition<'p> {
         self.poll().await;
     }
 
-    pub async fn skip_macro_block(&mut self) {
-        trace!("Skipping macroblock...");
+    pub async fn process_except<M: ProtoConvert + Clone>(&mut self, pk: &pbc::PublicKey, topic: &str, msg: M) {
+        for node in self.iter_except(&[*pk]) {
+            node.process(topic, msg.clone()).await;
+        }
+    }
+
+    pub async fn create_macro_block(&mut self) -> (Block, Hash, Option<Transaction>) {
+        trace!("Creating a macroblock...");
         let chain = self.chain();
         let stake_epochs = chain.cfg().stake_epochs;
         let epoch = chain.epoch();
@@ -626,11 +632,7 @@ impl<'p> Partition<'p> {
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
         // Send this proposal to other nodes.
-        for node in self.iter_except(&[leader_pk]) {
-            let pkey = &node.node_service.state().network_pkey;
-            trace!("Delivering macroblock proposal to {}", pkey);
-            node.process(crate::CONSENSUS_TOPIC, proposal.clone()).await;
-        }
+        self.process_except(&leader_pk, crate::CONSENSUS_TOPIC, proposal.clone()).await;
 
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
@@ -688,21 +690,19 @@ impl<'p> Partition<'p> {
             }
         }
 
-        let restake_epoch = ((1 + epoch) % stake_epochs) == 0;
-        let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
-        // Process re-stakes.
-        if restake_epoch {
-            debug!("Re-stake should happen in this epoch: {}", epoch);
-            let restake: Transaction = self
+        // Fetch restake tx
+        let restake: Option<Transaction> = if ((1 + epoch) % stake_epochs) == 0 {
+            let tx = self
                 .find_mut(&leader_pk)
                 .unwrap()
                 .network_service
                 .get_broadcast(crate::TX_TOPIC);
-            debug!("[{}] Got restake: {:?}", leader_pk, restake);
-            restakes.push(restake);
-        }
+                Some(tx)
+        } else {
+            None
+        };
 
-        // Receive sealed block.
+        // Fetch completed block
         trace!("Fetching finished macroblock from {}", leader_pk);
         let block: Block = self
             .find_mut(&leader_pk)
@@ -714,17 +714,28 @@ impl<'p> Partition<'p> {
         assert_eq!(block_hash, proposal.block_hash);
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
+        (block, block_hash, restake)
+    }
 
-        // Send this sealed block to all other nodes except the leader.
-        for node in self.iter_except(&[leader_pk]) {
-            let pkey = &node.node_service.state().network_pkey;
-            trace!("Delivering finished macroblock to {}", pkey);
-            node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+    pub async fn skip_macro_block(&mut self) {
+        trace!("Skipping macroblock...");
+        let chain = self.chain();
+        let epoch = chain.epoch();
+
+        let (block, block_hash, leader_restake) = self.create_macro_block().await;
+        let leader_pk = self.leader();
+
+        // Process re-stakes.
+        let mut restakes: Vec<Transaction> = Vec::with_capacity(self.len());
+
+        if let Some(tx) = leader_restake {
+            restakes.push(tx)
         }
 
+        // Send this sealed block to all other nodes except the leader.
+        self.process_except(&leader_pk, crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+
         if let Some(auditor) = self.auditor_mut() {
-            let pkey = &auditor.node_service.state().network_pkey;
-            trace!("Delivering finished macroblock to auditor {}", pkey);
             auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
         }
 
@@ -746,7 +757,7 @@ impl<'p> Partition<'p> {
         }
 
         // Process re-stakes.
-        if restake_epoch {
+        if !restakes.is_empty() {
             trace!("Expecting restakes from non-leader nodes...");
             for node in self.iter_except(&[old_leader_pk]) {
                 let pkey = &node.node_service.state().network_pkey;
@@ -863,8 +874,9 @@ pub struct NodeSandbox {
 impl Drop for NodeSandbox {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            info!("Droping node with id = {:?}", self.validator_id());
-            self.network_service.assert_empty_queue();
+            let pkey = self.node_service.state().network_pkey;
+            trace!("[{}] Droping node...", pkey);
+            self.network_service.assert_empty_queue(&pkey);
         }
     }
 }
@@ -934,16 +946,12 @@ impl NodeSandbox {
     pub async fn poll(&mut self) {
         // drain the queue
         loop {
-            {
-                let future = self.node_service.poll();
-                pin_mut!(future);
-                let result = futures::poll!(future);
-                if result == Poll::Pending {
-                    break
-                }
+            let future = self.node_service.poll();
+            pin_mut!(future);
+            let result = futures::poll!(future);
+            if result == Poll::Pending {
+                break
             }
-            //self.node_service.handle_outgoing().await;
-            //wait(Duration::from_millis(0)).await;
         }
     }
 

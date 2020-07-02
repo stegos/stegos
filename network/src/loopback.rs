@@ -194,7 +194,7 @@ impl Loopback {
         (service, Box::new(network), peer_id, replication_rx)
     }
 
-    pub fn assert_empty_queue(&self) {
+    pub fn assert_empty_queue(&self, pkey: &pbc::PublicKey) {
         let ref mut state = self.state.lock().unwrap();
         let mut result = Vec::new();
         for data in &state.queue {
@@ -207,7 +207,7 @@ impl Loopback {
         }
 
         if !result.is_empty() {
-            panic!("Found not processed messages: {:?}", result);
+            panic!("[{}] Found unprocessed messages: {:?}", pkey, result);
         }
     }
 

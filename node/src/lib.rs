@@ -1627,6 +1627,7 @@ impl NodeState {
             } => (consensus, autocommit_counter),
             _ => panic!("Expected MacroValidator state"),
         };
+        
         if consensus.should_commit() {
             assert!(!consensus.is_leader(), "never happens on leader");
             // a more simpler round robin across nodes.
@@ -1639,7 +1640,7 @@ impl NodeState {
 
             let is_relay = leader.0 == self.network_pkey;
 
-            swarn!(self, "Timed out while waiting for the committed block from the leader, trying to apply automatically: epoch={}, is_leader={}",
+            swarn!(self, "Timed out while waiting for the committed block from leader, trying to apply automatically: epoch={}, is_leader={}",
                   self.chain.epoch(), is_relay
             );
 
@@ -1647,7 +1648,7 @@ impl NodeState {
             if !is_relay {
                 *autocommit += 1;
                 strace!(self,
-                    "It's not my time to send macroblock, waiting for next autocommit timer, current_leader={}",
+                    "It's not time to send macroblock, waiting for next autocommit timer, current_leader={}",
                     leader.0
                 );
                 let relevant_round = 1 + consensus.round();

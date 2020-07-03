@@ -149,90 +149,87 @@ async fn round() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    async {
-        // Create one micro block.
-        p.poll().await;
-        p.skip_micro_block().await;
+    // Create one micro block.
+    p.poll().await;
+    p.skip_micro_block().await;
 
-        let topic = CONSENSUS_TOPIC;
+    let topic = CONSENSUS_TOPIC;
 
-        let leader_pk = p.first_mut().state().chain.leader();
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        // skip proposal and prevote of last leader.
-        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+    let leader_pk = p.first_mut().state().chain.leader();
+    let leader = p.find_mut(&leader_pk).unwrap();
+    // skip proposal and prevote of last leader.
+    let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
+    let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);
 
-        let epoch = p.first().state().chain.epoch();
-        let round = p.first().state().chain.view_change() + 1;
-        wait(config.node.macro_block_timeout).await;
+    let epoch = p.first().state().chain.epoch();
+    let round = p.first().state().chain.view_change() + 1;
+    wait(config.node.macro_block_timeout).await;
 
-        info!("====== Waiting for keyblock timeout. =====");
-        p.poll().await;
+    trace!("Waiting for macroblock timeout");
+    p.poll().await;
 
-        // filter messages from chain loader.
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    // filter messages from chain loader.
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
-        let leader_pk = p.first_mut().state().chain.select_leader(round);
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        debug!("Proposal: {:?}", proposal);
-        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+    let leader_pk = p.first_mut().state().chain.select_leader(round);
+    let leader = p.find_mut(&leader_pk).unwrap();
+    let proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
+    trace!("Proposal: {:?}", proposal);
+    assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
-        // Send this proposal to other nodes.
-        for node in p.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(topic, proposal.clone());
-        }
-        p.poll().await;
+    // Send this proposal to other nodes.
+    for node in p.iter_except(&[leader_pk]) {
+        node.network_service
+            .receive_broadcast(topic, proposal.clone());
+    }
+    p.poll().await;
 
-        for i in 0..p.len() {
-            let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
-            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            assert_eq!(prevote.epoch, epoch);
-            assert_eq!(prevote.round, round);
-            assert_eq!(prevote.block_hash, proposal.block_hash);
-            for j in 0..p.len() {
-                p[j].network_service
-                    .receive_broadcast(topic, prevote.clone());
-            }
-        }
-        p.poll().await;
-
-        for i in 0..p.len() {
-            let precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
-            assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
-            assert_eq!(precommit.epoch, epoch);
-            assert_eq!(precommit.round, round);
-            assert_eq!(precommit.block_hash, proposal.block_hash);
-            for j in 0..p.len() {
-                p[j].network_service
-                    .receive_broadcast(topic, precommit.clone());
-            }
-        }
-        p.poll().await;
-
-        // Receive sealed block.
-        let block: Block = p
-            .find_mut(&leader_pk)
-            .unwrap()
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let block_hash = Hash::digest(&block);
-
-        let macro_block = block.clone().unwrap_macro();
-        assert_eq!(macro_block.header.view_change, round);
-        for node in p.iter_except(&[leader_pk]) {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-        }
-        p.poll().await;
-
-        for node in p.iter_except(&[leader_pk]) {
-            assert_eq!(node.state().chain.epoch(), epoch + 1);
-            assert_eq!(node.state().chain.last_block_hash(), block_hash);
+    for i in 0..p.len() {
+        let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
+        assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+        assert_eq!(prevote.epoch, epoch);
+        assert_eq!(prevote.round, round);
+        assert_eq!(prevote.block_hash, proposal.block_hash);
+        for j in 0..p.len() {
+            p[j].network_service
+                .receive_broadcast(topic, prevote.clone());
         }
     }
-    .await
+    p.poll().await;
+
+    for i in 0..p.len() {
+        let precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
+        assert_matches!(precommit.body, ConsensusMessageBody::Precommit { .. });
+        assert_eq!(precommit.epoch, epoch);
+        assert_eq!(precommit.round, round);
+        assert_eq!(precommit.block_hash, proposal.block_hash);
+        for j in 0..p.len() {
+            p[j].network_service
+                .receive_broadcast(topic, precommit.clone());
+        }
+    }
+    p.poll().await;
+
+    // Receive sealed block.
+    let block: Block = p
+        .find_mut(&leader_pk)
+        .unwrap()
+        .network_service
+        .get_broadcast(crate::SEALED_BLOCK_TOPIC);
+    let block_hash = Hash::digest(&block);
+
+    let macro_block = block.clone().unwrap_macro();
+    assert_eq!(macro_block.header.view_change, round);
+    for node in p.iter_except(&[leader_pk]) {
+        node.network_service
+            .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
+    }
+    p.poll().await;
+
+    for node in p.iter_except(&[leader_pk]) {
+        assert_eq!(node.state().chain.epoch(), epoch + 1);
+        assert_eq!(node.state().chain.last_block_hash(), block_hash);
+    }
 }
 
 // check if rounds started at correct timeout

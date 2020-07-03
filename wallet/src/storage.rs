@@ -129,7 +129,7 @@ impl LightDatabase {
             last_macro_block_hash: Hash::digest("genesis"),
             last_macro_block_random: Hash::digest("genesis"),
             last_macro_block_timestamp: Timestamp::now(),
-            validators: vec![],
+            validators: Validators::new(),
             facilitator_pkey: pbc::PublicKey::dum(),
             micro_blocks: Vec::new(),
             created_txs: HashMap::new(),
@@ -741,14 +741,14 @@ impl LightDatabase {
         //
         // Validate validators.
         //
-        let validators_len = validators.len();
+        let validators_len = validators.0.len();
         if header.validators_len as usize != validators_len {
             panic!(
                 "Invalid validators_len: expected={}, got={}",
                 validators_len, header.validators_len,
             );
         }
-        let validators_range_hash = Merkle::root_hash_from_array(validators);
+        let validators_range_hash = Merkle::root_hash_from_array(&validators.0);
         if header.validators_range_hash != validators_range_hash {
             panic!(
                 "Invalid validators_range_hash: expected={}, got={}",

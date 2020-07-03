@@ -346,6 +346,10 @@ impl Validators {
     pub fn new() -> Self {
         Self(Vec::new())
     }
+
+    pub fn with_capacity(cap: usize) -> Self {
+        Self(Vec::with_capacity(cap))
+    }
 }
 
 impl FromIterator<Validator> for Validators {

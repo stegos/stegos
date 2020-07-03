@@ -188,7 +188,7 @@ fn main() {
     stegos_crypto::set_network_prefix(chain_to_prefix(chain))
         .expect("Network prefix not initialised.");
 
-    let mut stakers: Validators = Vec::with_capacity(keys as usize);
+    let mut stakers = Validators::with_capacity(keys as usize);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keys as usize);
     let mut keychains = Vec::<(
         scc::SecretKey,
@@ -266,7 +266,7 @@ fn main() {
         assert!(payout >= stake);
         payout -= stake;
         outputs.push(output.into());
-        stakers.push((network_pkey, stake));
+        stakers.0.push((network_pkey, stake));
     }
 
     // Create an initial payment.

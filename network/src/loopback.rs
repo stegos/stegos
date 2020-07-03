@@ -165,7 +165,9 @@ pub struct Loopback {
 }
 
 impl Loopback {
-    pub fn new(pkey: &pbc::PublicKey) -> (
+    pub fn new(
+        pkey: &pbc::PublicKey,
+    ) -> (
         Loopback,
         Network,
         PeerId,
@@ -260,7 +262,7 @@ impl Loopback {
             }
             None => {
                 strace!(self, "No broadcast message found for topic {}!", topic);
-                return None
+                return None;
             }
         }
     }

@@ -511,7 +511,8 @@ impl Blockchain {
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
-                .0.len() as i64,
+                .0
+                .len() as i64,
         );
         for (key, stake) in self.validators().0.iter() {
             let key_str = key.to_string();
@@ -607,11 +608,14 @@ impl Blockchain {
             return Ok(());
         }
 
-        debug!("Creating a new blockchain with difficulty={}...", self.difficulty);
+        debug!(
+            "Creating a new blockchain with difficulty={}...",
+            self.difficulty
+        );
         self.push_macro_block(genesis, timestamp)?;
         info!(
             "Initialized a new blockchain: epoch={}, offset={}, last_block={}",
-                self.epoch, self.offset, self.last_block_hash
+            self.epoch, self.offset, self.last_block_hash
         );
         Ok(())
     }
@@ -895,8 +899,7 @@ impl Blockchain {
                         .expect("epoch info for macro block");
                     let epoch_info =
                         EpochInfo::from_buffer(&epoch_info).expect("couldn't deserialize block.");
-                    let validators: Validators = 
-                        epoch_info
+                    let validators: Validators = epoch_info
                         .validators
                         .into_iter()
                         .map(|x| (x.network_pkey, x.slots))
@@ -1168,7 +1171,9 @@ impl Blockchain {
         let mut validators_activity = BTreeMap::new();
         let validators = self.validators_at_epoch_start();
         if activity_map.len() > validators.0.len() {
-            return Err(BlockError::TooBigActivitymap(activity_map.len(), validators.0.len()).into());
+            return Err(
+                BlockError::TooBigActivitymap(activity_map.len(), validators.0.len()).into(),
+            );
         };
         for (id, (validator, _slots)) in validators.0.iter().enumerate() {
             // Set failed if no activity was set.
@@ -1620,7 +1625,8 @@ impl Blockchain {
         metrics::STAKERS_MAJORITY_COUNT.set(
             self.escrow
                 .get_stakers_majority(self.epoch, self.cfg.min_stake_amount)
-                .0.len() as i64,
+                .0
+                .len() as i64,
         );
         metrics::VALIDATOR_SLOTS_GAUGEVEC.reset();
         for (key, stake) in self.validators().0.iter() {
@@ -1670,7 +1676,8 @@ impl Blockchain {
         let validators = self
             .election_result()
             .validators
-            .0.iter()
+            .0
+            .iter()
             .map(|v| {
                 let network_pkey = v.0;
                 let account_pkey = self
@@ -1981,7 +1988,8 @@ impl Blockchain {
                     let validators = &self.election_result().validators;
                     // remove cheater for current epoch.
                     let new_validators: Validators = validators
-                        .0.iter()
+                        .0
+                        .iter()
                         .filter_map(|(k, v)| {
                             if *k != tx.cheater() {
                                 Some((*k, *v))

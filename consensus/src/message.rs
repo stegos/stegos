@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::fmt;
 use crate::error::*;
+use std::fmt;
 use stegos_blockchain::{MacroBlockHeader, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
@@ -155,7 +155,9 @@ impl fmt::Display for ConsensusMessage {
             ConsensusMessageBody::Precommit { .. } => write!(f, "Precommit")?,
         };
         write!(f, "] {{ ")?;
-        write!(f, "round: {}, epoch: {}, block: {}, pkey: {}",
+        write!(
+            f,
+            "round: {}, epoch: {}, block: {}, pkey: {}",
             self.round, self.epoch, self.block_hash, self.pkey,
         )?;
         write!(f, "}}")?;

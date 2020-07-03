@@ -92,7 +92,11 @@ async fn autocommit() {
         // Wait for macro block timeout.
         wait(config.node.macro_block_timeout).await;
 
-        trace!("[{}] Checking for autocommit, leader? = {}", pk,  pk == leader_pk);
+        trace!(
+            "[{}] Checking for autocommit, leader? = {}",
+            pk,
+            pk == leader_pk
+        );
 
         if pk == leader_pk {
             continue;
@@ -102,13 +106,19 @@ async fn autocommit() {
 
         // The last node hasn't received sealed block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch);
-        assert_eq!(node.node_service.state().chain.last_block_hash(), last_block_hash);
+        assert_eq!(
+            node.node_service.state().chain.last_block_hash(),
+            last_block_hash
+        );
 
         // poll to update node after macroblock_timeout waits
         node.advance().await;
         // Check that the last node has auto-committed the block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
-        assert_eq!(node.node_service.state().chain.last_block_hash(), block_hash);
+        assert_eq!(
+            node.node_service.state().chain.last_block_hash(),
+            block_hash
+        );
 
         // Check that the auto-committed block has been sent to the network.
         let block2: Block = node

@@ -85,7 +85,8 @@ impl ElectionResult {
     #[inline]
     pub fn is_validator(&self, peer: &pbc::PublicKey) -> bool {
         self.validators
-            .0.iter()
+            .0
+            .iter()
             .find(|item| item.0 == *peer)
             .is_some()
     }

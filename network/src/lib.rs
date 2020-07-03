@@ -29,9 +29,8 @@ use std::fmt;
 use stegos_crypto::pbc;
 
 pub mod gatekeeper;
-pub mod
- loopback;
 mod libp2p_network;
+pub mod loopback;
 pub mod metrics;
 mod old_protos;
 mod proto;

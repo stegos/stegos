@@ -30,7 +30,7 @@ use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
     chain_to_prefix, create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output,
-    PaymentOutput, PaymentPayloadData, StakeOutput, Validators, Timestamp,
+    PaymentOutput, PaymentPayloadData, StakeOutput, Timestamp, Validators,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};

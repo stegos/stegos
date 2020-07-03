@@ -22,7 +22,7 @@
 use futures::pin_mut;
 use futures::task::Poll;
 
-use std::collections::{HashSet, BinaryHeap};
+use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
 use std::ops::{Index, IndexMut};
 use std::time::Duration;
@@ -238,7 +238,7 @@ impl<'p> Partition<'p> {
             .expect("First node not found in the sandbox.")
     }
 
-    pub fn first_except<'a>(&self, pk: &pbc::PublicKey) -> &NodeSandbox 
+    pub fn first_except<'a>(&self, pk: &pbc::PublicKey) -> &NodeSandbox
     where
         'p: 'a,
     {
@@ -248,7 +248,7 @@ impl<'p> Partition<'p> {
             .expect("First node not found in the sandbox")
     }
 
-    pub fn first_except_mut<'a>(&mut self, pk: &pbc::PublicKey) -> &mut NodeSandbox 
+    pub fn first_except_mut<'a>(&mut self, pk: &pbc::PublicKey) -> &mut NodeSandbox
     where
         'p: 'a,
     {
@@ -533,7 +533,7 @@ impl<'p> Partition<'p> {
         //self.find_mut(&leader_pk).unwrap().handle_vdf();
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
-        leader.advance().await; 
+        leader.advance().await;
         wait(Duration::from_secs(1)).await;
         leader.poll().await;
 
@@ -549,12 +549,14 @@ impl<'p> Partition<'p> {
         }
 
         if let Some(auditor) = self.auditor_mut() {
-            auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+            auditor
+                .process(crate::SEALED_BLOCK_TOPIC, block.clone())
+                .await;
             auditor.advance().await;
         }
 
         let leader = self.find_mut(&leader_pk).unwrap();
-        leader.advance().await; 
+        leader.advance().await;
         trace!("Processed microblock...");
     }
 
@@ -604,7 +606,12 @@ impl<'p> Partition<'p> {
         self.poll().await;
     }
 
-    pub async fn process_except<M: ProtoConvert + Clone>(&mut self, pk: &pbc::PublicKey, topic: &str, msg: M) {
+    pub async fn process_except<M: ProtoConvert + Clone>(
+        &mut self,
+        pk: &pbc::PublicKey,
+        topic: &str,
+        msg: M,
+    ) {
         for node in self.iter_except(&[*pk]) {
             node.process(topic, msg.clone()).await;
         }
@@ -620,24 +627,27 @@ impl<'p> Partition<'p> {
         let leader_pk = self.leader();
         let leader = self.find_mut(&leader_pk).unwrap();
         leader.advance().await;
-        
+
         // Check for a proposal from the leader.
         trace!("Fetching macroblock proposal from {}", leader_pk);
-        let proposal: ConsensusMessage = leader
-            .network_service
-            .get_broadcast(crate::CONSENSUS_TOPIC);
+        let proposal: ConsensusMessage =
+            leader.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
         debug!("Proposal: {:?}", proposal);
         assert_eq!(proposal.epoch, epoch);
         assert_eq!(proposal.round, round);
         assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
 
         // Send this proposal to other nodes.
-        self.process_except(&leader_pk, crate::CONSENSUS_TOPIC, proposal.clone()).await;
+        self.process_except(&leader_pk, crate::CONSENSUS_TOPIC, proposal.clone())
+            .await;
 
         // Check for pre-votes.
         let mut prevotes: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
-            trace!("Fetching pre-vote from {}...", node.node_service.state().network_pkey);
+            trace!(
+                "Fetching pre-vote from {}...",
+                node.node_service.state().network_pkey
+            );
             let prevote: ConsensusMessage =
                 node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
             assert_eq!(prevote.epoch, epoch);
@@ -653,7 +663,8 @@ impl<'p> Partition<'p> {
                 if i != j {
                     let pkey = &node.node_service.state().network_pkey;
                     trace!("Delivering pre-vote to {}", pkey);
-                    node.process(crate::CONSENSUS_TOPIC, prevotes[i].clone()).await;
+                    node.process(crate::CONSENSUS_TOPIC, prevotes[i].clone())
+                        .await;
                 }
             }
         }
@@ -685,7 +696,8 @@ impl<'p> Partition<'p> {
                 if i != j {
                     let pkey = &node.node_service.state().network_pkey;
                     trace!("Delivering pre-commit to {}", pkey);
-                    node.process(crate::CONSENSUS_TOPIC, precommits[i].clone()).await;
+                    node.process(crate::CONSENSUS_TOPIC, precommits[i].clone())
+                        .await;
                 }
             }
         }
@@ -697,7 +709,7 @@ impl<'p> Partition<'p> {
                 .unwrap()
                 .network_service
                 .get_broadcast(crate::TX_TOPIC);
-                Some(tx)
+            Some(tx)
         } else {
             None
         };
@@ -733,17 +745,23 @@ impl<'p> Partition<'p> {
         }
 
         // Send this sealed block to all other nodes except the leader.
-        self.process_except(&leader_pk, crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+        self.process_except(&leader_pk, crate::SEALED_BLOCK_TOPIC, block.clone())
+            .await;
 
         if let Some(auditor) = self.auditor_mut() {
-            auditor.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+            auditor
+                .process(crate::SEALED_BLOCK_TOPIC, block.clone())
+                .await;
         }
 
         // Check state of all nodes.
         let old_leader_pk = leader_pk;
         let leader_pk = self.leader();
-        
-        trace!("Checking node state after macroblock (leader = {})...", leader_pk);
+
+        trace!(
+            "Checking node state after macroblock (leader = {})...",
+            leader_pk
+        );
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
@@ -753,7 +771,7 @@ impl<'p> Partition<'p> {
             assert_eq!(chain.epoch(), epoch + 1);
             assert_eq!(chain.offset(), 0);
             assert_eq!(chain.last_macro_block_hash(), block_hash);
-            assert_eq!(chain.last_block_hash(), block_hash);    
+            assert_eq!(chain.last_block_hash(), block_hash);
         }
 
         // Process re-stakes.
@@ -769,7 +787,7 @@ impl<'p> Partition<'p> {
                 let pkey = &node.node_service.state().network_pkey;
                 trace!("Delivering restake to {}", pkey);
                 for restake in restakes.iter() {
-                    node.process(crate::TX_TOPIC, restake.clone()).await;                    
+                    node.process(crate::TX_TOPIC, restake.clone()).await;
                     node.poll().await;
                 }
             }
@@ -782,7 +800,11 @@ impl<'p> Partition<'p> {
         let leader = self.find_mut(&leader_pk).unwrap();
         leader.poll().await;
 
-        trace!("Processed macroblock (leader: {} -> {})...", old_leader_pk, leader_pk);
+        trace!(
+            "Processed macroblock (leader: {} -> {})...",
+            old_leader_pk,
+            leader_pk
+        );
     }
 
     pub fn leader(&self) -> pbc::PublicKey {
@@ -950,7 +972,7 @@ impl NodeSandbox {
             pin_mut!(future);
             let result = futures::poll!(future);
             if result == Poll::Pending {
-                break
+                break;
             }
         }
     }

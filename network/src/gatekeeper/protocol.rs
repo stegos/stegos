@@ -32,10 +32,10 @@ use futures_io::{AsyncRead, AsyncWrite};
 use libp2p_core::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
 use protobuf::Message as ProtobufMessage;
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use std::{io, iter};
-use std::str::FromStr;
 use std::error::Error;
+use std::fmt;
+use std::str::FromStr;
+use std::{io, iter};
 use unsigned_varint::codec;
 
 #[derive(Copy, Debug, Clone, Serialize, Deserialize)]
@@ -309,12 +309,10 @@ impl Decoder for GatekeeperCodec {
             Some(Message_oneof_typ::public_ip_unlock(_)) => {
                 Ok(Some(GatekeeperMessage::PublicIpUnlock {}))
             }
-            None => {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "bad protobuf encoding",
-                ))
-            }
+            None => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bad protobuf encoding",
+            )),
         }
     }
 }

@@ -21,9 +21,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+use crate::block::Validators;
 use crate::error::MultisignatureError;
 use crate::ValidatorId;
-use crate::block::Validators;
 use bit_vec::BitVec;
 use log::warn;
 use std::collections::BTreeMap;

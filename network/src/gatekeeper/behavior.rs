@@ -645,9 +645,7 @@ impl NetworkBehaviour for Gatekeeper {
             }
             GatekeeperMessage::PublicIpUnlock {} => {
                 // send last vdf again
-                let challenge = self
-                    .solved_vdfs
-                    .get(&propagation_source.clone().into());
+                let challenge = self.solved_vdfs.get(&propagation_source.clone().into());
                 let proof = match challenge {
                     Some((p, Some(proof))) => Some(VDFProof {
                         challenge: p.challenge.clone(),
@@ -684,10 +682,8 @@ impl NetworkBehaviour for Gatekeeper {
             Poll::Ready(Some((peer_id, proof, duration))) => {
                 self.solvers.remove(&peer_id);
                 debug!(target: "stegos_network::gatekeeper", "solved puzzle: peer_id={}, duration={}.{}sec", peer_id, duration.as_secs(), duration.subsec_millis());
-                self.protocol_updates.push_back(PeerEvent::VDFSolved {
-                    peer_id,
-                    proof,
-                });
+                self.protocol_updates
+                    .push_back(PeerEvent::VDFSolved { peer_id, proof });
             }
             Poll::Ready(None) => {
                 debug!(target: "stegos_network::gatekeeper", "solution stream gone!");
@@ -812,7 +808,10 @@ impl NetworkBehaviour for Gatekeeper {
 
 fn local_check_proof(proof: &VDFProof, difficulty: u64) -> bool {
     let vdf = VDF::new();
-    if vdf.verify(&proof.challenge, difficulty, &proof.proof).is_err() {
+    if vdf
+        .verify(&proof.challenge, difficulty, &proof.proof)
+        .is_err()
+    {
         return false;
     }
     true

@@ -329,10 +329,8 @@ impl NetworkBehaviour for Ncp {
                         if peer.peer_id != *poll_parameters.local_peer_id() {
                             let id = peer.peer_id.clone();
                             // Replace information for peer
-                            self.known_peers.insert(
-                                id.clone().into_bytes(),
-                                (peer.node_id, SmallVec::new()),
-                            );
+                            self.known_peers
+                                .insert(id.clone().into_bytes(), (peer.node_id, SmallVec::new()));
                             for addr in peer.addresses.into_iter() {
                                 // Don't store 127.0.0.1 IPs
                                 if is_localhost(&addr) {
@@ -373,8 +371,7 @@ impl NetworkBehaviour for Ncp {
                 NcpEvent::SendPeers { peer_id } => {
                     debug!(target: "stegos_network::ncp", "sending peers info: to_peer={}", peer_id.to_base58());
                     let mut response = GetPeersResponse { peers: vec![] };
-                    let mut connected: Vec<PeerId> =
-                        self.connected_peers.keys().cloned().collect();
+                    let mut connected: Vec<PeerId> = self.connected_peers.keys().cloned().collect();
                     for peer in connected.drain(..) {
                         if peer == peer_id {
                             continue;

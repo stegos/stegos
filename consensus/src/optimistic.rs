@@ -91,7 +91,8 @@ impl ViewChangeCollector {
         // get validator id, by public_key
         let validator_id = blockchain
             .validators()
-            .0.iter()
+            .0
+            .iter()
             .enumerate()
             .find(|(_id, validator)| validator.0 == pkey)
             .map(|(id, _)| id as ValidatorId)

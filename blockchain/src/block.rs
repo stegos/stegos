@@ -21,8 +21,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use std::fmt::{Display, Formatter, Error};
-use std::iter::{Iterator, FromIterator};
+use std::fmt::{Display, Error, Formatter};
+use std::iter::{FromIterator, Iterator};
 
 use crate::error::TransactionError;
 use crate::merkle::*;
@@ -349,7 +349,7 @@ impl Validators {
 }
 
 impl FromIterator<Validator> for Validators {
-    fn from_iter<I: IntoIterator<Item=Validator>>(iter: I) -> Self {
+    fn from_iter<I: IntoIterator<Item = Validator>>(iter: I) -> Self {
         let mut vec = Vec::new();
         for v in iter {
             vec.push(v)

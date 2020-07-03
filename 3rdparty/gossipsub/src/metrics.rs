@@ -28,7 +28,6 @@ lazy_static! {
         "Amount of slots node has in received macroblock."
     )
     .unwrap();
-
     pub static ref OUTGOING_TRAFFIC: IntGauge = register_int_gauge!(
         "gossip_network_outgoing_traffic",
         "Amount of slots node has in received macroblock."

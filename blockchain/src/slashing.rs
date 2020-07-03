@@ -116,7 +116,8 @@ pub fn confiscate_tx(
     );
     let validators: Vec<_> = chain
         .validators()
-        .0.iter()
+        .0
+        .iter()
         .map(|(k, _v)| *k)
         .filter(|k| k != cheater)
         .collect();

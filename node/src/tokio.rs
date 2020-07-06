@@ -706,13 +706,9 @@ impl NodeService {
                 } => {
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
                     let challenge = random.to_bytes();
-                    let pkey = self.state.network_pkey.clone();
-                    trace!("[{}] Solving VDF puzzle...", pkey);
                     let solver = move || {
-                        let now = Instant::now();
                         let solution = vdf.solve(&challenge, difficulty);
                         tx.send(solution).ok(); // ignore errors.
-                        trace!("[{}] Solved VDF puzzle, elapsed {:?}", pkey, now.elapsed());
                     };
                     // Spawn a background thread to solve VDF puzzle.
                     thread::spawn(solver);

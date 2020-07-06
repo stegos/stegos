@@ -88,8 +88,14 @@ pub struct Sandbox {
 impl Sandbox {
     pub fn new(config: SandboxConfig) -> Self {
         stegos_crypto::init_test_network_prefix();
-        let r = pretty_env_logger::try_init_timed_custom_env("STEGOS_TEST_LOG");
-        if let Err(_) = r {
+
+        let mut b = pretty_env_logger::formatted_timed_builder();
+
+        if let Ok(s) = ::std::env::var("STEGOS_TEST_LOG") {
+            b.parse_filters(&s);
+        }
+
+        if let Err(_) = b.is_test(true).try_init() {
             trace!("Logger already initialized!");
         }
 

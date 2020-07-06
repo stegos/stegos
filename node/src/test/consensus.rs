@@ -1304,6 +1304,10 @@ async fn second_round_invalid_proposes() {
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
+        node: NodeConfig {
+            macro_block_timeout: Duration::from_secs(300),
+            ..Default::default()
+        },
         ..Default::default()
     };
     assert!(config.chain.stake_epochs > 1);

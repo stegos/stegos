@@ -1508,7 +1508,7 @@ async fn invalid_prevotes() {
 
 // Test [multiple message on prevote (from leader)]
 #[tokio::test]
-async fn invalid_prevotes_leader() {
+async fn leader_invalid_prevotes() {
     let mut cfg: ChainConfig = Default::default();
     cfg.micro_blocks_in_epoch = 1;
     let config = SandboxConfig {

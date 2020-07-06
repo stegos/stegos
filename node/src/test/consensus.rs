@@ -458,126 +458,123 @@ async fn second_propose_lock() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    async {
-        // Create one micro block.
-        p.poll().await;
-        p.skip_micro_block().await;
+    // Create one micro block.
+    p.poll().await;
+    p.skip_micro_block().await;
 
-        let topic = crate::CONSENSUS_TOPIC;
-        let epoch = p.first_mut().state().chain.epoch();
+    let topic = crate::CONSENSUS_TOPIC;
+    let epoch = p.first_mut().state().chain.epoch();
 
-        let mut round = p.first_mut().state().chain.view_change();
+    let mut round = p.first_mut().state().chain.view_change();
 
-        let mut ready = false;
-        for i in 0..1000u32 {
-            info!(
-                "Checking if leader of round {}, and {} is different",
-                i,
-                i + 1
-            );
-            let leader_pk = p.first_mut().state().chain.select_leader(round);
-            let new_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
-
-            if leader_pk != new_leader_pk {
-                ready = true;
-                break;
-            }
-
-            info!("skipping round {}, leader = {}", i, leader_pk);
-            p.poll().await;
-            let leader_node = p.find_mut(&leader_pk).unwrap();
-
-            leader_node
-                .network_service
-                .filter_unicast(&[CHAIN_LOADER_TOPIC]);
-            let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-            let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-            round += 1;
-            // wait for current round end
-            wait(
-                config.node.macro_block_timeout
-                    * (round - p.first_mut().state().chain.view_change()),
-            )
-            .await;
-        }
-        assert!(ready);
-        info!("Starting test.");
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    let mut ready = false;
+    for i in 0..1000u32 {
+        info!(
+            "Checking if leader of round {}, and {} is different",
+            i,
+            i + 1
+        );
         let leader_pk = p.first_mut().state().chain.select_leader(round);
+        let new_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
 
-        let second_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
+        if leader_pk != new_leader_pk {
+            ready = true;
+            break;
+        }
+
+        info!("skipping round {}, leader = {}", i, leader_pk);
+        p.poll().await;
         let leader_node = p.find_mut(&leader_pk).unwrap();
-        leader_node.poll().await;
 
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        // skip proposal and prevote of last leader.
-        let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-
-        assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
-        // Send this proposal to other nodes.
-        for node in p.iter_except(&[leader_pk, second_leader_pk]) {
-            node.network_service
-                .receive_broadcast(topic, leader_proposal.clone());
-        }
-        p.poll().await;
-
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        let mut prevotes = Vec::new();
-        // for now, every node EXCEPT second_leader is locked at leader_propose
-        for node in p.iter_except(&[second_leader_pk]) {
-            let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
-            assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
-            assert_eq!(prevote.epoch, epoch);
-            assert_eq!(prevote.round, round);
-            assert_eq!(prevote.block_hash, leader_proposal.block_hash);
-            prevotes.push(prevote);
-        }
-
-        for node in p.iter_except(&[second_leader_pk]) {
-            for prevote in &prevotes {
-                node.network_service
-                    .receive_broadcast(topic, prevote.clone());
-            }
-        }
-
-        p.poll().await;
-        for node in p.iter_except(&[second_leader_pk]) {
-            let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
-        }
-        p.poll().await;
+        leader_node
+            .network_service
+            .filter_unicast(&[CHAIN_LOADER_TOPIC]);
+        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+        round += 1;
+        // wait for current round end
         wait(
             config.node.macro_block_timeout
-                * (round - p.first_mut().state().chain.view_change() + 1),
+                * (round - p.first_mut().state().chain.view_change()),
         )
         .await;
-
-        p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-        info!("====== Waiting for macroblock timeout. =====");
-        p.poll().await;
-
-        // filter messages from chain loader.
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-
-        let leader_node = p.find_mut(&second_leader_pk).unwrap();
-        let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-
-        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        debug!("Proposal: {:?}", proposal);
-        assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
-        assert_eq!(proposal.round, leader_proposal.round + 1);
-        assert_ne!(proposal.block_hash, leader_proposal.block_hash);
-
-        for node in p.iter_except(&[second_leader_pk]) {
-            node.network_service
-                .receive_broadcast(topic, proposal.clone());
-        }
-
-        // assert that no unprocessed prevotes are received for this block
-        p.poll().await;
     }
-    .await
+    assert!(ready);
+    info!("Starting test.");
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    let leader_pk = p.first_mut().state().chain.select_leader(round);
+
+    let second_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
+    let leader_node = p.find_mut(&leader_pk).unwrap();
+    leader_node.poll().await;
+
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
+    let leader_node = p.find_mut(&leader_pk).unwrap();
+    // skip proposal and prevote of last leader.
+    let leader_proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+    assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
+    // Send this proposal to other nodes.
+    for node in p.iter_except(&[leader_pk, second_leader_pk]) {
+        node.network_service
+            .receive_broadcast(topic, leader_proposal.clone());
+    }
+    p.poll().await;
+
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    let mut prevotes = Vec::new();
+    // for now, every node EXCEPT second_leader is locked at leader_propose
+    for node in p.iter_except(&[second_leader_pk]) {
+        let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
+        assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
+        assert_eq!(prevote.epoch, epoch);
+        assert_eq!(prevote.round, round);
+        assert_eq!(prevote.block_hash, leader_proposal.block_hash);
+        prevotes.push(prevote);
+    }
+
+    for node in p.iter_except(&[second_leader_pk]) {
+        for prevote in &prevotes {
+            node.network_service
+                .receive_broadcast(topic, prevote.clone());
+        }
+    }
+
+    p.poll().await;
+    for node in p.iter_except(&[second_leader_pk]) {
+        let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
+    }
+    p.poll().await;
+    wait(
+        config.node.macro_block_timeout
+            * (round - p.first_mut().state().chain.view_change() + 1),
+    )
+    .await;
+
+    p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
+    info!("====== Waiting for macroblock timeout. =====");
+    p.poll().await;
+
+    // filter messages from chain loader.
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
+    let leader_node = p.find_mut(&second_leader_pk).unwrap();
+    let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+
+    let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+    debug!("Proposal: {:?}", proposal);
+    assert_matches!(proposal.body, ConsensusMessageBody::Proposal { .. });
+    assert_eq!(proposal.round, leader_proposal.round + 1);
+    assert_ne!(proposal.block_hash, leader_proposal.block_hash);
+
+    for node in p.iter_except(&[second_leader_pk]) {
+        node.network_service
+            .receive_broadcast(topic, proposal.clone());
+    }
+
+    // assert that no unprocessed prevotes are received for this block
+    p.poll().await;
 }
 
 /// Send pack of prevotes in hope that node will ignore messages.

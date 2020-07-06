@@ -1340,17 +1340,15 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
         }
 
-        let relevant_round = 1 + consensus.round();
+        let round = 1 + consensus.round();
+        let d = self.cfg.macro_block_timeout * round;
         strace!(
             self,
-            ">>> Setting the macroblock view change timer: round = {}, timeout = {:?}",
-            relevant_round,
-            self.cfg.macro_block_timeout
+            ">>> Setting the macroblock view change timer to {:?} for round = {}", 
+            d, round
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(
-                self.cfg.macro_block_timeout * relevant_round,
-            ));
+            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(d));
     }
 
     /// Called when facilitator is changed.

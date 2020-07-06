@@ -534,7 +534,7 @@ impl<'p> Partition<'p> {
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
         let leader = self.find_mut(&leader_pk).unwrap();
         leader.advance().await;
-        wait(Duration::from_secs(1)).await;
+        wait(Duration::from_secs(0)).await;
         leader.poll().await;
 
         trace!("Fetching microblock from leader {}", leader_pk);

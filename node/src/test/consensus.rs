@@ -232,6 +232,18 @@ async fn round() {
     }
 }
 
+pub fn ensure_consensus_messages(p: &mut Partition, view_change: u32) {
+    let leader_pk = if view_change > 0 {
+        p.first_mut().state().chain.select_leader(view_change)
+    } else {
+        p.first_mut().state().chain.leader()
+    };
+    let leader = p.find_mut(&leader_pk).unwrap();
+    let topic = crate::CONSENSUS_TOPIC;
+    let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
+    let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);    
+}
+
 // check if rounds started at correct timeout
 // first immediatly after micro block
 // second at macro_block_timeout
@@ -249,62 +261,67 @@ async fn multiple_rounds() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    async {
-        // Create one micro block.
-        p.poll().await;
-        p.skip_micro_block().await;
+    // Create one micro block.
+    p.poll().await;
+    p.skip_micro_block().await;
 
-        let topic = crate::CONSENSUS_TOPIC;
-        let view_change = p.first_mut().state().chain.view_change();
-        let leader_pk = p.first_mut().state().chain.leader();
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        // skip proposal and prevote of last leader.
-        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+    let view_change = p.first_mut().state().chain.view_change();
+    trace!("View change = {}", view_change);
+    ensure_consensus_messages(&mut p, view_change);
 
-        wait(config.node.macro_block_timeout - Duration::from_millis(1)).await;
+    // not timeout yet
+    let now = Instant::now();
+    let d = config.node.macro_block_timeout - Duration::from_secs(1);
+    trace!("(0) Timing out for {:?}...", d);
+    wait(d).await;
+    trace!("Really elapsed = {:?}", now.elapsed());
 
-        p.poll().await;
-        for i in 1..p.len() {
-            let pkey = p[i].node_service.state().network_pkey;
-            p[i].network_service.assert_empty_queue(&pkey)
-        }
-
-        wait(Duration::from_millis(1)).await;
-
-        info!("====== Waiting for keyblock timeout. =====");
-        p.poll().await;
-
-        // filter messages from chain loader.
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-
-        let leader_pk = p.first_mut().state().chain.select_leader(view_change + 1);
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-
-        wait(config.node.macro_block_timeout * 2 - Duration::from_millis(1)).await;
-
-        p.poll().await;
-        for i in 1..p.len() {
-            let pkey = p[i].node_service.state().network_pkey;
-            p[i].network_service.assert_empty_queue(&pkey)
-        }
-
-        wait(Duration::from_millis(1)).await;
-
-        info!("====== Waiting for keyblock timeout. =====");
-        p.poll().await;
-
-        // filter messages from chain loader.
-        p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-
-        let leader_pk = p.first_mut().state().chain.select_leader(view_change + 2);
-        let leader_node = p.find_mut(&leader_pk).unwrap();
-        let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-        let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
+    // so the node queues should be empty
+    p.poll().await;
+    for i in 1..p.len() {
+        let pkey = p[i].node_service.state().network_pkey;
+        p[i].network_service.assert_empty_queue(&pkey)
     }
-    .await
+
+    // should timeout now
+    let now = Instant::now();
+    let d = Duration::from_secs(1);
+    trace!("(1) Timing out for {:?}...", d);
+    wait(d).await;
+    trace!("Really elapsed = {:?}", now.elapsed());
+    p.poll().await;
+
+    // filter messages from chain loader.
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
+    ensure_consensus_messages(&mut p, view_change + 1);
+
+    // Macroblock timeout should double with each view change!
+    let now = Instant::now();
+    let d = config.node.macro_block_timeout * 2 - Duration::from_secs(1);
+    trace!("(2) Timing out for {:?}", d);
+    wait(d).await;
+    trace!("Really elapsed {:?}", now.elapsed());
+
+    trace!("Polling all nodes...");
+    p.poll().await;
+    trace!("Asserting empty queues...");
+    for i in 1..p.len() {
+        let pkey = p[i].node_service.state().network_pkey;
+        p[i].network_service.assert_empty_queue(&pkey)
+    }
+
+    let now = Instant::now();
+    let d = Duration::from_secs(1);
+    trace!("(3) Timing out for {:?}...", d);
+    wait(d).await;
+    trace!("Really elapsed {:?}", now.elapsed());
+
+    p.poll().await;
+
+    // filter messages from chain loader.
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    ensure_consensus_messages(&mut p, view_change + 2);
 }
 
 // check if locked node will rebroadcast propose.

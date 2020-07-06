@@ -1344,8 +1344,9 @@ impl NodeState {
         let d = self.cfg.macro_block_timeout * round;
         strace!(
             self,
-            ">>> Setting the macroblock view change timer to {:?} for round = {}", 
-            d, round
+            ">>> Setting the macroblock view change timer to {:?} for round = {}",
+            d,
+            round
         );
         self.outgoing
             .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(d));

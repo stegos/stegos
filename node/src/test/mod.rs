@@ -150,7 +150,7 @@ async fn wait(d: Duration) {
     let now = Instant::now();
     tokio::time::advance(d).await;
     //tokio::task::yield_now().await;
-    trace!("Advanced time by {:?}", now.elapsed());
+    trace!("Advanced time by {:?}. Wanted: {:?}", now.elapsed(), d);
 }
 
 // tests

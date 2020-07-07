@@ -734,7 +734,6 @@ impl<'p> Partition<'p> {
         assert_eq!(block_hash, proposal.block_hash);
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
-        leader.advance().await;
         (block, block_hash, restake)
     }
 

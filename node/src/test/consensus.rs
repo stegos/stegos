@@ -80,6 +80,8 @@ async fn autocommit() {
 
     let (_block, block_hash, _) = p.create_macro_block().await;
     let leader_pk = p.leader();
+    let leader = p.find_mut(&leader_pk).unwrap();
+    leader.advance().await;
 
     trace!("Checking for autocommit...");
     // dont send this block to any node, wait for autocommits.

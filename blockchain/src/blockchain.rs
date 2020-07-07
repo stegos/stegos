@@ -2291,6 +2291,7 @@ pub mod tests {
             cfg.max_slot_count,
             3,
             timestamp,
+            cfg.awards_difficulty.try_into().unwrap(),
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2372,6 +2373,7 @@ pub mod tests {
             cfg.max_slot_count,
             NUM_NODES,
             timestamp,
+            cfg.awards_difficulty.try_into().unwrap(),
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2499,6 +2501,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             block_timestamp0,
+            cfg.awards_difficulty.try_into().unwrap(),
             None,
         );
         let block_hash0 = Hash::digest(&genesis);
@@ -2706,6 +2709,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             timestamp,
+            cfg.awards_difficulty.try_into().unwrap(),
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2828,6 +2832,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             timestamp,
+            cfg.awards_difficulty.try_into().unwrap(),
             None,
         );
         let genesis_timestamp = timestamp;

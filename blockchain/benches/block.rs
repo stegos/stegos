@@ -24,6 +24,7 @@ fn generate_chain(
         cfg.max_slot_count,
         num_nodes,
         timestamp,
+        cfg.awards_difficulty.try_into().unwrap(),
         None,
     );
     let mut chain = Blockchain::new(

@@ -164,16 +164,14 @@ mod test_framework {
         let config: SandboxConfig = Default::default();
         let mut sb = Sandbox::new(config);
         let mut part = sb.partition();
-        async {
-            part.poll().await;
-            let first = part.first();
-            let leader_pk = first.node_service.state().chain.leader();
-            let r = part.split(&[leader_pk]);
-            assert_eq!(r.parts.0.nodes.len(), 1);
-            assert_eq!(r.parts.1.nodes.len(), 3);
-            part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
-        }
-        .await
+        part.poll().await;
+        let first = part.first();
+        let leader_pk = first.node_service.state().chain.leader();
+        let r = part.split(&[leader_pk]);
+        assert_eq!(r.parts.0.nodes.len(), 1);
+        assert_eq!(r.parts.1.nodes.len(), 3);
+        part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+        part.filter_broadcast(&[SEALED_BLOCK_TOPIC]);
     }
 
     #[tokio::test]

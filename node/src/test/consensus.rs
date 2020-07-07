@@ -87,22 +87,21 @@ async fn autocommit() {
     keys.sort();
 
     for pk in keys {
+        trace!("[{}] Polling all nodes...", pk);
+
         p.poll().await;
+
+        let node = p.find_mut(&pk).unwrap();
+
+        trace!("[{}] Start autocommit check...", pk);
 
         // Wait for macro block timeout.
         wait(config.node.macro_block_timeout).await;
 
-        trace!(
-            "[{}] Checking for autocommit, leader? = {}",
-            pk,
-            pk == leader_pk
-        );
-
         if pk == leader_pk {
+            trace!("[{}] I'm the leader, moving on!", pk);
             continue;
         }
-
-        let node = p.find_mut(&pk).unwrap();
 
         // The last node hasn't received sealed block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch);
@@ -126,6 +125,7 @@ async fn autocommit() {
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let block_hash2 = Hash::digest(&block2);
         assert_eq!(block_hash, block_hash2);
+        trace!("[{}] End autocommit check", pk);
     }
 
     // wait more time, to check if counter will not overflow.

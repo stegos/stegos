@@ -3776,7 +3776,7 @@ dependencies = [
 [[package]]
 name = "tokio-tungstenite"
 version = "0.10.1"
-source = "git+https://github.com/joelreymont/tokio-tungstenite#17eae681fb16ac083e8b717ae15586067777f91c"
+source = "git+https://github.com/snapview/tokio-tungstenite#317569dfe0da6374476bf8048bf861902643b79b"
 dependencies = [
  "futures-util",
  "log",

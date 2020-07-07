@@ -27,11 +27,9 @@ mod sandbox;
 #[cfg(test)]
 extern crate tokio;
 
-mod consensus;
-/*
-mod integration;
-*/
 mod microblocks;
+mod consensus;
+mod integration;
 
 use crate::CHAIN_LOADER_TOPIC;
 use crate::*;

@@ -715,16 +715,13 @@ async fn ensure_leader_change<'a>(p: &mut Partition<'a>) -> u32 {
         p.poll().await;
         let leader = p.find_mut(&leader_pk).unwrap();
 
-        leader
-            .network_service
-            .filter_unicast(&[CHAIN_LOADER_TOPIC]);
+        leader.network_service.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);
         old_round += 1;
         // wait for current round end
         let new_round = p.first_mut().state().chain.view_change();
-        wait(p.config.node.macro_block_timeout * (old_round - new_round))
-            .await;
+        wait(p.config.node.macro_block_timeout * (old_round - new_round)).await;
     }
     assert!(ready);
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -755,8 +752,11 @@ async fn second_proposal_lock() {
     let leader_pk = p.first_mut().state().chain.select_leader(round);
     let second_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
 
-    trace!("Skipping proposals and pre-votes. first leader = {}, second = {}", 
-        leader_pk, second_leader_pk);
+    trace!(
+        "Skipping proposals and pre-votes. first leader = {}, second = {}",
+        leader_pk,
+        second_leader_pk
+    );
 
     let leader = p.find_mut(&leader_pk).unwrap();
     leader.poll().await;
@@ -767,7 +767,11 @@ async fn second_proposal_lock() {
     let leader_proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
     assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
 
-    trace!(">>> Proposal: epoch: {}, round: {}", leader_proposal.epoch, leader_proposal.round);
+    trace!(
+        ">>> Proposal: epoch: {}, round: {}",
+        leader_proposal.epoch,
+        leader_proposal.round
+    );
 
     // Send this proposal to other nodes.
     for node in p.iter_except(&[leader_pk, second_leader_pk]) {
@@ -782,7 +786,12 @@ async fn second_proposal_lock() {
     for node in p.iter_except(&[second_leader_pk]) {
         let pk = node.state().network_pkey;
         let prevote: ConsensusMessage = node.network_service.get_broadcast(topic);
-        trace!("[{}] Prevote: epoch = {}, round = {}", pk, prevote.epoch, prevote.round);
+        trace!(
+            "[{}] Prevote: epoch = {}, round = {}",
+            pk,
+            prevote.epoch,
+            prevote.round
+        );
         assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
         assert_eq!(prevote.epoch, epoch);
         assert_eq!(prevote.round, round);
@@ -875,7 +884,10 @@ async fn second_proposal_lock() {
         }
     }
 
-    trace!("Updating consensus state of second leader {}", second_leader_pk);
+    trace!(
+        "Updating consensus state of second leader {}",
+        second_leader_pk
+    );
     let leader = p.find_mut(&second_leader_pk).unwrap();
     leader.advance().await;
 

@@ -1550,7 +1550,7 @@ mod tests {
         let seed = mix(Hash::digest("random"), view_change);
         let random = pbc::make_VRF(&skeypbc, &seed);
         let difficulty = 100500u64;
-        let validators = vec![(pkeypbc.clone(), 100500i64)];
+        let validators = Validators(vec![(pkeypbc.clone(), 100500i64)]);
 
         let block = MacroBlock::new(
             previous,
@@ -1635,7 +1635,7 @@ mod tests {
                 proof: pbc::G1::generator(),
             },
             view_change: 43,
-            validators: vec![(pbc::PublicKey::dum(), 1), (pbc::PublicKey::dum(), 15)],
+            validators: Validators(vec![(pbc::PublicKey::dum(), 1), (pbc::PublicKey::dum(), 15)]),
             facilitator: pbc::PublicKey::dum(),
         };
         roundtrip_eq(&value);

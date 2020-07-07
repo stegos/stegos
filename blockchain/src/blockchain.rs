@@ -2291,7 +2291,7 @@ pub mod tests {
             cfg.max_slot_count,
             3,
             timestamp,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2313,8 +2313,8 @@ pub mod tests {
         let validators = blockchain
             .escrow
             .get_stakers_majority(blockchain.epoch, blockchain.cfg.min_stake_amount);
-        assert_eq!(validators.len(), keychains.len());
-        let validators_map: BTreeMap<_, _> = validators.iter().cloned().collect();
+        assert_eq!(validators.0.len(), keychains.len());
+        let validators_map: BTreeMap<_, _> = validators.0.iter().cloned().collect();
         for keychain in &keychains {
             let stake = validators_map.get(&keychain.network_pkey).expect("exists");
             assert_eq!(*stake, blockchain.cfg.min_stake_amount);
@@ -2373,7 +2373,7 @@ pub mod tests {
             cfg.max_slot_count,
             NUM_NODES,
             timestamp,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2501,7 +2501,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             block_timestamp0,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let block_hash0 = Hash::digest(&genesis);
@@ -2709,7 +2709,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             timestamp,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let chain_dir = TempDir::new("test").unwrap();
@@ -2832,7 +2832,7 @@ pub mod tests {
             cfg.max_slot_count,
             1,
             timestamp,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let genesis_timestamp = timestamp;

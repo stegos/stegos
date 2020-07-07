@@ -142,11 +142,11 @@ mod tests {
         let _ = simple_logger::init();
         let mut skeys = Vec::new();
 
-        let mut validators = Vec::new();
+        let mut validators = Validators::new();
         const NUM_VALIDATORS: usize = 1;
         for _i in 0..NUM_VALIDATORS {
             let (s, p) = pbc::make_random_keys();
-            validators.push((p, 1));
+            validators.0.push((p, 1));
             skeys.push(s);
         }
 
@@ -156,7 +156,7 @@ mod tests {
         for i in 0..NUM_VALIDATORS {
             let sign = pbc::sign_hash(hash, &skeys[i]);
             signatures.push((sign, i as u32));
-            pbc::check_hash(hash, &signatures[i].0, &validators[i].0).unwrap();
+            pbc::check_hash(hash, &signatures[i].0, &(validators.0)[i].0).unwrap();
         }
 
         let multisig =

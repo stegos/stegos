@@ -1879,7 +1879,7 @@ mod test {
             cfg.max_slot_count,
             3,
             timestamp,
-            cfg.awards_difficulty.try_into().unwrap(),
+            cfg.awards_difficulty,
             None,
         );
         let chain_dir = TempDir::new("account").expect("couldn't create temp dir");

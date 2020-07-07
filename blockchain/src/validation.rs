@@ -1197,7 +1197,7 @@ impl Blockchain {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::block::MacroBlock;
+    use crate::block::{MacroBlock, Validators};
     use crate::output::OutputError;
     use crate::output::PaymentOutput;
     use crate::output::StakeOutput;
@@ -1672,7 +1672,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 inputs1,
                 outputs1,
             );
@@ -1699,7 +1699,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 inputs1,
                 outputs1,
             );
@@ -1747,7 +1747,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 input_hashes,
                 outputs,
             );
@@ -1777,7 +1777,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 input_hashes,
                 outputs,
             );
@@ -1809,7 +1809,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 input_hashes,
                 outputs,
             );
@@ -1845,7 +1845,7 @@ pub mod tests {
                 0,
                 gamma,
                 BitVec::new(),
-                Vec::new(),
+                Validators::new(),
                 input_hashes,
                 outputs,
             );
@@ -1890,7 +1890,7 @@ pub mod tests {
             block_reward,
             gamma,
             BitVec::new(),
-            Vec::new(),
+            Validators::new(),
             input_hashes,
             outputs,
         );

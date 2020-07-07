@@ -208,6 +208,7 @@ mod test {
 
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc;
+    use crate::block::Validators;
 
     fn broken_random(nums: i64) -> impl Iterator<Item = i64> {
         (0..nums).into_iter()
@@ -309,24 +310,26 @@ mod test {
         let rand = pbc::make_VRF(&skey, &Hash::zero());
         for i in 1..5 {
             assert!(
-                select_validators_slots(keys.clone(), rand, i)
+                select_validators_slots(Validators(keys.clone()), rand, i)
                     .validators
+                    .0
                     .len()
                     <= i as usize
             )
         }
         for i in 5..10 {
             assert!(
-                select_validators_slots(keys.clone(), rand, i)
+                select_validators_slots(Validators(keys.clone()), rand, i)
                     .validators
+                    .0
                     .len()
                     <= 4 as usize
             )
         }
 
         for i in &[1, 5, 10, 100, 1000, 5000] {
-            let validators = select_validators_slots(keys.clone(), rand, *i).validators;
-            let acc = validators.into_iter().fold(0, |acc, (_, v)| acc + v) as usize;
+            let validators = select_validators_slots(Validators(keys.clone()), rand, *i).validators;
+            let acc = validators.0.into_iter().fold(0, |acc, (_, v)| acc + v) as usize;
             assert_eq!(acc, *i as usize)
         }
     }

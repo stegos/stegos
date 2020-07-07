@@ -150,7 +150,6 @@ async fn round() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = CONSENSUS_TOPIC;
@@ -262,7 +261,6 @@ async fn multiple_rounds() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let view_change = p.first_mut().state().chain.view_change();
@@ -340,7 +338,6 @@ async fn lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -459,7 +456,6 @@ async fn second_propose_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -587,7 +583,6 @@ async fn pack_of_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -707,7 +702,6 @@ async fn second_propose_prevotes_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -880,7 +874,6 @@ async fn prevotes_and_precommits() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -1289,7 +1282,6 @@ async fn invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let round = p.first_mut().state().chain.view_change();
@@ -1316,7 +1308,6 @@ async fn second_round_invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -1356,7 +1347,6 @@ async fn multiple_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -1445,7 +1435,6 @@ async fn invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -1522,7 +1511,6 @@ async fn leader_invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.poll().await;
     p.skip_micro_block().await;
 
     let topic = crate::CONSENSUS_TOPIC;

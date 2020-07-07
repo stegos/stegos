@@ -165,7 +165,7 @@ async fn round() {
     let round = p.first().state().chain.view_change() + 1;
     wait(config.node.macro_block_timeout).await;
 
-    trace!("Waiting for macroblock timeout");
+    trace!("Waiting for a macroblock timeout");
     p.poll().await;
 
     // filter messages from chain loader.

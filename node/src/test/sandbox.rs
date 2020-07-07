@@ -462,14 +462,12 @@ impl<'p> Partition<'p> {
     pub async fn poll(&mut self) {
         trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
-            node.advance().await;
+            node.poll().await;
         }
 
         if let Some(auditor) = &mut self.auditor {
-            auditor.advance().await;
+            auditor.poll().await;
         }
-
-        wait(Duration::from_secs(0)).await;
     }
 
     pub fn len(&self) -> usize {

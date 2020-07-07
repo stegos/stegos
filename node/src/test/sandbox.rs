@@ -458,7 +458,9 @@ impl<'p> Partition<'p> {
         }
     }
 
-    /// poll each node for updates.
+    /// Poll each node for updates. I know you will be tempted to add
+    /// a version of this function that advances consensus across the board.
+    /// Do not! Try to advance consensus for individual nodes intead!!!
     pub async fn poll(&mut self) {
         trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
@@ -723,9 +725,8 @@ impl<'p> Partition<'p> {
 
         // Fetch completed block
         trace!("Fetching finished macroblock from {}", leader_pk);
-        let block: Block = self
-            .find_mut(&leader_pk)
-            .unwrap()
+        let leader = self.find_mut(&leader_pk).unwrap();
+        let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         let macro_block = block.clone().unwrap_macro();
@@ -733,6 +734,7 @@ impl<'p> Partition<'p> {
         assert_eq!(block_hash, proposal.block_hash);
         assert_eq!(macro_block.header.epoch, epoch);
         assert_eq!(macro_block.header.previous, last_macro_block_hash);
+        leader.advance().await;
         (block, block_hash, restake)
     }
 

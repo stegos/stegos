@@ -611,7 +611,7 @@ impl UnsealedAccountService {
         );
 
         self.on_tx_statuses_changed(&transaction_statuses);
-        if transaction_statuses.len() > 0 {
+        if transaction_statuses.len() > 0 || outputs.len() > 0 {
             self.notify_balance_changed(self.database.balance());
         }
 
@@ -681,7 +681,7 @@ impl UnsealedAccountService {
         //     snowball.change_facilitator(self.database.facilitator_pkey().clone());
         // }
         self.on_tx_statuses_changed(&transaction_statuses);
-        if transaction_statuses.len() > 0 {
+        if transaction_statuses.len() > 0 || outputs.len() > 0 {
             self.notify_balance_changed(self.database.balance());
         }
 

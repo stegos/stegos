@@ -25,7 +25,5 @@ core
 
 # Release files
 /release
+/artifacts
 a.out
-bootstrap-android-*.zip
-stegos-android-*.zip
-stegosd-android-*.zip

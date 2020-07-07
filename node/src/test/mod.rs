@@ -145,11 +145,9 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
 
 async fn wait(d: Duration) {
     // Turn the timer wheel to let timers get polled.
-    // Do not use `tokio::task::yield_now().await` here
-    // as it can advance test time per the timers, e.g. by 30s.
     let now = Instant::now();
     tokio::time::advance(d).await;
-    //tokio::task::yield_now().await;
+    tokio::task::yield_now().await;
     trace!("Advanced time by {:?}. Wanted: {:?}", now.elapsed(), d);
 }
 
@@ -188,6 +186,8 @@ mod test_framework {
         let result = futures::poll!(&mut future);
         assert_matches!(result, Poll::Pending);
         wait(timer).await;
+
+        tokio::task::yield_now().await;
 
         let result = futures::poll!(future);
 

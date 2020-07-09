@@ -27,9 +27,9 @@ mod sandbox;
 #[cfg(test)]
 extern crate tokio;
 
-mod microblocks;
 mod consensus;
 mod integration;
+mod microblocks;
 
 use crate::CHAIN_LOADER_TOPIC;
 use crate::*;
@@ -86,10 +86,13 @@ impl VDFExecution {
     }
 }
 
-pub async fn precondition_n_different_block_leaders(s: &mut Sandbox, different_leaders: u32) {
-    skip_blocks_until(s, |s| {
+pub async fn precondition_n_different_block_leaders<'a>(
+    p: &mut Partition<'a>,
+    different_leaders: u32,
+) {
+    p.skip_microblocks_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
-            .map(|id| s.partition().future_block_leader(id).unwrap())
+            .map(|id| p.future_block_leader(id).unwrap())
             .collect();
 
         info!(
@@ -101,10 +104,13 @@ pub async fn precondition_n_different_block_leaders(s: &mut Sandbox, different_l
     .await;
 }
 
-pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, different_leaders: u32) {
-    skip_blocks_until(s, |s| {
+pub async fn precondition_n_different_viewchange_leaders<'a>(
+    p: &mut Partition<'a>,
+    different_leaders: u32,
+) {
+    p.skip_microblocks_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
-            .map(|id| s.partition().future_view_change_leader(id))
+            .map(|id| p.future_view_change_leader(id))
             .collect();
 
         info!(
@@ -114,23 +120,6 @@ pub async fn precondition_n_different_viewchange_leaders(s: &mut Sandbox, differ
         check_unique(leaders)
     })
     .await;
-}
-
-/// Skip blocks until condition not true
-pub async fn skip_blocks_until<F>(s: &mut Sandbox, mut condition: F)
-where
-    F: FnMut(&mut Sandbox) -> bool,
-{
-    let mut ready = false;
-    for _id in 0..s.config.chain.micro_blocks_in_epoch {
-        if condition(s) {
-            ready = true;
-            break;
-        }
-        info!("Skipping microblock");
-        s.partition().skip_micro_block().await;
-    }
-    assert!(ready, "Not enough microblocks to skip");
 }
 
 pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
@@ -142,10 +131,8 @@ pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
 }
 
 async fn wait(d: Duration) {
-    // Turn the timer wheel to let timers get polled.
     let now = Instant::now();
     tokio::time::advance(d).await;
-    tokio::task::yield_now().await;
     trace!("Advanced time by {:?}. Wanted: {:?}", now.elapsed(), d);
 }
 

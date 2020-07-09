@@ -24,8 +24,9 @@
 //! Test of features build on top of consensus/blockchain stack.
 
 use super::*;
+use tokio;
+
 use crate::protos::loader::ChainLoaderMessage;
-use crate::*;
 use std::collections::HashSet;
 use stegos_blockchain::Block;
 use stegos_blockchain::ChainInfo;
@@ -33,21 +34,24 @@ use stegos_blockchain::Output;
 use stegos_blockchain::ValidatorAwardState;
 use stegos_consensus::optimistic::ViewChangeMessage;
 
-// CASE rollback slashing:
+// CASE Slash and roll back:
 // Nodes [A, B, C, D]
 //
-// 1. Node A leader of view_change 0, and broadcast block B1 and B1'.
-// 2. Node B leader of view_change 1, and broadcast block B2.
-// 3. Nodes [C, D] receive B1 and B1', and decide to remove node A from list.
-// 4. Node C produce block B3 with cheating proof.
-// 5. Then nodes [C, D] receive B2 and starting to resolve fork, roll back B3, and B1.
+// 1. Node A is the leader of round 0, and broadcasts block B1 and B1'.
+// 2. Node B the leader of round 1, and broadcasts block B2.
+// 3. Nodes [C, D] receive blocks B1 and B1', and decide to remove node A from list.
+// 4. Node C produce block B3 with a proof of cheating.
+// 5. Nodes [C, D] receive B2, start to resolve fork and roll back B3, and B1.
 //
-// Asserts that Nodes [C D] rollback blocks B3 and B1, and has last block B2;
-// Asserts that Nodes [C D] save cheating proof in memory.
+// Asserts that Nodes [C D] roll back blocks B3 and B1, and have B2 as the ast block;
+// Asserts that Nodes [C D] save the proof of cheating in memory.
 
-#[test]
-fn rollback_slashing() {
-    let mut cfg: ChainConfig = Default::default();
+#[tokio::test]
+async fn slash_and_roll() {
+    let mut cfg = ChainConfig {
+        awards_difficulty: 0,
+        ..Default::default()
+    };
     cfg.micro_blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
@@ -55,139 +59,150 @@ fn rollback_slashing() {
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
-        s.poll();
+    let mut sb = Sandbox::new(config.clone());
+    let mut p = sb.partition();
 
-        skip_blocks_until(&mut s, |s| {
-            let mut leaders = Vec::new();
-            // first regular winner
-            let first_leader_pk = s.future_view_change_leader(0);
-            leaders.push(first_leader_pk);
-            // second view_change leader
-            let second_leader_pk = s.future_view_change_leader(1);
-            leaders.push(second_leader_pk);
+    trace!("Ensuring different leaders...");
 
-            // third block leader
-            let view_change = 0;
-            let init_random = s.first_mut().node_service.chain.last_random();
-            let vrf = s
-                .node(&first_leader_pk)
-                .unwrap()
-                .create_vrf_from_seed(init_random, view_change);
-            let mut election = s.first_mut().node_service.chain.election_result().clone();
-            election.random = vrf;
+    p.skip_microblocks_until(|p| {
+        let mut leaders = Vec::new();
+        // first regular winner
+        let first = p.future_view_change_leader(0);
+        leaders.push(first);
+        // second view_change leader
+        let second = p.future_view_change_leader(1);
+        leaders.push(second);
 
-            let third_leader_pk = election.select_leader(view_change);
-            leaders.push(third_leader_pk);
+        // third block leader
+        let view_change = 0;
+        let init_random = p.first_mut().node_service.state().chain.last_random();
+        let vrf = p
+            .find_mut(&first)
+            .unwrap()
+            .create_vrf_from_seed(init_random, view_change);
+        let mut election = p
+            .first_mut()
+            .node_service
+            .state()
+            .chain
+            .election_result()
+            .clone();
+        election.random = vrf;
 
-            info!(
-                "Checking that all leader are different: leaders={:?}.",
-                leaders
-            );
-            check_unique(leaders)
-        });
+        let third = election.select_leader(view_change);
+        leaders.push(third);
 
-        let start_offset = s.first().node_service.chain.offset();
+        trace!("Checking leaders: {}, {}, {}", first, second, third);
+        check_unique(leaders)
+    })
+    .await;
 
-        let first_leader = s.first().node_service.chain.leader();
+    let start_offset = p.first().node_service.state().chain.offset();
+    let first_leader = p.first().node_service.state().chain.leader();
+    let second_leader = p.future_view_change_leader(1);
+    trace!("Creating block, leader = {}", first_leader);
 
-        let second_leader = s.future_view_change_leader(1);
-        info!("CREATE BLOCK. LEADER = {}", first_leader);
-        s.poll();
+    p.poll().await;
 
-        // init view_change
+    trace!("Initiating a microblock view change...");
 
-        s.wait(s.config.node.micro_block_timeout);
-        s.poll();
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
-        let mut msgs = Vec::new();
-        for node in &mut s.iter_except(&[first_leader]) {
-            let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
-            msgs.push(msg);
-        }
-        assert_eq!(msgs.len(), 3);
+    // init view_change
+    wait(p.config.node.micro_block_timeout).await;
+    p.poll().await;
 
-        let new_leader_node = s.node(&second_leader).unwrap();
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    let mut msgs = Vec::new();
+    for node in &mut p.iter_except(&[first_leader]) {
+        let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
+        msgs.push(msg);
+    }
+    assert_eq!(msgs.len(), 3);
 
-        info!("======= BROADCAST VIEW_CHANGES =======");
-        for msg in &msgs {
-            new_leader_node
-                .network_service
-                .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
-        }
-        new_leader_node.poll();
+    let new_leader_node = p.find_mut(&second_leader).unwrap();
 
-        let cheater = first_leader;
-        let mut r = slash_cheater_inner(&mut s, first_leader, vec![second_leader]);
-        assert_eq!(r.parts.1.nodes.len(), 2);
-        assert_eq!(r.parts.0.nodes.len(), 2);
-
-        info!(
-            "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.chain.leader()
-        );
-        // each node should add proof of slashing into state.
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
-
-        // wait for block;
-        r.parts.1.skip_micro_block();
-
-        // assert that nodes in partition 1 exclude node from partition 0.
-        for node in r.parts.1.iter() {
-            let validators: HashSet<_> = node
-                .node_service
-                .chain
-                .validators()
-                .iter()
-                .map(|(p, _)| *p)
-                .collect();
-            assert!(!validators.contains(&cheater))
-        }
-
-        let new_leader_node = s.node(&second_leader).unwrap();
-        info!("CREATE BLOCK FROM VIEWCHANGE. LEADER = {}", second_leader);
-        new_leader_node.handle_vdf();
-        new_leader_node.poll();
-        let block: Block = new_leader_node
+    trace!("Broadcasting view changes to {} ", second_leader);
+    for msg in &msgs {
+        new_leader_node
             .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        // try to rollback cheater affect, but proof should be saved
-        for node in &mut s.nodes {
-            node.network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
-        }
+            .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+    }
+    new_leader_node.advance().await;
 
-        if let Some(auditor) = s.auditor_mut() {
-            auditor
-                .network_service
-                .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
-        }
+    let cheater = first_leader;
+    let mut r = p
+        .slash_cheater_inner(first_leader, vec![second_leader])
+        .await;
+    assert_eq!(r.parts.1.nodes.len(), 2);
+    assert_eq!(r.parts.0.nodes.len(), 2);
 
-        // nodes C D should rollback fork
-        let mut r = s.split(&[first_leader, second_leader]);
-        r.parts.1.poll();
-        r.parts.1.assert_synchronized();
-        // assert that nodes recover valdators list. And has same height
-        for node in r.parts.1.iter() {
-            assert_eq!(start_offset + 1, node.node_service.chain.offset());
-            assert_eq!(node.node_service.chain.validators().len(), 4);
-        }
-        // assert that each node except first one that was in partition still has a proof.
-        for node in r.parts.1.iter() {
-            assert_eq!(node.node_service.cheating_proofs.len(), 1)
-        }
+    trace!(
+        "Check if cheating was detected. Leader = {}",
+        r.parts.1.first().node_service.state().chain.leader()
+    );
+    // each node should add proof of slashing into state.
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 1));
 
-        s.filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
-    });
+    // wait for block;
+    r.parts.1.skip_micro_block().await;
+
+    // assert that nodes in partition 1 exclude node from partition 0.
+    for node in r.parts.1.iter() {
+        let validators: HashSet<_> = node
+            .node_service
+            .state()
+            .chain
+            .validators()
+            .0
+            .iter()
+            .map(|(p, _)| *p)
+            .collect();
+        assert!(!validators.contains(&cheater))
+    }
+
+    let new_leader_node = p.find_mut(&second_leader).unwrap();
+    trace!("Create block from view change. Leader = {}", second_leader);
+    new_leader_node.advance().await;
+    let block: Block = new_leader_node
+        .network_service
+        .get_broadcast(SEALED_BLOCK_TOPIC);
+    // try to rollback cheater affect, but proof should be saved
+    for node in &mut p.nodes {
+        node.network_service
+            .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
+        node.advance().await;
+    }
+
+    if let Some(auditor) = p.auditor_mut() {
+        auditor
+            .network_service
+            .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
+        auditor.poll().await;
+    }
+
+    // nodes C D should rollback fork
+    let mut r = p.split(&[first_leader, second_leader]);
+    r.parts.1.poll().await;
+    r.parts.1.assert_synchronized();
+    // assert that nodes recover valdators list. And has same height
+    for node in r.parts.1.iter() {
+        assert_eq!(start_offset + 1, node.node_service.state().chain.offset());
+        assert_eq!(node.node_service.state().chain.validators().0.len(), 4);
+    }
+    // assert that each node except first one that was in partition still has a proof.
+    for node in r.parts.1.iter() {
+        assert_eq!(node.node_service.state().cheating_proofs.len(), 1)
+    }
+
+    p.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 }
 
 // CASE finalized slashing:
 //
 // Asserts that after macroblock slashing is finalized, and proofs are cleared.
-
+/*
 #[test]
 fn finalized_slashing() {
     let mut cfg: ChainConfig = Default::default();
@@ -199,20 +214,20 @@ fn finalized_slashing() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
+        p.poll().await;
 
         precondition_n_different_block_leaders(&mut s, 2);
         // next leader should be from different partition.
 
-        let cheater = s.nodes[0].node_service.chain.leader();
+        let cheater = p.nodes[0].node_service.state().chain.leader();
         info!("CREATE BLOCK. LEADER = {}", cheater);
-        s.poll();
+        p.poll().await;
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
 
         info!(
             "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.chain.leader()
+            r.parts.1.first().node_service.state().chain.leader()
         );
         // each node should add proof of slashing into state.
         r.parts
@@ -231,10 +246,10 @@ fn finalized_slashing() {
                 .iter()
                 .map(|(p, _)| *p)
                 .collect();
-            assert!(!validators.contains(&cheater))
+            assert!(!validatorp.contains(&cheater))
         }
 
-        let offset = r.parts.1.first().node_service.chain.offset();
+        let offset = r.parts.1.first().node_service.state().chain.offset();
 
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
@@ -264,21 +279,21 @@ fn finalized_slashing_with_service_award() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
+        p.poll().await;
 
-        let budget = s.config.chain.service_award_per_epoch;
+        let budget = p.config.chain.service_award_per_epoch;
         precondition_n_different_block_leaders(&mut s, 2);
         // next leader should be from different partition.
 
-        let cheater = s.nodes[0].node_service.chain.leader();
+        let cheater = p.nodes[0].node_service.state().chain.leader();
         info!("CREATE BLOCK. LEADER = {}", cheater);
-        s.poll();
+        p.poll().await;
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
 
         info!(
             "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.chain.leader()
+            r.parts.1.first().node_service.state().chain.leader()
         );
         // each node should add proof of slashing into state.
         r.parts
@@ -297,11 +312,11 @@ fn finalized_slashing_with_service_award() {
                 .iter()
                 .map(|(p, _)| *p)
                 .collect();
-            assert!(!validators.contains(&cheater))
+            assert!(!validatorp.contains(&cheater))
         }
 
-        let offset = r.parts.1.first().node_service.chain.offset();
-        let epoch = r.parts.1.first().node_service.chain.epoch();
+        let offset = r.parts.1.first().node_service.state().chain.offset();
+        let epoch = r.parts.1.first().node_service.state().chain.epoch();
 
         // ignore microblocks for auditor
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
@@ -316,12 +331,12 @@ fn finalized_slashing_with_service_award() {
         let mut output = None;
         for node in r.parts.1.iter_mut() {
             //award was executed
-            assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+            assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
             assert_eq!(
-                node.node_service.chain.last_block_hash(),
-                node.node_service.chain.last_macro_block_hash()
+                node.node_service.state().chain.last_block_hash(),
+                node.node_service.state().chain.last_macro_block_hash()
             );
-            let block_hash = node.node_service.chain.last_block_hash();
+            let block_hash = node.node_service.state().chain.last_block_hash();
             let block = node
                 .node_service
                 .chain
@@ -332,12 +347,12 @@ fn finalized_slashing_with_service_award() {
             let mut outputs = Vec::new();
             for output in block.outputs {
                 match output {
-                    Output::PublicPaymentOutput(p) => outputs.push(p),
+                    Output::PublicPaymentOutput(p) => outputp.push(p),
                     _ => {}
                 }
             }
-            assert_eq!(outputs.len(), 4); // 3 slashing + award
-            outputs.sort_by_key(|p| p.amount);
+            assert_eq!(outputp.len(), 4); // 3 slashing + award
+            outputp.sort_by_key(|p| p.amount);
             trace!("outputs = {:?}", outputs);
             assert_eq!(outputs[0].amount, budget);
             if let Some(ref output) = output {
@@ -357,7 +372,7 @@ fn finalized_slashing_with_service_award() {
             Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
             e => panic!("Expected macroblock info, got ={:?}", e),
         };
-        let p = i.epoch_info.awards.payout.unwrap();
+        let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
         assert_eq!(output.amount, p.amount);
     });
@@ -380,14 +395,14 @@ fn finalized_slashing_with_service_award_for_auditor() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
+        p.poll().await;
 
         precondition_n_different_block_leaders(&mut s, 2);
         // next leader should be from different partition.
 
-        let budget = s.config.chain.service_award_per_epoch;
-        let cheater = s.nodes[0].node_service.chain.leader();
-        let cheater_wallet = s.nodes[0]
+        let budget = p.config.chain.service_award_per_epoch;
+        let cheater = p.nodes[0].node_service.state().chain.leader();
+        let cheater_wallet = p.nodes[0]
             .node_service
             .chain
             .account_by_network_key(&cheater)
@@ -396,7 +411,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
             "CREATE BLOCK. LEADER = {}, ACCOUNT = {}",
             cheater, cheater_wallet
         );
-        s.poll();
+        p.poll().await;
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
 
@@ -405,7 +420,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
 
         info!(
             "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.chain.leader()
+            r.parts.1.first().node_service.state().chain.leader()
         );
         // each node should add proof of slashing into state.
         r.parts
@@ -424,11 +439,11 @@ fn finalized_slashing_with_service_award_for_auditor() {
                 .iter()
                 .map(|(p, _)| *p)
                 .collect();
-            assert!(!validators.contains(&cheater))
+            assert!(!validatorp.contains(&cheater))
         }
 
-        let offset = r.parts.1.first().node_service.chain.offset();
-        let epoch = r.parts.1.first().node_service.chain.epoch();
+        let offset = r.parts.1.first().node_service.state().chain.offset();
+        let epoch = r.parts.1.first().node_service.state().chain.epoch();
 
         for _offset in offset..r.config.chain.micro_blocks_in_epoch {
             r.parts.1.poll();
@@ -444,12 +459,12 @@ fn finalized_slashing_with_service_award_for_auditor() {
         let mut output = None;
         for node in r.parts.1.iter_mut() {
             //award was executed
-            assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+            assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
             assert_eq!(
-                node.node_service.chain.last_block_hash(),
-                node.node_service.chain.last_macro_block_hash()
+                node.node_service.state().chain.last_block_hash(),
+                node.node_service.state().chain.last_macro_block_hash()
             );
-            let block_hash = node.node_service.chain.last_block_hash();
+            let block_hash = node.node_service.state().chain.last_block_hash();
             let block = node
                 .node_service
                 .chain
@@ -460,13 +475,13 @@ fn finalized_slashing_with_service_award_for_auditor() {
             let mut outputs = Vec::new();
             for output in block.outputs {
                 match output {
-                    Output::PublicPaymentOutput(p) => outputs.push(p),
+                    Output::PublicPaymentOutput(p) => outputp.push(p),
                     _ => {}
                 }
             }
 
-            assert_eq!(outputs.len(), 4); // 3 slashing + award
-            outputs.sort_by_key(|p| p.amount);
+            assert_eq!(outputp.len(), 4); // 3 slashing + award
+            outputp.sort_by_key(|p| p.amount);
             trace!("outputs = {:?}", outputs);
             assert_eq!(outputs[0].amount, budget);
             if let Some(ref output) = output {
@@ -486,7 +501,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
             Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
             e => panic!("Expected macroblock info, got ={:?}", e),
         };
-        let p = i.epoch_info.awards.payout.unwrap();
+        let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
         assert_eq!(output.amount, p.amount);
 
@@ -498,7 +513,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
             Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
             e => panic!("Expected macroblock info, got ={:?}", e),
         };
-        let p = i.epoch_info.awards.payout.unwrap();
+        let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
         assert_eq!(output.amount, p.amount);
         // assert that award state is same for node and auditor
@@ -524,25 +539,25 @@ fn finalized_slashing_with_service_award_for_auditor() {
 }
 
 fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
-    let offset = s.first().node_service.chain.offset();
-    let epoch = s.first().node_service.chain.epoch();
+    let offset = p.first().node_service.state().chain.offset();
+    let epoch = p.first().node_service.state().chain.epoch();
 
     // ignore microblocks for auditor
-    for _offset in offset..s.config.chain.micro_blocks_in_epoch {
-        s.poll();
-        s.skip_micro_block();
+    for _offset in offset..p.config.chain.micro_blocks_in_epoch {
+        p.poll().await;
+        p.skip_micro_block();
     }
 
-    s.skip_macro_block();
+    p.skip_macro_block();
     let mut output = None;
-    for node in s.iter_mut() {
+    for node in p.iter_mut() {
         //award was executed
-        assert_eq!(node.node_service.chain.service_awards().budget(), 0);
+        assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
         assert_eq!(
-            node.node_service.chain.last_block_hash(),
-            node.node_service.chain.last_macro_block_hash()
+            node.node_service.state().chain.last_block_hash(),
+            node.node_service.state().chain.last_macro_block_hash()
         );
-        let block_hash = node.node_service.chain.last_block_hash();
+        let block_hash = node.node_service.state().chain.last_block_hash();
         let block = node
             .node_service
             .chain
@@ -553,12 +568,12 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
         let mut outputs = Vec::new();
         for output in block.outputs {
             match output {
-                Output::PublicPaymentOutput(p) => outputs.push(p),
+                Output::PublicPaymentOutput(p) => outputp.push(p),
                 _ => {}
             }
         }
 
-        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputp.len(), 1);
         assert_eq!(outputs[0].amount, service_award_budget);
         if let Some(ref output) = output {
             assert_eq!(output, &outputs[0])
@@ -566,10 +581,10 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
             output = Some(outputs[0].clone());
         }
     }
-    s.assert_synchronized();
+    p.assert_synchronized();
 
     let output = output.unwrap();
-    let node = s.first_mut();
+    let node = p.first_mut();
     let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
     node.poll();
     let notification = receive.poll().unwrap();
@@ -577,32 +592,32 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
         Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
         e => panic!("Expected macroblock info, got ={:?}", e),
     };
-    let p = i.epoch_info.awards.payout.unwrap();
+    let p = i.epoch_info.awardp.payout.unwrap();
     assert_eq!(output.recipient, p.recipient);
     assert_eq!(output.amount, p.amount);
 }
 
 fn service_award_round_without_participants(s: &mut Sandbox) {
-    let offset = s.first().node_service.chain.offset();
-    let epoch = s.first().node_service.chain.epoch();
+    let offset = p.first().node_service.state().chain.offset();
+    let epoch = p.first().node_service.state().chain.epoch();
 
-    let mut nodes: HashSet<_> = s.iter().map(|n| n.node_service.network_pkey).collect();
+    let mut nodes: HashSet<_> = p.iter().map(|n| n.node_service.network_pkey).collect();
 
     // skipp all leaders atleast once
-    for offset in offset..s.config.chain.micro_blocks_in_epoch {
-        s.poll();
+    for offset in offset..p.config.chain.micro_blocks_in_epoch {
+        p.poll().await;
 
-        let leader_pk = s.first().chain().leader();
+        let leader_pk = p.first().chain().leader();
 
-        let second_leader = s.future_view_change_leader(1);
+        let second_leader = p.future_view_change_leader(1);
         // if leader already skipper, or next view_change_leader is current, just skip_micro_block
         if !nodes.contains(&leader_pk) || second_leader == leader_pk {
-            s.skip_micro_block();
+            p.skip_micro_block();
             continue;
         }
 
         // check that this leader didn't failed at current epoch
-        for node in s.iter_mut() {
+        for node in p.iter_mut() {
             assert_eq!(
                 node.node_service
                     .chain
@@ -613,27 +628,27 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
             );
         }
 
-        let node = s.node(&leader_pk).unwrap();
+        let node = p.find_mut(&leader_pk).unwrap();
         node.handle_vdf();
         node.poll();
 
-        s.wait(s.config.node.micro_block_timeout);
-        s.poll();
+        p.wait(p.config.node.micro_block_timeout);
+        p.poll().await;
 
         // emulate dead leader for other nodes
         // filter messages from chain loader.
-        s.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
+        p.filter_unicast(&[crate::protos::loader::CHAIN_LOADER_TOPIC]);
         // filter block message from node.
-        s.filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
+        p.filter_broadcast(&[crate::SEALED_BLOCK_TOPIC]);
         info!("======= PARTITION BEGIN =======");
-        let mut r = s.split(&[leader_pk]);
+        let mut r = p.split(&[leader_pk]);
 
         let mut msgs = Vec::new();
         for node in &mut r.parts.1.nodes {
             let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
-            msgs.push(msg);
+            msgp.push(msg);
         }
-        assert_eq!(msgs.len(), 3);
+        assert_eq!(msgp.len(), 3);
 
         info!("======= BROADCAST VIEW_CHANGES =======");
         for node in &mut r.parts.1.nodes {
@@ -652,21 +667,21 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-        for node in s.iter_mut() {
+        for node in p.iter_mut() {
             node.network_service
                 .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone())
         }
 
-        s.auditor
+        p.auditor
             .network_service
             .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
 
-        s.poll();
+        p.poll().await;
 
-        s.assert_synchronized();
+        p.assert_synchronized();
 
         // check that after failing leader marked as failed.
-        for node in s.iter_mut() {
+        for node in p.iter_mut() {
             assert_eq!(
                 node.node_service
                     .chain
@@ -682,16 +697,16 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
 
     assert!(
         nodes.is_empty(),
-        "Too few microblocks, test failed to skip all leaders."
+        "Too few microblocks, test failed to skip all leaderp."
     );
 
-    s.skip_macro_block();
+    p.skip_macro_block();
 
-    let service_award_budget = s.config.chain.service_award_per_epoch;
-    for node in s.iter_mut() {
+    let service_award_budget = p.config.chain.service_award_per_epoch;
+    for node in p.iter_mut() {
         //award was executed without winners, list of activity should be cleared
         assert_eq!(
-            node.node_service.chain.service_awards().budget(),
+            node.node_service.state().chain.service_awards().budget(),
             service_award_budget
         );
         assert_eq!(
@@ -703,10 +718,10 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
             0
         );
         assert_eq!(
-            node.node_service.chain.last_block_hash(),
-            node.node_service.chain.last_macro_block_hash()
+            node.node_service.state().chain.last_block_hash(),
+            node.node_service.state().chain.last_macro_block_hash()
         );
-        let block_hash = node.node_service.chain.last_block_hash();
+        let block_hash = node.node_service.state().chain.last_block_hash();
         let block = node
             .node_service
             .chain
@@ -717,14 +732,14 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
         let mut outputs = Vec::new();
         for output in block.outputs {
             match output {
-                Output::PublicPaymentOutput(p) => outputs.push(p),
+                Output::PublicPaymentOutput(p) => outputp.push(p),
                 _ => {}
             }
         }
-        assert_eq!(outputs.len(), 0);
+        assert_eq!(outputp.len(), 0);
     }
 
-    s.assert_synchronized();
+    p.assert_synchronized();
 }
 
 // CASE service award with 0 difficulty.
@@ -742,9 +757,9 @@ fn service_award_state() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
+        p.poll().await;
 
-        let budget = s.config.chain.service_award_per_epoch;
+        let budget = p.config.chain.service_award_per_epoch;
         service_award_round_normal(&mut s, budget);
     });
 }
@@ -764,10 +779,10 @@ fn service_award_state_no_winners() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
+        p.poll().await;
         service_award_round_without_participants(&mut s);
 
-        let budget = s.config.chain.service_award_per_epoch;
+        let budget = p.config.chain.service_award_per_epoch;
         service_award_round_normal(&mut s, budget * 2)
     });
 }
@@ -787,26 +802,26 @@ fn view_change_from_future() {
     };
 
     Sandbox::start(config, |mut s| {
-        s.poll();
-        s.skip_micro_block();
+        p.poll().await;
+        p.skip_micro_block();
         //        pub fn new(chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey) -> Self {
 
         let mut msgs = Vec::new();
-        let sender = s.first_mut();
+        let sender = p.first_mut();
         let sender_pk = sender.node_service.network_pkey.clone();
-        let source_chain_info = ChainInfo::from_blockchain(&sender.node_service.chain);
+        let source_chain_info = ChainInfo::from_blockchain(&sender.node_service.state().chain);
 
         let mut chain_info = source_chain_info.clone();
         chain_info.offset += 1;
-        msgs.push(chain_info);
+        msgp.push(chain_info);
 
         let mut chain_info = source_chain_info.clone();
         chain_info.view_change += 1;
-        msgs.push(chain_info);
+        msgp.push(chain_info);
 
         let mut chain_info = source_chain_info.clone();
         chain_info.last_block = Hash::digest("test");
-        msgs.push(chain_info);
+        msgp.push(chain_info);
 
         let msgs: Vec<_> = msgs
             .into_iter()
@@ -818,8 +833,8 @@ fn view_change_from_future() {
                 )
             })
             .collect();
-        s.poll();
-        let ref mut receiver = s.nodes[1];
+        p.poll().await;
+        let ref mut receiver = p.nodes[1];
         for msg in msgs {
             receiver
                 .network_service
@@ -835,3 +850,4 @@ fn view_change_from_future() {
         }
     });
 }
+*/

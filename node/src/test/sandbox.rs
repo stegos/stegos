@@ -328,19 +328,38 @@ impl<'p> Partition<'p> {
         }
     }
 
+    /// Skip blocks until condition not true
+    pub async fn skip_microblocks_until<'a, F>(&'a mut self, mut condition: F)
+    where
+        'p: 'a,
+        F: FnMut(&mut Partition) -> bool,
+    {
+        trace!("Skipping microblocks until condition is met...");
+        let mut ready = false;
+        for i in 0..self.config.chain.micro_blocks_in_epoch {
+            if condition(self) {
+                ready = true;
+                trace!("Condition met at iteration {}, stopping!", i + 1);
+                break;
+            }
+            self.skip_micro_block().await;
+        }
+        assert!(ready, "Not enough microblocks to skip");
+    }
+
     /// Inner logic specific for cheater slashing.
     pub async fn slash_cheater_inner<'a>(
-        part: &'a mut Partition<'a>,
+        &'a mut self,
         leader_pk: PublicKey,
         mut filter_nodes: Vec<PublicKey>,
     ) -> PartitionGuard<'a>
     where
         'p: 'a,
     {
-        part.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+        self.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
         filter_nodes.push(leader_pk);
-        let mut r = part.split(&filter_nodes);
+        let mut r = self.split(&filter_nodes);
         let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
         leader.handle_vdf();
         leader.node_service.poll().await;

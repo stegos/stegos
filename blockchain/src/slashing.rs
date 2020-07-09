@@ -146,7 +146,7 @@ pub fn confiscate_tx(
         }
         outputs.push(output.into());
     }
-    debug!("Creating confiscate transaction: cheater = {}, piece = {}, change = {}, num_validators = {}", cheater, piece, change, outputs.len());
+    debug!("Slashing cheater {}, piece = {}, change = {}, num_validators = {}", cheater, piece, change, outputs.len());
 
     Ok(SlashingTransaction {
         proof,

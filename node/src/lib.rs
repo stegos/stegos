@@ -1738,6 +1738,8 @@ impl NodeState {
 
     /// Handle incoming view_change message from the network.
     fn handle_view_change_message(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
+        self.validation_status_changed = true;
+
         let view_change_collector = match &mut self.validation {
             MicroBlockValidator {
                 view_change_collector,
@@ -1801,6 +1803,8 @@ impl NodeState {
             leader,
             elapsed
         );
+
+        self.validation_status_changed = true;
 
         // Check state.
         let view_change_collector = match &mut self.validation {
@@ -1948,7 +1952,10 @@ impl NodeState {
             .expect("created a valid block");
         self.send_block(Block::MicroBlock(block2))
             .expect("failed to send sealed micro block");
-
+        self.outgoing
+            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+                self.cfg.micro_block_timeout,
+            ));
         Ok(())
     }
 

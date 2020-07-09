@@ -523,7 +523,6 @@ impl NodeService {
     pub async fn start(mut self) {
         loop {
             self.poll().await;
-            self.handle_outgoing().await;
         }
     }
 
@@ -531,6 +530,7 @@ impl NodeService {
         strace!(self, "Polling node. Elapsed {:?}", self.now.elapsed());
         self.now = Instant::now();
 
+        // Select may block so do this first!
         self.handle_outgoing().await;
 
         // Subscribers for chain events which are fed from the disk.
@@ -628,8 +628,9 @@ impl NodeService {
                     event => self.state.handle_event(event),
                 }
             },
-
         }
+
+        strace!(self, "Processed tokio and timers, on to replication...");
         // Replication
         'inner: loop {
             // Replication interface need deep interaction with state and blockchain.
@@ -671,7 +672,9 @@ impl NodeService {
     }
 
     async fn handle_outgoing(&mut self) {
-        for event in std::mem::replace(&mut self.state.outgoing, Vec::new()) {
+        let q = std::mem::replace(&mut self.state.outgoing, Vec::new());
+        strace!(self, "Processing {} outgoing events...", q.len());
+        for event in q {
             strace!(self, "Outgoing event = {}", event);
             let result = match event {
                 NodeOutgoingEvent::FacilitatorChanged { .. } => Ok(()),
@@ -715,11 +718,15 @@ impl NodeService {
                         tx.send(solution).ok(); // ignore errors.
                     };
                     // Spawn a background thread to solve VDF puzzle.
+                    strace!(
+                        self,
+                        "Solving VDF challenge with difficulty = {}, spawning thread...",
+                        difficulty
+                    );
                     thread::spawn(solver);
                     self.micro_propose_timer.set(rx.fuse());
                     self.macro_propose_timer.set(Fuse::terminated());
                     self.macro_view_change_timer.set(Fuse::terminated());
-                    // task::current().notify();
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroblockProposeTimerCancel => {

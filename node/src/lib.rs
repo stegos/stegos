@@ -550,8 +550,12 @@ impl NodeState {
             sinfo!(self, "Restake: new_utxo={}, amount={}", output_hash, amount);
 
             strace!(self, "Signing transaction...");
-            let tx =
-                RestakeTransaction::new(&self.network_skey, &self.network_pkey, &inputs, &[output])?;
+            let tx = RestakeTransaction::new(
+                &self.network_skey,
+                &self.network_pkey,
+                &inputs,
+                &[output],
+            )?;
             let tx_hash = Hash::digest(&tx);
             sinfo!(
                 self,
@@ -1309,7 +1313,11 @@ impl NodeState {
                     vdf: self.chain.vdf(),
                     difficulty: self.chain.difficulty(),
                 });
-            strace!(self, "Pushed microblock propose, {} items in outgoing queue", self.outgoing.len());
+            strace!(
+                self,
+                "Pushed microblock propose, {} items in outgoing queue",
+                self.outgoing.len()
+            );
         } else {
             sinfo!(self, "I'm a validator. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),

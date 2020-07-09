@@ -206,9 +206,9 @@ mod test {
     use super::{select_validators_slots, select_winner};
     use std::collections::{HashMap, HashSet};
 
+    use crate::block::Validators;
     use stegos_crypto::hash::Hash;
     use stegos_crypto::pbc;
-    use crate::block::Validators;
 
     fn broken_random(nums: i64) -> impl Iterator<Item = i64> {
         (0..nums).into_iter()

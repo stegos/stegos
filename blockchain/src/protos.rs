@@ -1635,7 +1635,10 @@ mod tests {
                 proof: pbc::G1::generator(),
             },
             view_change: 43,
-            validators: Validators(vec![(pbc::PublicKey::dum(), 1), (pbc::PublicKey::dum(), 15)]),
+            validators: Validators(vec![
+                (pbc::PublicKey::dum(), 1),
+                (pbc::PublicKey::dum(), 15),
+            ]),
             facilitator: pbc::PublicKey::dum(),
         };
         roundtrip_eq(&value);

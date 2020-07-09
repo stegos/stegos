@@ -544,23 +544,23 @@ impl NodeService {
             }
             // poll timers
             _ = self.macro_propose_timer.as_mut() => {
-                let event = NodeIncomingEvent::MacroBlockPropose;
+                let event = NodeIncomingEvent::ProposeMacroblock;
                 self.state.handle_event(event);
             },
             _ = self.macro_view_change_timer.as_mut() => {
-                let event = NodeIncomingEvent::MacroBlockViewChangeTimer;
+                let event = NodeIncomingEvent::MacroblockViewChangeTimer;
                 self.state.handle_event(event);
             },
 
             solution = self.micro_propose_timer.as_mut() => {
                 // Panic is possible only if thread of solver was killed, which is a bug.
                 let solution = solution.expect("Solution should always be calculated, no panics expected.");
-                let event = NodeIncomingEvent::MicroBlockProposeTimer(solution);
+                let event = NodeIncomingEvent::ProposeMicroblock(solution);
                 self.state.handle_event(event);
             },
 
             _ = self.micro_view_change_timer.as_mut() => {
-                let event = NodeIncomingEvent::MicroBlockViewChangeTimer;
+                let event = NodeIncomingEvent::MicroblockViewChangeTimer;
                 self.state.handle_event(event);
             },
             interval = self.check_sync.tick().fuse() => {
@@ -687,7 +687,7 @@ impl NodeService {
                     //
                     self.network.send(dest, &topic, data)
                 }
-                NodeOutgoingEvent::MacroBlockPropose => {
+                NodeOutgoingEvent::ProposeMacroblock => {
                     let (tx, rx) = oneshot::channel::<()>();
                     tx.send(()).ok();
                     self.macro_propose_timer.set(rx.fuse());
@@ -695,18 +695,19 @@ impl NodeService {
                     self.micro_view_change_timer.set(Fuse::terminated());
                     Ok(())
                 }
-                NodeOutgoingEvent::MacroBlockViewChangeTimer(duration) => {
+                NodeOutgoingEvent::MacroblockViewChangeTimer(duration) => {
                     self.macro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.micro_propose_timer.set(Fuse::terminated());
                     self.micro_view_change_timer.set(Fuse::terminated());
                     Ok(())
                 }
-                NodeOutgoingEvent::MicroBlockProposeTimer {
+                NodeOutgoingEvent::MicroblockProposeTimer {
                     random,
                     vdf,
                     difficulty,
                 } => {
+                    trace!("Solving VDF puzzle...");
                     let (tx, rx) = oneshot::channel::<Vec<u8>>();
                     let challenge = random.to_bytes();
                     let solver = move || {
@@ -721,11 +722,11 @@ impl NodeService {
                     // task::current().notify();
                     Ok(())
                 }
-                NodeOutgoingEvent::MicroBlockProposeTimerCancel => {
+                NodeOutgoingEvent::MicroblockProposeTimerCancel => {
                     self.micro_propose_timer.set(Fuse::terminated());
                     Ok(())
                 }
-                NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
+                NodeOutgoingEvent::MicroblockViewChangeTimer(duration) => {
                     strace!(
                         self,
                         "Setting the microblock view change timer to {:?}",

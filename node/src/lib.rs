@@ -141,10 +141,10 @@ pub enum NodeIncomingEvent {
         data: Vec<u8>,
     },
     CheckSyncTimer,
-    MacroBlockPropose,
-    MacroBlockViewChangeTimer,
-    MicroBlockProposeTimer(Vec<u8>),
-    MicroBlockViewChangeTimer,
+    ProposeMacroblock,
+    MacroblockViewChangeTimer,
+    ProposeMicroblock(Vec<u8>),
+    MicroblockViewChangeTimer,
 }
 
 #[derive(Debug)]
@@ -168,15 +168,15 @@ pub enum NodeOutgoingEvent {
     },
     ChainNotification(ChainNotification),
     StatusNotification(StatusNotification),
-    MacroBlockPropose,
-    MacroBlockViewChangeTimer(Duration),
-    MicroBlockProposeTimer {
+    ProposeMacroblock,
+    MacroblockViewChangeTimer(Duration),
+    MicroblockProposeTimer {
         random: Hash,
         vdf: VDF,
         difficulty: u64,
     },
-    MicroBlockProposeTimerCancel,
-    MicroBlockViewChangeTimer(Duration),
+    MicroblockProposeTimerCancel,
+    MicroblockViewChangeTimer(Duration),
     RequestBlocksFrom {
         from: pbc::PublicKey,
     },
@@ -1291,11 +1291,12 @@ impl NodeState {
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             self.outgoing
-                .push(NodeOutgoingEvent::MicroBlockProposeTimer {
+                .push(NodeOutgoingEvent::MicroblockProposeTimer {
                     random: self.chain.last_random(),
                     vdf: self.chain.vdf(),
                     difficulty: self.chain.difficulty(),
                 });
+            strace!(self, "Pushed microblock propose, {} items in outgoing queue", self.outgoing.len());
         } else {
             sinfo!(self, "I'm a validator. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
@@ -1307,7 +1308,7 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
 
             self.outgoing
-                .push(NodeOutgoingEvent::MicroBlockProposeTimerCancel);
+                .push(NodeOutgoingEvent::MicroblockProposeTimerCancel);
         };
 
         strace!(
@@ -1316,7 +1317,7 @@ impl NodeState {
             self.cfg.micro_block_timeout
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
                 self.cfg.micro_block_timeout,
             ));
     }
@@ -1347,7 +1348,7 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             // Consensus may have locked proposal.
             if consensus.should_propose() {
-                self.outgoing.push(NodeOutgoingEvent::MacroBlockPropose);
+                self.outgoing.push(NodeOutgoingEvent::ProposeMacroblock);
             }
         } else {
             sinfo!(self,
@@ -1370,7 +1371,7 @@ impl NodeState {
             round
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(d));
+            .push(NodeOutgoingEvent::MacroblockViewChangeTimer(d));
     }
 
     /// Called when facilitator is changed.
@@ -1599,7 +1600,7 @@ impl NodeState {
         let relevant_round = 1 + consensus.round();
         let duration = relevant_round * self.cfg.macro_block_timeout;
         self.outgoing
-            .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
+            .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
         sdebug!(
             self,
             "Creating a new macroblock proposal: epoch={}, view_change={}",
@@ -1692,7 +1693,7 @@ impl NodeState {
                 let relevant_round = 1 + consensus.round();
                 let duration = relevant_round * self.cfg.macro_block_timeout;
                 self.outgoing
-                    .push(NodeOutgoingEvent::MacroBlockViewChangeTimer(duration));
+                    .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
                 return Ok(());
             }
 
@@ -1818,7 +1819,7 @@ impl NodeState {
         // Update timer.
         let duration = self.cfg.micro_block_timeout;
         self.outgoing
-            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(duration));
+            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(duration));
         // Send a view_change message.
         let chain_info = ChainInfo::from_blockchain(&self.chain);
         let msg = view_change_collector.handle_timeout(chain_info);
@@ -1953,7 +1954,7 @@ impl NodeState {
         self.send_block(Block::MicroBlock(block2))
             .expect("failed to send sealed micro block");
         self.outgoing
-            .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
+            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
                 self.cfg.micro_block_timeout,
             ));
         Ok(())
@@ -2301,19 +2302,19 @@ impl NodeState {
                 }
                 Ok(())
             }
-            NodeIncomingEvent::MacroBlockPropose => {
+            NodeIncomingEvent::ProposeMacroblock => {
                 //
                 self.propose_macro_block()
             }
-            NodeIncomingEvent::MacroBlockViewChangeTimer => {
+            NodeIncomingEvent::MacroblockViewChangeTimer => {
                 //
                 self.handle_macro_block_viewchange_timer()
             }
-            NodeIncomingEvent::MicroBlockProposeTimer(solution) => {
+            NodeIncomingEvent::ProposeMicroblock(solution) => {
                 //
                 self.create_micro_block(solution)
             }
-            NodeIncomingEvent::MicroBlockViewChangeTimer => {
+            NodeIncomingEvent::MicroblockViewChangeTimer => {
                 //
                 self.handle_micro_block_viewchange_timer()
             }
@@ -2342,10 +2343,10 @@ impl fmt::Display for NodeIncomingEvent {
             e::ViewChangeProofMessage { from, .. } => write!(f, "ViewChangeProofMessage({})", from),
             e::ChainLoaderMessage { from, .. } => write!(f, "ChainLoaderMessage({})", from),
             e::CheckSyncTimer => f.write_str("CheckSyncTimer"),
-            e::MacroBlockPropose => f.write_str("MacroBlockPropose"),
-            e::MacroBlockViewChangeTimer => f.write_str("MacroBlockViewChangeTimer"),
-            e::MicroBlockProposeTimer(..) => f.write_str("MicroBlockProposeTimer"),
-            e::MicroBlockViewChangeTimer => f.write_str("MicroBlockViewChangeTimer"),
+            e::ProposeMacroblock => f.write_str("ProposeMacroblock"),
+            e::MacroblockViewChangeTimer => f.write_str("MacroblockViewChangeTimer"),
+            e::ProposeMicroblock(..) => f.write_str("ProposeMicroblock"),
+            e::MicroblockViewChangeTimer => f.write_str("MicroblockViewChangeTimer"),
         }
     }
 }
@@ -2366,11 +2367,11 @@ impl fmt::Display for NodeOutgoingEvent {
             e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
             e::ChainNotification(..) => f.write_str("ChainNotification"),
             e::StatusNotification(..) => f.write_str("StatusNotification"),
-            e::MacroBlockPropose => write!(f, "MacroBlockPropose"),
-            e::MacroBlockViewChangeTimer(d) => write!(f, "MacroBlockViewChangeTimer({:?})", d),
-            e::MicroBlockProposeTimer { .. } => f.write_str("MicroBlockProposeTimer"),
-            e::MicroBlockProposeTimerCancel => f.write_str("MicroBlockProposeTimerCancel"),
-            e::MicroBlockViewChangeTimer(d) => write!(f, "MicroBlockViewChangeTimer({:?})", d),
+            e::ProposeMacroblock => write!(f, "ProposeMacroblock"),
+            e::MacroblockViewChangeTimer(d) => write!(f, "MacroblockViewChangeTimer({:?})", d),
+            e::MicroblockProposeTimer { .. } => f.write_str("MicroblockProposeTimer"),
+            e::MicroblockProposeTimerCancel => f.write_str("MicroblockProposeTimerCancel"),
+            e::MicroblockViewChangeTimer(d) => write!(f, "MicroblockViewChangeTimer({:?})", d),
             e::RequestBlocksFrom { from } => write!(f, "RequestBlocksFrom({})", from),
             e::SendBlocksTo { to, epoch, offset } => {
                 write!(f, "SendBlocksTo({}, {}, {})", to, epoch, offset)

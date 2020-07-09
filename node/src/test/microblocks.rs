@@ -27,7 +27,7 @@ use log::*;
 // use bit_vec::BitVec;
 // use std::collections::HashSet;
 use stegos_blockchain::Block;
-// use stegos_consensus::MacroBlockProposal;
+// use stegos_consensus::MacroblockProposal;
 // use stegos_consensus::{optimistic::SealedViewChangeProof, ConsensusMessage, ConsensusMessageBody};
 // use stegos_crypto::pbc::Signature;
 use super::wait;
@@ -43,7 +43,7 @@ use crate::CHAIN_LOADER_TOPIC;
 #[tokio::test]
 async fn dead_leader() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 2000;
+    cfg.blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -62,7 +62,7 @@ async fn dead_leader() {
         // let leader shoot his block
         p.poll().await;
         // emulate timeout on other nodes, and wait for request
-        wait(config.node.micro_block_timeout).await;
+        wait(config.node.microblock_timeout).await;
 
         info!("PARTITION BEGIN");
         p.poll().await;
@@ -126,7 +126,7 @@ async fn dead_leader() {
 // #[test]
 // fn silent_view_change() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -145,7 +145,7 @@ async fn dead_leader() {
 //         let new_leader = s.future_view_change_leader(1);
 
 //         s.poll();
-//         s.wait(s.config.node.micro_block_timeout);
+//         s.wait(s.config.node.microblock_timeout);
 //         info!("======= PARTITION BEGIN =======");
 //         s.poll();
 //         // emulate dead leader for other nodes
@@ -180,10 +180,10 @@ async fn dead_leader() {
 //                 .network_service
 //                 .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//             let micro_block = block.clone().unwrap_micro();
-//             assert_eq!(micro_block.header.epoch, epoch);
-//             assert_eq!(micro_block.header.offset, offset);
-//             assert_eq!(micro_block.header.view_change, starting_view_changes + 1);
+//             let Microblock = block.clone().unwrap_micro();
+//             assert_eq!(Microblock.header.epoch, epoch);
+//             assert_eq!(Microblock.header.offset, offset);
+//             assert_eq!(Microblock.header.view_change, starting_view_changes + 1);
 //             // broadcast block to other nodes.
 //             for node in &mut r.parts.1.nodes {
 //                 node.network_service
@@ -226,7 +226,7 @@ async fn dead_leader() {
 // #[test]
 // fn double_view_change() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -238,7 +238,7 @@ async fn dead_leader() {
 
 //         let mut blocks = 0;
 
-//         for _ in 0..=s.config.chain.micro_blocks_in_epoch {
+//         for _ in 0..=s.config.chain.blocks_in_epoch {
 //             let view_change = s.first_mut().node_service.chain.view_change();
 //             let leader1 = s.first_mut().node_service.chain.leader();
 //             let leader2 = s
@@ -256,16 +256,16 @@ async fn dead_leader() {
 //                 break;
 //             }
 
-//             s.skip_micro_block();
+//             s.skip_microblock();
 //             blocks += 1;
 //         }
-//         assert!(blocks < s.config.chain.micro_blocks_in_epoch as u32 - 2);
+//         assert!(blocks < s.config.chain.blocks_in_epoch as u32 - 2);
 //         let starting_view_changes = 0;
 //         let leader_pk = s.nodes[0].node_service.chain.leader();
 //         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
 
 //         s.poll();
-//         s.wait(s.config.node.micro_block_timeout);
+//         s.wait(s.config.node.microblock_timeout);
 //         info!("======= PARTITION BEGIN =======");
 //         s.poll();
 //         // emulate dead leader for other nodes
@@ -320,7 +320,7 @@ async fn dead_leader() {
 //                 );
 //             }
 
-//             s.wait(s.config.node.micro_block_timeout);
+//             s.wait(s.config.node.microblock_timeout);
 //             let mut r = s.split(&[leader_pk, new_leader]);
 //             r.parts.1.poll();
 
@@ -371,7 +371,7 @@ async fn dead_leader() {
 // #[test]
 // fn resolve_fork_for_view_change() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -400,7 +400,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.micro_block_timeout);
+//         s.wait(s.config.node.microblock_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -435,8 +435,8 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         let micro_block = block.clone().unwrap_micro();
-//         assert_eq!(micro_block.header.view_change, starting_view_changes + 1);
+//         let Microblock = block.clone().unwrap_micro();
+//         assert_eq!(Microblock.header.view_change, starting_view_changes + 1);
 
 //         let last_block_hash = Hash::digest(&block);
 
@@ -482,7 +482,7 @@ async fn dead_leader() {
 // #[test]
 // fn resolve_fork_without_block() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -511,7 +511,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.micro_block_timeout);
+//         s.wait(s.config.node.microblock_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -605,7 +605,7 @@ async fn dead_leader() {
 // #[test]
 // fn issue_896_resolve_fork() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -634,7 +634,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.micro_block_timeout);
+//         s.wait(s.config.node.microblock_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -690,7 +690,7 @@ async fn dead_leader() {
 //             .get_unicast_to_peer(crate::VIEW_CHANGE_DIRECT, &leader_pk);
 
 //         // wait half of view_change timer
-//         r.wait(r.config.node.micro_block_timeout / 2);
+//         r.wait(r.config.node.microblock_timeout / 2);
 
 //         let first_leader = r.parts.0.first_mut();
 //         assert_eq!(leader_pk, first_leader.node_service.network_pkey);
@@ -717,11 +717,11 @@ async fn dead_leader() {
 //         assert_eq!(first_leader.node_service.chain.offset(), starting_offset);
 
 //         // wait for panic.
-//         r.wait(r.config.node.micro_block_timeout - r.config.node.micro_block_timeout / 2);
+//         r.wait(r.config.node.microblock_timeout - r.config.node.microblock_timeout / 2);
 //         r.parts.0.poll();
 
 //         // if panic was fixed, check for message.
-//         r.wait(r.config.node.micro_block_timeout / 2);
+//         r.wait(r.config.node.microblock_timeout / 2);
 //         r.parts.0.poll();
 
 //         let first_leader = r.parts.0.first_mut();
@@ -774,7 +774,7 @@ async fn dead_leader() {
 //             let block_reward = 0;
 //             let activity_map = BitVec::new();
 //             let validators = vec![];
-//             let block = MacroBlock::empty(
+//             let block = Macroblock::empty(
 //                 previous,
 //                 epoch,
 //                 round,
@@ -787,7 +787,7 @@ async fn dead_leader() {
 //                 validators,
 //             );
 //             let block_hash = Hash::digest(&block);
-//             let body = ConsensusMessageBody::Proposal(MacroBlockProposal {
+//             let body = ConsensusMessageBody::Proposal(MacroblockProposal {
 //                 header: block.header.clone(),
 //                 transactions: vec![],
 //             });
@@ -855,14 +855,14 @@ async fn dead_leader() {
 //         let mut blocks = Vec::new();
 //         {
 //             let source = match block {
-//                 Block::MicroBlock(block) => block,
-//                 _ => panic!("Expecting microblock"),
+//                 Block::Microblock(block) => block,
+//                 _ => panic!("Expecting Microblock"),
 //             };
 
 //             // block without signature
 //             let mut block = source.clone();
 //             block.sig = Signature::zero();
-//             blocks.push(Block::MicroBlock(block));
+//             blocks.push(Block::Microblock(block));
 
 //             macro_rules! modify_block {
 //                 ($block: ident, $do:stmt) => {
@@ -874,7 +874,7 @@ async fn dead_leader() {
 //                         &leader.node_service.network_skey,
 //                         &leader.node_service.network_pkey,
 //                     );
-//                     blocks.push(Block::MicroBlock($block));
+//                     blocks.push(Block::Microblock($block));
 //                 };
 //             }
 
@@ -957,7 +957,7 @@ async fn dead_leader() {
 // #[test]
 // fn slash_cheater() {
 //     let mut cfg: ChainConfig = Default::default();
-//     cfg.micro_blocks_in_epoch = 2000;
+//     cfg.blocks_in_epoch = 2000;
 //     let config = SandboxConfig {
 //         num_nodes: 4,
 //         chain: cfg,
@@ -984,7 +984,7 @@ async fn dead_leader() {
 //         r.parts
 //             .1
 //             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
-//         r.parts.1.skip_micro_block();
+//         r.parts.1.skip_microblock();
 
 //         // assert that nodes in partition 1 exclude node from partition 0.
 //         for node in r.parts.1.iter() {

@@ -47,7 +47,7 @@ pub const VERSION: u64 = 1;
 
 /// Micro Block Header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MicroBlockHeader {
+pub struct MicroblockHeader {
     /// Version number.
     pub version: u64,
 
@@ -104,11 +104,11 @@ pub struct MicroBlockHeader {
 
 /// Micro Block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "crate::api::MicroBlockInfo")]
-#[serde(into = "crate::api::MicroBlockInfo")]
-pub struct MicroBlock {
+#[serde(from = "crate::api::MicroblockInfo")]
+#[serde(into = "crate::api::MicroblockInfo")]
+pub struct Microblock {
     /// Header.
-    pub header: MicroBlockHeader,
+    pub header: MicroblockHeader,
 
     /// BLS signature by leader.
     pub sig: pbc::Signature,
@@ -119,9 +119,9 @@ pub struct MicroBlock {
 
 /// Micro Block for the light node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LightMicroBlock {
+pub struct LightMicroblock {
     /// Header.
-    pub header: MicroBlockHeader,
+    pub header: MicroblockHeader,
     /// BLS signature by leader.
     pub sig: pbc::Signature,
     /// Input hashes.
@@ -132,7 +132,7 @@ pub struct LightMicroBlock {
     pub canaries: Vec<Canary>,
 }
 
-impl Hashable for MicroBlockHeader {
+impl Hashable for MicroblockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Micro".hash(state);
         self.version.hash(state);
@@ -157,7 +157,7 @@ impl Hashable for MicroBlockHeader {
     }
 }
 
-impl MicroBlock {
+impl Microblock {
     pub fn new(
         previous: Hash,
         epoch: u64,
@@ -169,7 +169,7 @@ impl MicroBlock {
         solution: Vec<u8>,
         timestamp: Timestamp,
         transactions: Vec<Transaction>,
-    ) -> MicroBlock {
+    ) -> Microblock {
         assert!(transactions.len() <= std::u32::MAX as usize);
         let (
             transactions_range_hash,
@@ -188,7 +188,7 @@ impl MicroBlock {
         let transactions_len = transactions.len() as u32;
         let inputs_len = input_hashes.len() as u32;
         let outputs_len = output_hashes.len() as u32;
-        let header = MicroBlockHeader {
+        let header = MicroblockHeader {
             version: VERSION,
             previous,
             epoch,
@@ -208,7 +208,7 @@ impl MicroBlock {
             canaries_range_hash,
         };
         let sig = pbc::Signature::zero();
-        MicroBlock {
+        Microblock {
             header,
             sig,
             transactions,
@@ -225,9 +225,9 @@ impl MicroBlock {
         random: pbc::VRF,
         solution: Vec<u8>,
         timestamp: Timestamp,
-    ) -> MicroBlock {
+    ) -> Microblock {
         let transactions = Vec::new();
-        MicroBlock::new(
+        Microblock::new(
             previous,
             epoch,
             offset,
@@ -299,24 +299,24 @@ impl MicroBlock {
     }
 }
 
-impl Hashable for MicroBlock {
+impl Hashable for Microblock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
 }
 
-impl Hashable for LightMicroBlock {
+impl Hashable for LightMicroblock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
 }
 
-impl MicroBlock {
-    pub fn into_light_micro_block(self) -> LightMicroBlock {
+impl Microblock {
+    pub fn into_light_microblock(self) -> LightMicroblock {
         let input_hashes: Vec<Hash> = self.inputs().cloned().collect();
         let canaries: Vec<Canary> = self.outputs().map(|o| o.canary()).collect();
         let output_hashes: Vec<Hash> = self.outputs().map(Hash::digest).collect();
-        LightMicroBlock {
+        LightMicroblock {
             header: self.header,
             sig: self.sig,
             input_hashes,
@@ -326,9 +326,9 @@ impl MicroBlock {
     }
 }
 
-impl From<MicroBlock> for LightMicroBlock {
-    fn from(block: MicroBlock) -> LightMicroBlock {
-        block.into_light_micro_block()
+impl From<Microblock> for LightMicroblock {
+    fn from(block: Microblock) -> LightMicroblock {
+        block.into_light_microblock()
     }
 }
 
@@ -376,7 +376,7 @@ impl Display for Validators {
 
 /// Macro Block Header.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MacroBlockHeader {
+pub struct MacroblockHeader {
     /// Version number.
     pub version: u64,
 
@@ -434,7 +434,7 @@ pub struct MacroBlockHeader {
     pub canaries_range_hash: Hash,
 }
 
-impl Hashable for MacroBlockHeader {
+impl Hashable for MacroblockHeader {
     fn hash(&self, state: &mut Hasher) {
         "Macro".hash(state);
         self.version.hash(state);
@@ -463,11 +463,11 @@ impl Hashable for MacroBlockHeader {
 
 /// Macro Block.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(from = "crate::api::MacroBlockInfo")]
-#[serde(into = "crate::api::MacroBlockInfo")]
-pub struct MacroBlock {
+#[serde(from = "crate::api::MacroblockInfo")]
+#[serde(into = "crate::api::MacroblockInfo")]
+pub struct Macroblock {
     /// Header.
-    pub header: MacroBlockHeader,
+    pub header: MacroblockHeader,
 
     /// BLS multi-signature.
     pub multisig: pbc::Signature,
@@ -484,9 +484,9 @@ pub struct MacroBlock {
 
 /// Macro Block for the light node.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LightMacroBlock {
+pub struct LightMacroblock {
     /// Header.
-    pub header: MacroBlockHeader,
+    pub header: MacroblockHeader,
     /// BLS multi-signature.
     pub multisig: pbc::Signature,
     /// Bitmap of signers in the multi-signature.
@@ -503,7 +503,7 @@ pub struct LightMacroBlock {
     pub canaries: Vec<Canary>,
 }
 
-impl MacroBlock {
+impl Macroblock {
     pub fn empty(
         previous: Hash,
         epoch: u64,
@@ -515,7 +515,7 @@ impl MacroBlock {
         block_reward: i64,
         activity_map: BitVec,
         validators: Validators,
-    ) -> MacroBlock {
+    ) -> Macroblock {
         let gamma = Fr::zero();
         let inputs: Vec<Hash> = Vec::new();
         let outputs: Vec<Output> = Vec::new();
@@ -551,7 +551,7 @@ impl MacroBlock {
         activity_map: BitVec,
         validators: Validators,
         transactions: &[Transaction],
-    ) -> Result<MacroBlock, TransactionError> {
+    ) -> Result<Macroblock, TransactionError> {
         //
         // Collect transactions.
         //
@@ -619,7 +619,7 @@ impl MacroBlock {
         validators: Validators,
         mut inputs: Vec<Hash>,
         mut outputs: Vec<Output>,
-    ) -> MacroBlock {
+    ) -> Macroblock {
         // Validators are already sorted.
         assert!(validators.0.len() < std::u32::MAX as usize);
         let validators_len = validators.0.len() as u32;
@@ -650,7 +650,7 @@ impl MacroBlock {
         let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
 
         // Create header
-        let header = MacroBlockHeader {
+        let header = MacroblockHeader {
             version: VERSION,
             previous,
             epoch,
@@ -674,7 +674,7 @@ impl MacroBlock {
         // Create the block.
         let multisig = pbc::Signature::zero();
         let multisigmap = BitVec::new();
-        MacroBlock {
+        Macroblock {
             header,
             multisig,
             multisigmap,
@@ -683,12 +683,12 @@ impl MacroBlock {
         }
     }
 
-    pub fn into_light_macro_block(self, validators: Validators) -> LightMacroBlock {
+    pub fn into_light_macroblock(self, validators: Validators) -> LightMacroblock {
         let input_hashes: Vec<Hash> = self.inputs;
         let outputs: Vec<Output> = self.outputs;
         let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
         let output_hashes: Vec<Hash> = outputs.iter().map(Hash::digest).collect();
-        LightMacroBlock {
+        LightMacroblock {
             header: self.header,
             multisig: self.multisig,
             multisigmap: self.multisigmap,
@@ -700,13 +700,13 @@ impl MacroBlock {
     }
 }
 
-impl Hashable for MacroBlock {
+impl Hashable for Macroblock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
 }
 
-impl Hashable for LightMacroBlock {
+impl Hashable for LightMacroblock {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state)
     }
@@ -720,19 +720,19 @@ impl Hashable for LightMacroBlock {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "block")]
 pub enum Block {
-    MacroBlock(MacroBlock),
-    MicroBlock(MicroBlock),
+    Macroblock(Macroblock),
+    Microblock(Microblock),
 }
 
-impl From<MacroBlock> for Block {
-    fn from(block: MacroBlock) -> Block {
-        Block::MacroBlock(block)
+impl From<Macroblock> for Block {
+    fn from(block: Macroblock) -> Block {
+        Block::Macroblock(block)
     }
 }
 
-impl From<MicroBlock> for Block {
-    fn from(block: MicroBlock) -> Block {
-        Block::MicroBlock(block)
+impl From<Microblock> for Block {
+    fn from(block: Microblock) -> Block {
+        Block::Microblock(block)
     }
 }
 
@@ -744,14 +744,14 @@ impl Block {
     ///
     /// Panics if the block is not Micro Block.
     ///
-    pub fn unwrap_micro(self) -> MicroBlock {
+    pub fn unwrap_micro(self) -> Microblock {
         match self {
-            Block::MicroBlock(micro_block) => micro_block,
-            Block::MacroBlock(macro_block) => {
+            Block::Microblock(microblock) => microblock,
+            Block::Macroblock(macroblock) => {
                 panic!(
                     "Expected a micro block: epoch={}, block={}",
-                    macro_block.header.epoch,
-                    Hash::digest(&macro_block)
+                    macroblock.header.epoch,
+                    Hash::digest(&macroblock)
                 );
             }
         }
@@ -764,14 +764,14 @@ impl Block {
     ///
     /// Panics if the block is not Micro Block.
     ///
-    pub fn unwrap_micro_ref(&self) -> &MicroBlock {
+    pub fn unwrap_micro_ref(&self) -> &Microblock {
         match self {
-            Block::MicroBlock(ref micro_block) => micro_block,
-            Block::MacroBlock(ref macro_block) => {
+            Block::Microblock(ref microblock) => microblock,
+            Block::Macroblock(ref macroblock) => {
                 panic!(
                     "Expected a micro block: epoch={}, block={}",
-                    macro_block.header.epoch,
-                    Hash::digest(&macro_block)
+                    macroblock.header.epoch,
+                    Hash::digest(&macroblock)
                 );
             }
         }
@@ -784,15 +784,15 @@ impl Block {
     ///
     /// Panics if the block is not Macro Block.
     ///
-    pub fn unwrap_macro(self) -> MacroBlock {
+    pub fn unwrap_macro(self) -> Macroblock {
         match self {
-            Block::MacroBlock(macro_block) => macro_block,
-            Block::MicroBlock(micro_block) => {
+            Block::Macroblock(macroblock) => macroblock,
+            Block::Microblock(microblock) => {
                 panic!(
                     "Expected a micro block: epoch={}, offset={}, block={}",
-                    micro_block.header.epoch,
-                    micro_block.header.offset,
-                    Hash::digest(&micro_block)
+                    microblock.header.epoch,
+                    microblock.header.offset,
+                    Hash::digest(&microblock)
                 );
             }
         }
@@ -805,15 +805,15 @@ impl Block {
     ///
     /// Panics if the block is not Macro Block.
     ///
-    pub fn unwrap_macro_ref(&self) -> &MacroBlock {
+    pub fn unwrap_macro_ref(&self) -> &Macroblock {
         match self {
-            Block::MacroBlock(ref macro_block) => macro_block,
-            Block::MicroBlock(ref micro_block) => {
+            Block::Macroblock(ref macroblock) => macroblock,
+            Block::Microblock(ref microblock) => {
                 panic!(
                     "Expected a micro block: epoch={}, offset={}, block={}",
-                    micro_block.header.epoch,
-                    micro_block.header.offset,
-                    Hash::digest(&micro_block)
+                    microblock.header.epoch,
+                    microblock.header.offset,
+                    Hash::digest(&microblock)
                 );
             }
         }
@@ -823,8 +823,8 @@ impl Block {
 impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Block::MacroBlock(macro_block) => macro_block.hash(state),
-            Block::MicroBlock(micro_block) => micro_block.hash(state),
+            Block::Macroblock(macroblock) => macroblock.hash(state),
+            Block::Microblock(microblock) => microblock.hash(state),
         }
     }
 }
@@ -832,27 +832,27 @@ impl Hashable for Block {
 /// A container for light-node blocks.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LightBlock {
-    LightMacroBlock(LightMacroBlock),
-    LightMicroBlock(LightMicroBlock),
+    LightMacroblock(LightMacroblock),
+    LightMicroblock(LightMicroblock),
 }
 
-impl From<LightMacroBlock> for LightBlock {
-    fn from(block: LightMacroBlock) -> LightBlock {
-        LightBlock::LightMacroBlock(block)
+impl From<LightMacroblock> for LightBlock {
+    fn from(block: LightMacroblock) -> LightBlock {
+        LightBlock::LightMacroblock(block)
     }
 }
 
-impl From<LightMicroBlock> for LightBlock {
-    fn from(block: LightMicroBlock) -> LightBlock {
-        LightBlock::LightMicroBlock(block)
+impl From<LightMicroblock> for LightBlock {
+    fn from(block: LightMicroblock) -> LightBlock {
+        LightBlock::LightMicroblock(block)
     }
 }
 
 impl Hashable for LightBlock {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            LightBlock::LightMacroBlock(macro_block) => macro_block.header.hash(state),
-            LightBlock::LightMicroBlock(micro_block) => micro_block.header.hash(state),
+            LightBlock::LightMacroblock(macroblock) => macroblock.header.hash(state),
+            LightBlock::LightMicroblock(microblock) => microblock.header.hash(state),
         }
     }
 }

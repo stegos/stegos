@@ -674,7 +674,7 @@ pub enum TransactionStatus {
     Rejected {
         error: String,
     },
-    /// Transaction was included in microblock.
+    /// Transaction was included in Microblock.
     Prepared {
         epoch: u64,
         offset: u32,

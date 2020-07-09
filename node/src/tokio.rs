@@ -129,7 +129,7 @@ impl ChainReader {
         // Feed blocks from the disk.
         for block in chain.blocks_starting(self.epoch, self.offset) {
             let (msg, next_epoch, next_offset) = match block {
-                Block::MacroBlock(block) => {
+                Block::Macroblock(block) => {
                     assert_eq!(block.header.epoch, self.epoch);
                     let epoch_info = chain
                         .epoch_info(block.header.epoch)
@@ -142,31 +142,31 @@ impl ChainReader {
                             chain
                                 .epoch_info(epoch - 1)
                                 .unwrap()
-                                .expect("Expect epoch info for last macroblock.")
+                                .expect("Expect epoch info for last Macroblock.")
                                 .clone(),
                         )
                     } else {
                         None
                     };
                     let next_epoch = block.header.epoch + 1;
-                    let msg = ExtendedMacroBlock {
+                    let msg = ExtendedMacroblock {
                         block,
                         epoch_info,
                         old_epoch_info,
                     };
-                    let msg = ChainNotification::MacroBlockCommitted(msg);
+                    let msg = ChainNotification::MacroblockCommitted(msg);
                     (msg, next_epoch, 0)
                 }
-                Block::MicroBlock(block) => {
+                Block::Microblock(block) => {
                     assert_eq!(block.header.epoch, self.epoch);
                     assert_eq!(block.header.offset, self.offset);
                     let (next_epoch, next_offset) =
-                        if block.header.offset + 1 < chain.cfg().micro_blocks_in_epoch {
+                        if block.header.offset + 1 < chain.cfg().blocks_in_epoch {
                             (block.header.epoch, block.header.offset + 1)
                         } else {
                             (block.header.epoch + 1, 0)
                         };
-                    let msg = ChainNotification::MicroBlockPrepared(block);
+                    let msg = ChainNotification::MicroblockPrepared(block);
                     (msg, next_epoch, next_offset)
                 }
             };
@@ -287,7 +287,7 @@ impl NodeService {
         });
         streams.push(requests_rx.boxed());
 
-        let sync_timeout = state.cfg.sync_change_timeout;
+        let sync_timeout = state.cfg.sync_timeout;
         let check_sync = time::interval(sync_timeout);
         let chain_subscribers = Vec::new();
         let node = Node {
@@ -379,7 +379,7 @@ impl NodeService {
             return Err(format_err!("Invalid epoch requested: epoch={}", epoch));
         }
         // Set buffer size to fit entire epoch plus some extra blocks.
-        let buffer = self.state.chain.cfg().micro_blocks_in_epoch as usize + 10;
+        let buffer = self.state.chain.cfg().blocks_in_epoch as usize + 10;
         let (tx, rx) = mpsc::channel(buffer);
         let subscriber = ChainReader { tx, epoch, offset };
         chain_readers.push(subscriber);
@@ -427,11 +427,11 @@ impl NodeService {
             blocks.push(block);
             // Feed the whole epoch.
             match blocks.last().unwrap() {
-                Block::MacroBlock(_) if blocks.len() > 0 => {
+                Block::Macroblock(_) if blocks.len() > 0 => {
                     break;
                 }
-                Block::MacroBlock(_) => {}
-                Block::MicroBlock(_) => {}
+                Block::Macroblock(_) => {}
+                Block::Microblock(_) => {}
             }
         }
         sinfo!(
@@ -452,8 +452,8 @@ impl NodeService {
         response: ResponseBlocks,
     ) -> Result<(), Error> {
         let first_epoch = match response.blocks.first() {
-            Some(Block::MacroBlock(block)) => block.header.epoch,
-            Some(Block::MicroBlock(block)) => block.header.epoch,
+            Some(Block::Macroblock(block)) => block.header.epoch,
+            Some(Block::Microblock(block)) => block.header.epoch,
             None => {
                 // Empty response
                 sinfo!(
@@ -466,8 +466,8 @@ impl NodeService {
             }
         };
         let last_epoch = match response.blocks.last() {
-            Some(Block::MacroBlock(block)) => block.header.epoch,
-            Some(Block::MicroBlock(block)) => block.header.epoch,
+            Some(Block::Macroblock(block)) => block.header.epoch,
+            Some(Block::Microblock(block)) => block.header.epoch,
             None => unreachable!("Checked above"),
         };
         if first_epoch > self.state.chain.epoch() {
@@ -637,13 +637,13 @@ impl NodeService {
             // So we create a temporary feature that fastly return result of poll.
             // TODO: Replace by refcell and local task
             let replication_fut = future::poll_fn(|cx| {
-                let micro_blocks_in_epoch = self.state.chain.cfg().micro_blocks_in_epoch;
+                let blocks_in_epoch = self.state.chain.cfg().blocks_in_epoch;
                 let block_reader: &dyn BlockReader = &self.state.chain;
                 Poll::Ready(self.replication.poll(
                     cx,
                     self.state.chain.epoch(),
                     self.state.chain.offset(),
-                    micro_blocks_in_epoch,
+                    blocks_in_epoch,
                     block_reader,
                 ))
             });
@@ -736,7 +736,7 @@ impl NodeService {
                 NodeOutgoingEvent::MicroblockViewChangeTimer(duration) => {
                     strace!(
                         self,
-                        "Setting the microblock view change timer to {:?}",
+                        "Setting the Microblock view change timer to {:?}",
                         duration
                     );
                     self.micro_view_change_timer
@@ -759,7 +759,7 @@ impl NodeService {
                             cx,
                             block.clone(),
                             light_block.clone(),
-                            self.state.chain.cfg().micro_blocks_in_epoch,
+                            self.state.chain.cfg().blocks_in_epoch,
                         );
                         Poll::Ready(())
                     })

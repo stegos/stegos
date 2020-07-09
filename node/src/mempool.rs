@@ -109,7 +109,7 @@ impl Mempool {
     ///
     /// Re-add transactions after reverting the last micro block.
     ///
-    pub fn pop_micro_block(&mut self, txs: Vec<Transaction>) {
+    pub fn pop_microblock(&mut self, txs: Vec<Transaction>) {
         let mut tx_hashes: HashSet<Hash> = HashSet::new();
         for tx in &txs {
             for output in tx.txouts() {
@@ -252,7 +252,7 @@ impl Mempool {
         max_inputs_in_block: usize,
         max_outputs_in_block: usize,
         timestamp: Timestamp,
-    ) -> MicroBlock {
+    ) -> Microblock {
         let seed = mix(last_random, view_change);
         let random = pbc::make_VRF(network_skey, &seed);
 
@@ -354,7 +354,7 @@ impl Mempool {
         }
 
         // Create a new micro block.
-        MicroBlock::new(
+        Microblock::new(
             previous,
             epoch,
             offset,
@@ -523,7 +523,7 @@ mod test {
         assert!(!mempool.contains_tx(&tx_hash1));
         assert_eq!(mempool.len(), 1);
 
-        mempool.pop_micro_block(vec![tx1.clone().into()]);
+        mempool.pop_microblock(vec![tx1.clone().into()]);
         assert!(mempool.contains_tx(&tx_hash2));
         assert!(mempool.contains_tx(&tx_hash1));
         assert_eq!(mempool.len(), 2);

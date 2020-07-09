@@ -5,8 +5,8 @@ import "crypto.proto";
 import "blockchain.proto";
 import "view_changes.proto";
 
-message MacroBlockProposal {
-    stegos.blockchain.MacroBlockHeader header = 1;
+message MacroblockProposal {
+    stegos.blockchain.MacroblockHeader header = 1;
     repeated stegos.blockchain.Transaction transactions = 2;
 }
 
@@ -20,7 +20,7 @@ message ConsensusMessageBody {
     oneof body {
         Prevote prevote = 1;
         Precommit precommit= 2;
-        MacroBlockProposal macro_block_proposal = 11;
+        MacroblockProposal Macroblock_proposal = 11;
     }
 }
 

@@ -34,7 +34,7 @@ use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
 async fn smoke_test() {
     const NUM_RESTAKES: u64 = 3;
     let cfg = ChainConfig {
-        micro_blocks_in_epoch: 3,
+        blocks_in_epoch: 3,
         stake_epochs: 2,
         awards_difficulty: 0,
         ..Default::default()
@@ -43,9 +43,9 @@ async fn smoke_test() {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            micro_block_timeout: Duration::from_secs(500),
-            macro_block_timeout: Duration::from_secs(1000),
-            sync_change_timeout: Duration::from_secs(10000),
+            microblock_timeout: Duration::from_secs(500),
+            macroblock_timeout: Duration::from_secs(1000),
+            sync_timeout: Duration::from_secs(10000),
             ..Default::default()
         },
         ..Default::default()
@@ -55,17 +55,17 @@ async fn smoke_test() {
     let mut p = sb.partition();
 
     for _epoch in 1..=(1 + NUM_RESTAKES * config.chain.stake_epochs + 1) {
-        for _offset in 0..config.chain.micro_blocks_in_epoch {
-            p.skip_micro_block().await;
+        for _offset in 0..config.chain.blocks_in_epoch {
+            p.skip_microblock().await;
         }
-        p.skip_macro_block().await;
+        p.skip_macroblock().await;
     }
 }
 
 #[tokio::test]
 async fn autocommit() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -77,13 +77,13 @@ async fn autocommit() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let chain = p.chain();
     let epoch = chain.epoch();
     let last_block_hash = chain.last_block_hash();
 
-    let (_block, block_hash, _) = p.create_macro_block().await;
+    let (_block, block_hash, _) = p.create_macroblock().await;
     let leader_pk = p.leader();
     let leader = p.find_mut(&leader_pk).unwrap();
     leader.advance().await;
@@ -103,7 +103,7 @@ async fn autocommit() {
         trace!("[{}] Start autocommit check...", pk);
 
         // Wait for macro block timeout.
-        wait(config.node.macro_block_timeout).await;
+        wait(config.node.macroblock_timeout).await;
 
         if pk == leader_pk {
             trace!("[{}] I'm the leader, moving on!", pk);
@@ -117,7 +117,7 @@ async fn autocommit() {
             last_block_hash
         );
 
-        // poll to update node after macroblock_timeout waits
+        // poll to update node after Macroblock_timeout waits
         node.advance().await;
         // Check that the last node has auto-committed the block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
@@ -136,7 +136,7 @@ async fn autocommit() {
     }
 
     // wait more time, to check if counter will not overflow.
-    wait(config.node.macro_block_timeout).await;
+    wait(config.node.macroblock_timeout).await;
 
     p.poll().await;
     p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC, CONSENSUS_TOPIC]);
@@ -145,7 +145,7 @@ async fn autocommit() {
 #[tokio::test]
 async fn round() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -157,7 +157,7 @@ async fn round() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = CONSENSUS_TOPIC;
 
@@ -169,9 +169,9 @@ async fn round() {
 
     let epoch = p.first().state().chain.epoch();
     let round = p.first().state().chain.view_change() + 1;
-    wait(config.node.macro_block_timeout).await;
+    wait(config.node.macroblock_timeout).await;
 
-    trace!("Waiting for a macroblock timeout");
+    trace!("Waiting for a Macroblock timeout");
     p.poll().await;
 
     // filter messages from chain loader.
@@ -224,8 +224,8 @@ async fn round() {
         .get_broadcast(crate::SEALED_BLOCK_TOPIC);
     let block_hash = Hash::digest(&block);
 
-    let macro_block = block.clone().unwrap_macro();
-    assert_eq!(macro_block.header.view_change, round);
+    let macroblock = block.clone().unwrap_macro();
+    assert_eq!(macroblock.header.view_change, round);
     for node in p.iter_except(&[leader_pk]) {
         node.network_service
             .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
@@ -252,12 +252,12 @@ pub fn ensure_consensus_messages(p: &mut Partition, view_change: u32) {
 
 // check if rounds started at correct timeout
 // first immediatly after micro block
-// second at macro_block_timeout
-// third at macro_block_timeout * 2
+// second at Macroblock_timeout
+// third at Macroblock_timeout * 2
 #[tokio::test]
 async fn multiple_rounds() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -268,7 +268,7 @@ async fn multiple_rounds() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let view_change = p.first_mut().state().chain.view_change();
     trace!("View change = {}", view_change);
@@ -276,7 +276,7 @@ async fn multiple_rounds() {
 
     // not timeout yet
     let now = Instant::now();
-    let d = config.node.macro_block_timeout - Duration::from_secs(1);
+    let d = config.node.macroblock_timeout - Duration::from_secs(1);
     trace!("(0) Timing out for {:?}...", d);
     wait(d).await;
     trace!("Really elapsed = {:?}", now.elapsed());
@@ -303,7 +303,7 @@ async fn multiple_rounds() {
 
     // Macroblock timeout should double with each view change!
     let now = Instant::now();
-    let d = config.node.macro_block_timeout * 2 - Duration::from_secs(1);
+    let d = config.node.macroblock_timeout * 2 - Duration::from_secs(1);
     trace!("(2) Timing out for {:?}", d);
     wait(d).await;
     trace!("Really elapsed {:?}", now.elapsed());
@@ -334,7 +334,7 @@ async fn multiple_rounds() {
 #[tokio::test]
 async fn lock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -345,7 +345,7 @@ async fn lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -376,7 +376,7 @@ async fn lock() {
         round += 1;
         // wait for current round end
         let view_change = p.first_mut().state().chain.view_change();
-        let d = config.node.macro_block_timeout * (round - view_change);
+        let d = config.node.macroblock_timeout * (round - view_change);
         wait(d).await;
     }
 
@@ -423,9 +423,9 @@ async fn lock() {
     p.poll().await;
 
     let view_change = p.first_mut().state().chain.view_change();
-    let d = config.node.macro_block_timeout * (round - view_change + 1);
+    let d = config.node.macroblock_timeout * (round - view_change + 1);
     trace!(
-        "Waiting for macroblock timeout of {:?}. Round = {}, view_change = {}",
+        "Waiting for Macroblock timeout of {:?}. Round = {}, view_change = {}",
         d,
         round,
         view_change
@@ -452,7 +452,7 @@ async fn lock() {
 #[tokio::test]
 async fn second_propose_lock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -463,7 +463,7 @@ async fn second_propose_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -496,7 +496,7 @@ async fn second_propose_lock() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
     assert!(ready);
@@ -546,11 +546,11 @@ async fn second_propose_lock() {
         let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
     }
     p.poll().await;
-    wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-    info!("====== Waiting for macroblock timeout. =====");
+    info!("====== Waiting for Macroblock timeout. =====");
     p.poll().await;
 
     // filter messages from chain loader.
@@ -579,7 +579,7 @@ async fn second_propose_lock() {
 #[tokio::test]
 async fn pack_of_prevotes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -590,7 +590,7 @@ async fn pack_of_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -623,7 +623,7 @@ async fn pack_of_prevotes() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
 
@@ -686,10 +686,10 @@ async fn pack_of_prevotes() {
 
     first_node.poll().await;
 
-    wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
-    info!("====== Waiting for macroblock timeout. =====");
+    info!("====== Waiting for Macroblock timeout. =====");
     p.poll().await;
 
     p.filter_broadcast(&[topic]);
@@ -726,7 +726,7 @@ async fn ensure_leader_change<'a>(p: &mut Partition<'a>) -> u32 {
         old_round += 1;
         // wait for current round end
         let new_round = p.first_mut().state().chain.view_change();
-        wait(p.config.node.macro_block_timeout * (old_round - new_round)).await;
+        wait(p.config.node.macroblock_timeout * (old_round - new_round)).await;
     }
     assert!(ready);
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -737,7 +737,7 @@ async fn ensure_leader_change<'a>(p: &mut Partition<'a>) -> u32 {
 #[tokio::test]
 async fn second_proposal_lock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -748,7 +748,7 @@ async fn second_proposal_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -817,11 +817,11 @@ async fn second_proposal_lock() {
 
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
 
-    trace!("Waiting for macroblock timeout...");
+    trace!("Waiting for Macroblock timeout...");
     let leader = p.find_mut(&second_leader_pk).unwrap();
     leader.advance().await;
 
-    wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
     p.poll().await;
 
@@ -896,10 +896,10 @@ async fn second_proposal_lock() {
     let leader = p.find_mut(&second_leader_pk).unwrap();
     leader.advance().await;
 
-    wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change() + 2))
+    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 2))
         .await;
 
-    trace!("Waiting for a macroblock timeout once more...");
+    trace!("Waiting for a Macroblock timeout once more...");
     p.poll().await;
     p.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
 }
@@ -909,7 +909,7 @@ async fn second_proposal_lock() {
 #[tokio::test]
 async fn prevotes_and_precommits() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -920,7 +920,7 @@ async fn prevotes_and_precommits() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -953,7 +953,7 @@ async fn prevotes_and_precommits() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
 
@@ -1023,19 +1023,19 @@ async fn prevotes_and_precommits() {
 
     first_node.poll().await;
 
-    wait(config.node.macro_block_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
-    info!("====== Waiting for macroblock timeout. =====");
+    info!("====== Waiting for Macroblock timeout. =====");
     p.poll().await;
 
     p.filter_broadcast(&[topic, SEALED_BLOCK_TOPIC]);
 }
 
 #[tokio::test]
-async fn out_of_order_micro_block() {
+async fn out_of_order_microblock() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 0;
+    cfg.blocks_in_epoch = 0;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -1067,7 +1067,7 @@ async fn out_of_order_micro_block() {
     let random = pbc::make_VRF(&leader.state().network_skey, &seed);
     let solution = leader.state().chain.vdf_solver()();
 
-    let mut block = MicroBlock::empty(
+    let mut block = Microblock::empty(
         last_block_hash,
         epoch,
         offset,
@@ -1083,7 +1083,7 @@ async fn out_of_order_micro_block() {
         &leader_node.state().network_skey,
         &leader_node.state().network_pkey,
     );
-    let block: Block = Block::MicroBlock(block);
+    let block: Block = Block::Microblock(block);
 
     // Discard proposal from leader for a proposal from the leader.
     let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -1160,7 +1160,7 @@ fn create_invalid_consensus_messages(
     msgs
 }
 
-fn create_invalid_header(header: &MacroBlockHeader) -> Vec<MacroBlockHeader> {
+fn create_invalid_header(header: &MacroblockHeader) -> Vec<MacroblockHeader> {
     let mut headers = Vec::new();
 
     // Change version
@@ -1239,7 +1239,7 @@ fn create_invalid_prevotes(msg: &ConsensusMessage, key: &SecretKey) -> Vec<Conse
 
 fn save_consensus_state(node: &NodeService) -> ConsensusInfo {
     let consensus = match node.state().validation {
-        Validation::MacroBlockValidator { ref consensus, .. } => consensus,
+        Validation::MacroblockValidator { ref consensus, .. } => consensus,
         _ => panic!("Wrong state."),
     };
     consensus.to_info()
@@ -1247,7 +1247,7 @@ fn save_consensus_state(node: &NodeService) -> ConsensusInfo {
 
 fn assert_consensus_state(info: &ConsensusInfo, node: &NodeService) {
     let consensus = match node.state().validation {
-        Validation::MacroBlockValidator { ref consensus, .. } => consensus,
+        Validation::MacroblockValidator { ref consensus, .. } => consensus,
         _ => panic!("Wrong state."),
     };
     let new_info = consensus.to_info();
@@ -1312,12 +1312,12 @@ async fn invalid_proposes_inner<'a>(p: &mut Partition<'a>, round: u32) {
 #[tokio::test]
 async fn invalid_proposes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            macro_block_timeout: Duration::from_secs(300),
+            macroblock_timeout: Duration::from_secs(300),
             ..Default::default()
         },
         ..Default::default()
@@ -1328,7 +1328,7 @@ async fn invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let round = p.first_mut().state().chain.view_change();
     invalid_proposes_inner(&mut p, round).await;
@@ -1338,12 +1338,12 @@ async fn invalid_proposes() {
 #[tokio::test]
 async fn second_round_invalid_proposes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            macro_block_timeout: Duration::from_secs(300),
+            macroblock_timeout: Duration::from_secs(300),
             ..Default::default()
         },
         ..Default::default()
@@ -1354,7 +1354,7 @@ async fn second_round_invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
 
@@ -1363,7 +1363,7 @@ async fn second_round_invalid_proposes() {
     // skip proposal and prevote of last leader.
     let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
     let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-    wait(config.node.macro_block_timeout).await;
+    wait(config.node.macroblock_timeout).await;
 
     info!("====== Waiting for keyblock timeout. =====");
     p.poll().await;
@@ -1381,7 +1381,7 @@ async fn second_round_invalid_proposes() {
 #[tokio::test]
 async fn multiple_proposes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
@@ -1393,7 +1393,7 @@ async fn multiple_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -1469,7 +1469,7 @@ async fn multiple_proposes() {
 #[tokio::test]
 async fn invalid_prevotes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -1481,7 +1481,7 @@ async fn invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -1545,7 +1545,7 @@ async fn invalid_prevotes() {
 #[tokio::test]
 async fn leader_invalid_prevotes() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 1;
+    cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 4,
@@ -1557,7 +1557,7 @@ async fn leader_invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_micro_block().await;
+    p.skip_microblock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();

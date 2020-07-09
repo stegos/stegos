@@ -45,17 +45,17 @@ pub enum BlockchainError {
         display = "Expected a macro block, got micro block: epoch={}, offset={}, block={}",
         _0, _1, _2
     )]
-    ExpectedMacroBlock(u64, u32, Hash),
+    ExpectedMacroblock(u64, u32, Hash),
     #[fail(
         display = "Expected a micro block, got macro block: epoch={}, offset={}, block={}",
         _0, _1, _2
     )]
-    ExpectedMicroBlock(u64, u32, Hash),
+    ExpectedMicroblock(u64, u32, Hash),
     #[fail(
         display = "Have micro blocks on attempt to apply a macro block: epoch={}, offset={}, block={}",
         _0, _1, _2
     )]
-    HaveMicroBlocks(u64, u32, Hash),
+    HaveMicroblocks(u64, u32, Hash),
     #[fail(
         display = "TXOUTs with different account key: account_key_before:{},\
                    account_key_after={},  utxo={}",
@@ -137,7 +137,7 @@ pub enum TransactionError {
     #[fail(display = "TXOUTs with mixed validator keys: tx={}, utxo={}", _0, _1)]
     MixedTxoutValidators(Hash, Hash),
 
-    #[fail(display = "Unexpected transaction type in MicroBlock.")]
+    #[fail(display = "Unexpected transaction type in Microblock.")]
     UnexpectedTxType,
 
     #[fail(display = "TXIN amount .ne. TXOUT amount: tx={}", _0)]
@@ -169,39 +169,39 @@ pub enum BlockError {
         display = "Previous hash mismatch: epoch={}, offset={}, block={}, block_previous={}, our_previous={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockPreviousHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroblockPreviousHash(u64, u32, Hash, Hash, Hash),
     #[fail(
         display = "Previous hash mismatch: epoch={}, block={}, block_previous={}, our_previous={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockPreviousHash(u64, Hash, Hash, Hash),
+    InvalidMacroblockPreviousHash(u64, Hash, Hash, Hash),
     #[fail(
         display = "Micro block hash collision: epoch={}, offset={}, block={}",
         _0, _1, _2
     )]
-    MicroBlockHashCollision(u64, u32, Hash),
+    MicroblockHashCollision(u64, u32, Hash),
     #[fail(display = "Macro block hash collision: epoch={}, block={}", _0, _1)]
-    MacroBlockHashCollision(u64, Hash),
+    MacroblockHashCollision(u64, Hash),
     #[fail(
         display = "Out of order macro block: block={}, block_epoch={}, our_epoch={}",
         _0, _1, _2
     )]
-    OutOfOrderMacroBlock(Hash, u64, u64),
+    OutOfOrderMacroblock(Hash, u64, u64),
     #[fail(
         display = "Out of order micro block: block={}, block_epoch={}, block_offset={}, our_epoch={}, our_offset={}",
         _0, _1, _2, _3, _4
     )]
-    OutOfOrderMicroBlock(Hash, u64, u32, u64, u32),
+    OutOfOrderMicroblock(Hash, u64, u32, u64, u32),
     #[fail(
         display = "Invalid micro block fee: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockFee(u64, u32, Hash, i64, i64),
+    InvalidMicroblockFee(u64, u32, Hash, i64, i64),
     #[fail(
         display = "Unexpected macro block fee: epoch={}, block={}, got={}, expected={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockFee(u64, Hash, i64, i64),
+    InvalidMacroblockFee(u64, Hash, i64, i64),
     #[fail(
         display = "Coinbase transaction must be first in the block: block={}",
         _0
@@ -237,67 +237,67 @@ pub enum BlockError {
         display = "Invalid inputs_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockInputsHash(u64, Hash, Hash, Hash),
+    InvalidMacroblockInputsHash(u64, Hash, Hash, Hash),
     #[fail(
         display = "Invalid outputs_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockOutputsHash(u64, Hash, Hash, Hash),
+    InvalidMacroblockOutputsHash(u64, Hash, Hash, Hash),
     #[fail(
         display = "Invalid canaries_range_hash in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockCanariesHash(u64, Hash, Hash, Hash),
+    InvalidMacroblockCanariesHash(u64, Hash, Hash, Hash),
     #[fail(
         display = "Invalid inputs_len in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockInputsLen(u64, Hash, usize, usize),
+    InvalidMacroblockInputsLen(u64, Hash, usize, usize),
     #[fail(
         display = "Invalid outputs_len in a macro block: epoch={}, block={}, expected={}, got={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockOutputsLen(u64, Hash, usize, usize),
+    InvalidMacroblockOutputsLen(u64, Hash, usize, usize),
     #[fail(
         display = "Invalid transactions_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockTransactionsHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroblockTransactionsHash(u64, u32, Hash, Hash, Hash),
     #[fail(
         display = "Invalid inputs_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockInputsHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroblockInputsHash(u64, u32, Hash, Hash, Hash),
     #[fail(
         display = "Invalid outputs_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockOutputsHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroblockOutputsHash(u64, u32, Hash, Hash, Hash),
     #[fail(
         display = "Invalid canaries_range_hash in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockCanariesHash(u64, u32, Hash, Hash, Hash),
+    InvalidMicroblockCanariesHash(u64, u32, Hash, Hash, Hash),
     #[fail(
         display = "Invalid transactions_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockTransactionsLen(u64, u32, Hash, usize, usize),
+    InvalidMicroblockTransactionsLen(u64, u32, Hash, usize, usize),
     #[fail(
         display = "Invalid inputs_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockInputsLen(u64, u32, Hash, usize, usize),
+    InvalidMicroblockInputsLen(u64, u32, Hash, usize, usize),
     #[fail(
         display = "Invalid outputs_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockOutputsLen(u64, u32, Hash, usize, usize),
+    InvalidMicroblockOutputsLen(u64, u32, Hash, usize, usize),
     #[fail(
         display = "Invalid canaries_len in a micro block: epoch={}, offset={}, block={}, expected={}, got={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockCanariesLen(u64, u32, Hash, usize, usize),
+    InvalidMicroblockCanariesLen(u64, u32, Hash, usize, usize),
     #[fail(
         display = "Missing block input: epoch={}, block={}, utxo={}",
         _0, _1, _2
@@ -387,12 +387,12 @@ pub enum BlockError {
         display = "Unexpected macro block reward: epoch={}, block={}, got={}, expected={}",
         _0, _1, _2, _3
     )]
-    InvalidMacroBlockReward(u64, Hash, i64, i64),
+    InvalidMacroblockReward(u64, Hash, i64, i64),
     #[fail(
         display = "Unexpected micro block reward: epoch={}, offset={}, block={}, got={}, expected={}",
         _0, _1, _2, _3, _4
     )]
-    InvalidMicroBlockReward(u64, u32, Hash, i64, i64),
+    InvalidMicroblockReward(u64, u32, Hash, i64, i64),
     #[fail(
         display = "Activity bitmap too big: len={}, validators_len={} ",
         _0, _1

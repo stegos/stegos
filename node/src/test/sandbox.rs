@@ -334,17 +334,17 @@ impl<'p> Partition<'p> {
         'p: 'a,
         F: FnMut(&mut Partition) -> bool,
     {
-        trace!("Skipping microblocks until condition is met...");
+        trace!("Skipping Microblocks until condition is met...");
         let mut ready = false;
-        for i in 0..self.config.chain.micro_blocks_in_epoch {
+        for i in 0..self.config.chain.blocks_in_epoch {
             if condition(self) {
                 ready = true;
                 trace!("Condition met at iteration {}, stopping!", i + 1);
                 break;
             }
-            self.skip_micro_block().await;
+            self.skip_microblock().await;
         }
-        assert!(ready, "Not enough microblocks to skip");
+        assert!(ready, "Not enough Microblocks to skip");
     }
 
     /// Inner logic specific for cheater slashing.
@@ -369,12 +369,12 @@ impl<'p> Partition<'p> {
         let mut b2 = b1.clone();
         // modify timestamp for block
         match &mut b2 {
-            Block::MicroBlock(ref mut b) => {
+            Block::Microblock(ref mut b) => {
                 b.header.timestamp += Duration::from_millis(1);
                 let block_hash = Hash::digest(&*b);
                 b.sig = pbc::sign_hash(&block_hash, &leader.node_service.state().network_skey);
             }
-            Block::MacroBlock(_) => unreachable!("Expected a MacroBlock"),
+            Block::Macroblock(_) => unreachable!("Expected a Macroblock"),
         }
 
         info!("BROADCAST BLOCK, WITH COPY.");
@@ -561,11 +561,11 @@ impl<'p> Partition<'p> {
     /// Take micro block from leader, rebroadcast to other nodes.
     /// Should be used after block timeout.
     /// This function will poll() every node.
-    pub async fn skip_micro_block(&mut self) {
-        trace!("Skipping microblock...");
+    pub async fn skip_microblock(&mut self) {
+        trace!("Skipping Microblock...");
         self.assert_synchronized();
         let chain = self.chain();
-        assert!(chain.offset() <= chain.cfg().micro_blocks_in_epoch);
+        assert!(chain.offset() <= chain.cfg().blocks_in_epoch);
         let leader_pk = self.leader();
         trace!("According to partition info, next leader = {}", leader_pk);
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
@@ -575,7 +575,7 @@ impl<'p> Partition<'p> {
         }
 
         let leader = self.find_mut(&leader_pk).unwrap();
-        // ensure the microblock propose timer
+        // ensure the Microblock propose timer
         // fires and we process it!
         wait(Duration::from_secs(0)).await;
         leader.poll().await;
@@ -587,13 +587,13 @@ impl<'p> Partition<'p> {
             restakes.push(tx)
         }
 
-        trace!("Fetching microblock from leader {}", leader_pk);
+        trace!("Fetching Microblock from leader {}", leader_pk);
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
             let pk = node.node_service.state().network_pkey;
-            trace!("Delivering microblock to {}", pk);
+            trace!("Delivering Microblock to {}", pk);
             node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
             if let Some(tx) = node.fetch_restake() {
                 restakes.push(tx)
@@ -609,10 +609,10 @@ impl<'p> Partition<'p> {
             auditor.poll().await;
         }
 
-        trace!("Processed microblock...");
+        trace!("Processed Microblock...");
     }
 
-    /// Emulate rollback of microblock, for wallet tests
+    /// Emulate rollback of Microblock, for wallet tests
     pub async fn rollback_microblock(&mut self) {
         let mut view_changes = Vec::new();
         let state = self.first().node_service.state();
@@ -620,7 +620,7 @@ impl<'p> Partition<'p> {
         let epoch = chain.epoch();
         let offset = chain.offset();
         assert!(offset > 0);
-        let block = chain.micro_block(epoch, offset - 1).unwrap();
+        let block = chain.microblock(epoch, offset - 1).unwrap();
         let chain_info = ChainInfo {
             epoch: block.header.epoch,
             offset: block.header.offset,
@@ -669,12 +669,12 @@ impl<'p> Partition<'p> {
         }
     }
 
-    pub async fn create_macro_block(&mut self) -> (Block, Hash, Option<Transaction>) {
-        trace!("Creating a macroblock...");
+    pub async fn create_macroblock(&mut self) -> (Block, Hash, Option<Transaction>) {
+        trace!("Creating a Macroblock...");
         let chain = self.chain();
         let epoch = chain.epoch();
         let round = chain.view_change();
-        let last_macro_block_hash = chain.last_macro_block_hash();
+        let last_macroblock_hash = chain.last_macroblock_hash();
         let leader_pk = self.leader();
 
         for node in self.iter_mut() {
@@ -684,7 +684,7 @@ impl<'p> Partition<'p> {
         let leader = self.find_mut(&leader_pk).unwrap();
 
         // Check for a proposal from the leader.
-        trace!("Fetching macroblock proposal from {}", leader_pk);
+        trace!("Fetching Macroblock proposal from {}", leader_pk);
         let proposal: ConsensusMessage =
             leader.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
         debug!("Proposal: {:?}", proposal);
@@ -766,25 +766,25 @@ impl<'p> Partition<'p> {
         let restake = node.fetch_restake();
 
         // Fetch completed block
-        trace!("Fetching finished macroblock from {}", leader_pk);
+        trace!("Fetching finished Macroblock from {}", leader_pk);
         let leader = self.find_mut(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let macro_block = block.clone().unwrap_macro();
-        let block_hash = Hash::digest(&macro_block);
+        let macroblock = block.clone().unwrap_macro();
+        let block_hash = Hash::digest(&macroblock);
         assert_eq!(block_hash, proposal.block_hash);
-        assert_eq!(macro_block.header.epoch, epoch);
-        assert_eq!(macro_block.header.previous, last_macro_block_hash);
+        assert_eq!(macroblock.header.epoch, epoch);
+        assert_eq!(macroblock.header.previous, last_macroblock_hash);
         (block, block_hash, restake)
     }
 
-    pub async fn skip_macro_block(&mut self) {
-        trace!("Skipping macroblock...");
+    pub async fn skip_macroblock(&mut self) {
+        trace!("Skipping Macroblock...");
         let chain = self.chain();
         let epoch = chain.epoch();
 
-        let (block, block_hash, leader_restake) = self.create_macro_block().await;
+        let (block, block_hash, leader_restake) = self.create_macroblock().await;
         let leader_pk = self.leader();
 
         // Process re-stakes.
@@ -809,18 +809,18 @@ impl<'p> Partition<'p> {
         let leader_pk = self.leader();
 
         trace!(
-            "Checking node state after macroblock (leader = {})...",
+            "Checking node state after Macroblock (leader = {})...",
             leader_pk
         );
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
             trace!("[{}] epoch = {}, offset = {}, last macro hash = {}, last block hash = {}, leader = {}", 
-             pkey, chain.epoch(), chain.offset(), chain.last_macro_block_hash(), chain.last_block_hash(), chain.leader(),
+             pkey, chain.epoch(), chain.offset(), chain.last_macroblock_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
             assert_eq!(chain.offset(), 0);
-            assert_eq!(chain.last_macro_block_hash(), block_hash);
+            assert_eq!(chain.last_macroblock_hash(), block_hash);
             assert_eq!(chain.last_block_hash(), block_hash);
         }
 
@@ -842,7 +842,7 @@ impl<'p> Partition<'p> {
         leader.poll().await;
 
         trace!(
-            "Processed macroblock (leader: {} -> {})...",
+            "Processed Macroblock (leader: {} -> {})...",
             old_leader_pk,
             leader_pk
         );
@@ -950,7 +950,7 @@ impl NodeSandbox {
         chain_cfg: ChainConfig,
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
-        genesis: MacroBlock,
+        genesis: Macroblock,
     ) -> Self {
         // init network
         let (network_service, network, peer_id, replication_rx) = Loopback::new(&network_pkey);

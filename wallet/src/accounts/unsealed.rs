@@ -553,9 +553,9 @@ impl UnsealedAccountService {
         Ok(AccountRecovery { recovery })
     }
 
-    fn apply_light_micro_block(
+    fn apply_light_microblock(
         &mut self,
-        header: MicroBlockHeader,
+        header: MicroblockHeader,
         sig: pbc::Signature,
         input_hashes: Vec<Hash>,
         output_hashes: Vec<Hash>,
@@ -591,7 +591,7 @@ impl UnsealedAccountService {
         //
         assert_eq!(header.epoch, self.database.epoch());
         assert_eq!(header.offset, self.database.offset());
-        self.database.validate_light_micro_block(
+        self.database.validate_light_microblock(
             &header,
             &sig,
             &input_hashes,
@@ -602,7 +602,7 @@ impl UnsealedAccountService {
         //
         // Register block.
         //
-        let transaction_statuses = self.database.apply_light_micro_block(
+        let transaction_statuses = self.database.apply_light_microblock(
             header,
             input_hashes.iter(),
             outputs.iter(),
@@ -619,9 +619,9 @@ impl UnsealedAccountService {
         Ok(())
     }
 
-    fn apply_light_macro_block(
+    fn apply_light_macroblock(
         &mut self,
-        header: MacroBlockHeader,
+        header: MacroblockHeader,
         multisig: pbc::Signature,
         multisigmap: BitVec,
         input_hashes: Vec<Hash>,
@@ -655,7 +655,7 @@ impl UnsealedAccountService {
         // Validate block.
         //
         assert_eq!(header.epoch, self.database.epoch());
-        self.database.validate_macro_block(
+        self.database.validate_macroblock(
             &header,
             &multisig,
             &multisigmap,
@@ -668,7 +668,7 @@ impl UnsealedAccountService {
         //
         // Register block
         //
-        let transaction_statuses = self.database.apply_light_macro_block(
+        let transaction_statuses = self.database.apply_light_macroblock(
             header,
             input_hashes.iter(),
             outputs.iter(),
@@ -1050,9 +1050,9 @@ impl UnsealedAccountService {
                         }
                         Some(ReplicationOutEvent::FullBlock {block, outputs}) => {
                             let r = match block {
-                                LightBlock::LightMacroBlock(block) => {
-                                    debug!("Got macroblock: epoch={}, inputs={:?}", block.header.epoch, block.input_hashes);
-                                    self.apply_light_macro_block(
+                                LightBlock::LightMacroblock(block) => {
+                                    debug!("Got Macroblock: epoch={}, inputs={:?}", block.header.epoch, block.input_hashes);
+                                    self.apply_light_macroblock(
                                         block.header,
                                         block.multisig,
                                         block.multisigmap,
@@ -1063,12 +1063,12 @@ impl UnsealedAccountService {
                                         block.validators,
                                     )
                                 }
-                                LightBlock::LightMicroBlock(block) => {
+                                LightBlock::LightMicroblock(block) => {
                                     debug!(
-                                        "Got microblock: epoch={}, offset={}, inputs={:?}",
+                                        "Got Microblock: epoch={}, offset={}, inputs={:?}",
                                         block.header.epoch, block.header.offset, block.input_hashes
                                     );
-                                    self.apply_light_micro_block(
+                                    self.apply_light_microblock(
                                         block.header,
                                         block.sig,
                                         block.input_hashes,

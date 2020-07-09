@@ -21,7 +21,7 @@
 
 use crate::error::SlashingError;
 use crate::transaction::SlashingTransaction;
-use crate::{Blockchain, BlockchainError, MicroBlock, PublicPaymentOutput};
+use crate::{Blockchain, BlockchainError, Microblock, PublicPaymentOutput};
 use log::debug;
 use serde_derive::{Deserialize, Serialize};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
@@ -29,12 +29,12 @@ use stegos_crypto::pbc;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlashingProof {
-    pub block1: MicroBlock,
-    pub block2: MicroBlock,
+    pub block1: Microblock,
+    pub block2: Microblock,
 }
 
 impl SlashingProof {
-    pub fn new_unchecked(block1: MicroBlock, block2: MicroBlock) -> SlashingProof {
+    pub fn new_unchecked(block1: Microblock, block2: Microblock) -> SlashingProof {
         let proof = SlashingProof { block1, block2 };
         proof
     }

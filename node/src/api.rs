@@ -26,7 +26,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
 use stegos_blockchain::api::StatusInfo;
 use stegos_blockchain::{
-    ElectionInfo, EpochInfo, EscrowInfo, MacroBlock, MicroBlock, Output, Timestamp, Transaction,
+    ElectionInfo, EpochInfo, EscrowInfo, Macroblock, Microblock, Output, Timestamp, Transaction,
     TransactionStatus, ValidatorKeyInfo,
 };
 use stegos_crypto::hash::Hash;
@@ -62,7 +62,7 @@ pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
     ReplicationInfo {},
-    PopMicroBlock {},
+    PopMicroblock {},
     ChainName {},
     BroadcastTransaction {
         #[serde(serialize_with = "serialize_protobuf_to_hex")]
@@ -98,10 +98,10 @@ pub enum NodeRequest {
     StatusInfo {},
     ValidatorsInfo {},
     SubscribeStatus {},
-    MacroBlockInfo {
+    MacroblockInfo {
         epoch: u64,
     },
-    MicroBlockInfo {
+    MicroblockInfo {
         epoch: u64,
         offset: u32,
     },
@@ -121,7 +121,7 @@ pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
     ReplicationInfo(ReplicationInfo),
-    MicroBlockPopped,
+    MicroblockPopped,
     ChainName {
         name: String,
     },
@@ -163,8 +163,8 @@ pub enum NodeResponse {
         #[serde(skip)]
         rx: Option<mpsc::Receiver<StatusNotification>>, // Option is needed for serde.
     },
-    MacroBlockInfo(ExtendedMacroBlock),
-    MicroBlockInfo(MicroBlock),
+    MacroblockInfo(ExtendedMacroblock),
+    MicroblockInfo(Microblock),
     SubscribedChain {
         current_epoch: u64,
         current_offset: u32,
@@ -195,17 +195,17 @@ impl From<StatusInfo> for StatusNotification {
 #[serde(tag = "type")]
 #[serde(rename_all = "snake_case")]
 pub enum ChainNotification {
-    MicroBlockPrepared(MicroBlock),
-    MicroBlockReverted(RevertedMicroBlock),
-    MacroBlockCommitted(ExtendedMacroBlock),
+    MicroblockPrepared(Microblock),
+    MicroblockReverted(RevertedMicroblock),
+    MacroblockCommitted(ExtendedMacroblock),
 }
 
 /// A macro block with extra information.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExtendedMacroBlock {
+pub struct ExtendedMacroblock {
     /// Committed macro block.
     #[serde(flatten)]
-    pub block: MacroBlock,
+    pub block: Macroblock,
     /// Collected information about epoch.
     #[serde(flatten)]
     pub epoch_info: EpochInfo,
@@ -213,7 +213,7 @@ pub struct ExtendedMacroBlock {
     pub old_epoch_info: Option<EpochInfo>,
 }
 
-impl ExtendedMacroBlock {
+impl ExtendedMacroblock {
     pub fn inputs(&self) -> impl Iterator<Item = &Hash> {
         self.block.inputs.iter()
     }
@@ -224,16 +224,16 @@ impl ExtendedMacroBlock {
 
 /// Information about reverted micro block.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RevertedMicroBlock {
+pub struct RevertedMicroblock {
     #[serde(flatten)]
-    pub block: MicroBlock,
+    pub block: Microblock,
     #[serde(skip)] // internal API for wallet
     pub recovered_inputs: HashMap<Hash, Output>,
     #[serde(skip)] // internal API for wallet
     pub pruned_outputs: Vec<Hash>,
 }
 
-impl RevertedMicroBlock {
+impl RevertedMicroblock {
     pub fn pruned_outputs(&self) -> impl Iterator<Item = &Hash> {
         self.pruned_outputs.iter()
     }
@@ -244,25 +244,25 @@ impl RevertedMicroBlock {
 
 /// PA micro block with extra information.
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ExtendedMicroBlock {
+pub struct ExtendedMicroblock {
     #[serde(flatten)]
-    pub block: MicroBlock,
+    pub block: Microblock,
 }
 
-impl From<ExtendedMacroBlock> for ChainNotification {
-    fn from(block: ExtendedMacroBlock) -> ChainNotification {
-        ChainNotification::MacroBlockCommitted(block)
+impl From<ExtendedMacroblock> for ChainNotification {
+    fn from(block: ExtendedMacroblock) -> ChainNotification {
+        ChainNotification::MacroblockCommitted(block)
     }
 }
 
-impl From<MicroBlock> for ChainNotification {
-    fn from(block: MicroBlock) -> ChainNotification {
-        ChainNotification::MicroBlockPrepared(block)
+impl From<Microblock> for ChainNotification {
+    fn from(block: Microblock) -> ChainNotification {
+        ChainNotification::MicroblockPrepared(block)
     }
 }
 
-impl From<RevertedMicroBlock> for ChainNotification {
-    fn from(block: RevertedMicroBlock) -> ChainNotification {
-        ChainNotification::MicroBlockReverted(block)
+impl From<RevertedMicroblock> for ChainNotification {
+    fn from(block: RevertedMicroblock) -> ChainNotification {
+        ChainNotification::MicroblockReverted(block)
     }
 }

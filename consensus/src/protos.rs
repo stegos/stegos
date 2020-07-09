@@ -42,12 +42,12 @@ impl ProtoConvert for ConsensusMessageBody {
         let mut proto = consensus::ConsensusMessageBody::new();
         match self {
             ConsensusMessageBody::Proposal(block_proposal) => {
-                let mut proposal = consensus::MacroBlockProposal::new();
+                let mut proposal = consensus::MacroblockProposal::new();
                 proposal.set_header(block_proposal.header.into_proto());
                 for transaction in &block_proposal.transactions {
                     proposal.transactions.push(transaction.into_proto());
                 }
-                proto.set_macro_block_proposal(proposal);
+                proto.set_Macroblock_proposal(proposal);
             }
             ConsensusMessageBody::Prevote => {
                 proto.set_prevote(consensus::Prevote::new());
@@ -63,13 +63,13 @@ impl ProtoConvert for ConsensusMessageBody {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
-            Some(consensus::ConsensusMessageBody_oneof_body::macro_block_proposal(ref msg)) => {
-                let header = MacroBlockHeader::from_proto(msg.get_header())?;
+            Some(consensus::ConsensusMessageBody_oneof_body::Macroblock_proposal(ref msg)) => {
+                let header = MacroblockHeader::from_proto(msg.get_header())?;
                 let mut transactions = Vec::<Transaction>::with_capacity(msg.transactions.len());
                 for transaction in msg.transactions.iter() {
                     transactions.push(Transaction::from_proto(transaction)?);
                 }
-                let block_proposal = MacroBlockProposal {
+                let block_proposal = MacroblockProposal {
                     header,
                     transactions,
                 };
@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn macro_blocks() {
+    fn Macroblocks() {
         let (skey, pkey) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
@@ -249,7 +249,7 @@ mod tests {
         let block_reward = 0;
         let activity_map = BitVec::new();
         let validators = Validators(vec![(npkey.clone(), 100500i64)]);
-        let block = MacroBlock::empty(
+        let block = Macroblock::empty(
             previous,
             epoch,
             view_change,
@@ -268,9 +268,9 @@ mod tests {
         let transactions: Vec<Transaction> = vec![tx.into()];
 
         //
-        // MacroBlockProposal
+        // MacroblockProposal
         //
-        let proposal = ConsensusMessageBody::Proposal(MacroBlockProposal {
+        let proposal = ConsensusMessageBody::Proposal(MacroblockProposal {
             header: block.header,
             transactions,
         });

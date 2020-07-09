@@ -18,7 +18,7 @@
 // LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
-use crate::block::{MacroBlock, MacroBlockHeader, MicroBlock, MicroBlockHeader};
+use crate::block::{Macroblock, MacroblockHeader, Microblock, MicroblockHeader};
 use crate::output::{Output, PaymentOutput, PublicPaymentOutput, StakeOutput};
 use crate::timestamp::Timestamp;
 use crate::transaction::{
@@ -31,11 +31,11 @@ use stegos_crypto::{hash::Hash, pbc};
 
 /// Macro Block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MacroBlockInfo {
+pub struct MacroblockInfo {
     pub block_hash: Hash,
     /// Header.
     #[serde(flatten)]
-    pub header: MacroBlockHeader,
+    pub header: MacroblockHeader,
 
     /// BLS (multi-)signature.
     pub multisig: pbc::Signature,
@@ -52,9 +52,9 @@ pub struct MacroBlockInfo {
     pub outputs: Vec<Output>,
 }
 
-impl From<MacroBlock> for MacroBlockInfo {
-    fn from(b: MacroBlock) -> MacroBlockInfo {
-        MacroBlockInfo {
+impl From<Macroblock> for MacroblockInfo {
+    fn from(b: Macroblock) -> MacroblockInfo {
+        MacroblockInfo {
             block_hash: Hash::digest(&b),
             header: b.header,
             multisig: b.multisig,
@@ -65,9 +65,9 @@ impl From<MacroBlock> for MacroBlockInfo {
     }
 }
 
-impl From<MacroBlockInfo> for MacroBlock {
-    fn from(b: MacroBlockInfo) -> MacroBlock {
-        MacroBlock {
+impl From<MacroblockInfo> for Macroblock {
+    fn from(b: MacroblockInfo) -> Macroblock {
+        Macroblock {
             header: b.header,
             multisig: b.multisig,
             multisigmap: b.multisigmap,
@@ -78,11 +78,11 @@ impl From<MacroBlockInfo> for MacroBlock {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MicroBlockInfo {
+pub struct MicroblockInfo {
     pub block_hash: Hash,
     /// Header.
     #[serde(flatten)]
-    pub header: MicroBlockHeader,
+    pub header: MicroblockHeader,
 
     /// BLS signature by leader.
     pub sig: pbc::Signature,
@@ -91,9 +91,9 @@ pub struct MicroBlockInfo {
     pub transactions: Vec<Transaction>,
 }
 
-impl From<MicroBlock> for MicroBlockInfo {
-    fn from(b: MicroBlock) -> MicroBlockInfo {
-        MicroBlockInfo {
+impl From<Microblock> for MicroblockInfo {
+    fn from(b: Microblock) -> MicroblockInfo {
+        MicroblockInfo {
             block_hash: Hash::digest(&b),
             header: b.header,
             sig: b.sig,
@@ -102,9 +102,9 @@ impl From<MicroBlock> for MicroBlockInfo {
     }
 }
 
-impl From<MicroBlockInfo> for MicroBlock {
-    fn from(b: MicroBlockInfo) -> MicroBlock {
-        MicroBlock {
+impl From<MicroblockInfo> for Microblock {
+    fn from(b: MicroblockInfo) -> Microblock {
+        Microblock {
             header: b.header,
             sig: b.sig,
             transactions: b.transactions,
@@ -216,8 +216,8 @@ pub struct StatusInfo {
     pub offset: u32,
     pub view_change: u32,
     pub last_block_hash: Hash,
-    pub last_macro_block_hash: Hash,
-    pub last_macro_block_timestamp: Timestamp,
+    pub last_macroblock_hash: Hash,
+    pub last_macroblock_timestamp: Timestamp,
     pub local_timestamp: Timestamp,
 }
 
@@ -229,8 +229,8 @@ impl Default for StatusInfo {
             offset: 0,
             view_change: 0,
             last_block_hash: Hash::zero(),
-            last_macro_block_hash: Hash::zero(),
-            last_macro_block_timestamp: Timestamp::now(),
+            last_macroblock_hash: Hash::zero(),
+            last_macroblock_timestamp: Timestamp::now(),
             local_timestamp: Timestamp::now(),
         }
     }

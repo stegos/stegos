@@ -29,7 +29,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::str::FromStr;
 use stegos_blockchain::{
-    chain_to_prefix, create_multi_signature, election, mix, Block, ChainConfig, MacroBlock, Output,
+    chain_to_prefix, create_multi_signature, election, mix, Block, ChainConfig, Macroblock, Output,
     PaymentOutput, PaymentPayloadData, StakeOutput, Timestamp, Validators,
 };
 use stegos_crypto::hash::Hash;
@@ -286,8 +286,8 @@ fn main() {
     let epoch: u64 = 0;
     let view_change: u32 = 0;
     let previous = Hash::digest("genesis");
-    let last_macro_block_random = Hash::digest("genesis");
-    let seed = mix(last_macro_block_random, view_change);
+    let last_macroblock_random = Hash::digest("genesis");
+    let seed = mix(last_macroblock_random, view_change);
     let random = pbc::make_VRF(&keychains[0].2, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
     let timestamp = Timestamp::now();
@@ -295,7 +295,7 @@ fn main() {
         election::select_validators_slots(stakers, random, cfg.max_slot_count).validators;
 
     // Create a block.
-    let mut block = MacroBlock::new(
+    let mut block = Macroblock::new(
         previous,
         epoch,
         view_change,
@@ -332,7 +332,7 @@ fn main() {
     block.multisigmap = multisigmap;
 
     // Write the block to the disk.
-    let block_data = Block::MacroBlock(block).into_buffer().unwrap();
+    let block_data = Block::Macroblock(block).into_buffer().unwrap();
     let genesis_path = PathBuf::from("chains").join(chain).join("genesis.bin");
     fs::write(&genesis_path, &block_data).expect("failed to write genesis block");
     info!("Wrote {:?}", &genesis_path);

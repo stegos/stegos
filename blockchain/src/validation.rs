@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use crate::block::{Block, MacroBlock, MacroBlockHeader, MicroBlock, VERSION};
+use crate::block::{Block, Macroblock, MacroblockHeader, Microblock, VERSION};
 use crate::blockchain::{Blockchain, ChainInfo};
 use crate::election::mix;
 use crate::error::{BlockError, BlockchainError, SlashingError, TransactionError};
@@ -52,7 +52,7 @@ impl CoinbaseTransaction {
         }
 
         // Validate that fee is not negative.
-        // Exact value is checked by upper levels (validate_micro_block()).
+        // Exact value is checked by upper levels (validate_microblock()).
         if self.block_fee < 0 {
             return Err(TransactionError::NegativeFee(tx_hash).into());
         }
@@ -370,11 +370,11 @@ impl SlashingTransaction {
     }
 }
 
-impl MacroBlock {
+impl Macroblock {
     ///
     /// Validate the block monetary balance.
     ///
-    /// This function is a lightweight version of Blockchain.validate_micro_block().
+    /// This function is a lightweight version of Blockchain.validate_microblock().
     /// The only monetary balance is validated. For test purposes only.
     ///
     /// # Arguments
@@ -446,12 +446,12 @@ impl Blockchain {
     }
 
     ///
-    /// A common part of validate_macro_block() and validate_proposed_macro_block().
+    /// A common part of validate_macroblock() and validate_proposed_macroblock().
     ///
-    fn validate_macro_block_basic(
+    fn validate_macroblock_basic(
         &self,
         block_hash: &Hash,
-        header: &MacroBlockHeader,
+        header: &MacroblockHeader,
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let epoch = header.epoch;
@@ -469,18 +469,18 @@ impl Blockchain {
 
         // Check epoch.
         if epoch != self.epoch() {
-            return Err(BlockError::OutOfOrderMacroBlock(*block_hash, epoch, self.epoch()).into());
+            return Err(BlockError::OutOfOrderMacroblock(*block_hash, epoch, self.epoch()).into());
         }
 
         // Check new hash.
         if self.contains_block(&block_hash) {
-            return Err(BlockError::MacroBlockHashCollision(epoch, *block_hash).into());
+            return Err(BlockError::MacroblockHashCollision(epoch, *block_hash).into());
         }
 
         // Check previous hash.
-        let previous_hash = self.last_macro_block_hash();
+        let previous_hash = self.last_macroblock_hash();
         if previous_hash != header.previous {
-            return Err(BlockError::InvalidMacroBlockPreviousHash(
+            return Err(BlockError::InvalidMacroblockPreviousHash(
                 epoch,
                 *block_hash,
                 header.previous,
@@ -504,7 +504,7 @@ impl Blockchain {
         }
 
         // Check VRF.
-        let seed = mix(self.last_macro_block_random(), header.view_change);
+        let seed = mix(self.last_macroblock_random(), header.view_change);
         if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
         }
@@ -515,9 +515,9 @@ impl Blockchain {
     ///
     /// Validate a macro block from the disk.
     ///
-    pub(crate) fn validate_macro_block(
+    pub(crate) fn validate_macroblock(
         &mut self,
-        block: &MacroBlock,
+        block: &Macroblock,
         timestamp: Timestamp,
     ) -> Result<(), BlockchainError> {
         let block_hash = Hash::digest(&block);
@@ -526,7 +526,7 @@ impl Blockchain {
         assert_eq!(self.offset(), 0);
 
         debug!(
-            "Validating macroblock: epoch={}, block={}",
+            "Validating Macroblock: epoch={}, block={}",
             epoch, &block_hash
         );
 
@@ -548,25 +548,24 @@ impl Blockchain {
         //
         // Basic validation.
         //
-        self.validate_macro_block_basic(&block_hash, &block.header, timestamp)?;
+        self.validate_macroblock_basic(&block_hash, &block.header, timestamp)?;
 
         //
         // Validate Awards.
         //
         if epoch > 0 {
             let validators_activity =
-                self.epoch_activity_from_macro_block(&block.header.activity_map)?;
+                self.epoch_activity_from_macroblock(&block.header.activity_map)?;
             let mut service_awards = self.service_awards().clone();
             service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
             let winner = service_awards.check_winners(block.header.random.rand);
 
             // calculate block reward + service award.
-            let full_reward = self.cfg().block_reward
-                * (self.cfg().micro_blocks_in_epoch as i64 + 1i64)
+            let full_reward = self.cfg().block_reward * (self.cfg().blocks_in_epoch as i64 + 1i64)
                 + winner.map(|(_, a)| a).unwrap_or(0);
 
             if block.header.block_reward != full_reward {
-                return Err(BlockError::InvalidMacroBlockReward(
+                return Err(BlockError::InvalidMacroblockReward(
                     epoch,
                     block_hash,
                     block.header.block_reward,
@@ -580,7 +579,7 @@ impl Blockchain {
         // Validate outputs.
         //
         if block.header.outputs_len as usize != block.outputs.len() {
-            return Err(BlockError::InvalidMacroBlockInputsLen(
+            return Err(BlockError::InvalidMacroblockInputsLen(
                 epoch,
                 block_hash,
                 block.header.outputs_len as usize,
@@ -591,7 +590,7 @@ impl Blockchain {
         let output_hashes: Vec<Hash> = block.outputs.iter().map(Hash::digest).collect();
         let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
         if block.header.outputs_range_hash != outputs_range_hash {
-            return Err(BlockError::InvalidMacroBlockOutputsHash(
+            return Err(BlockError::InvalidMacroblockOutputsHash(
                 epoch,
                 block_hash,
                 outputs_range_hash,
@@ -606,7 +605,7 @@ impl Blockchain {
             .collect();
         let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
         if block.header.canaries_range_hash != canaries_range_hash {
-            return Err(BlockError::InvalidMacroBlockCanariesHash(
+            return Err(BlockError::InvalidMacroblockCanariesHash(
                 epoch,
                 block_hash,
                 canaries_range_hash,
@@ -620,7 +619,7 @@ impl Blockchain {
         // Validate inputs.
         //
         if block.header.inputs_len as usize != block.inputs.len() {
-            return Err(BlockError::InvalidMacroBlockInputsLen(
+            return Err(BlockError::InvalidMacroblockInputsLen(
                 epoch,
                 block_hash,
                 block.header.inputs_len as usize,
@@ -630,7 +629,7 @@ impl Blockchain {
         }
         let inputs_range_hash = Merkle::root_hash_from_array(&block.inputs);
         if block.header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidMacroBlockInputsHash(
+            return Err(BlockError::InvalidMacroblockInputsHash(
                 epoch,
                 block_hash,
                 inputs_range_hash,
@@ -682,13 +681,13 @@ impl Blockchain {
     ///
     /// Validate proposed macro block.
     ///
-    pub fn validate_proposed_macro_block(
+    pub fn validate_proposed_macroblock(
         &self,
         view_change: u32,
         block_hash: &Hash,
-        header: &MacroBlockHeader,
+        header: &MacroblockHeader,
         transactions: &[Transaction],
-    ) -> Result<MacroBlock, BlockchainError> {
+    ) -> Result<Macroblock, BlockchainError> {
         if header.epoch != self.epoch() {
             return Err(BlockError::InvalidBlockEpoch(header.epoch, self.epoch()).into());
         }
@@ -719,7 +718,7 @@ impl Blockchain {
         // Validate base header.
         //
         let current_timestamp = Timestamp::now();
-        self.validate_macro_block_basic(block_hash, &header, current_timestamp)?;
+        self.validate_macroblock_basic(block_hash, &header, current_timestamp)?;
 
         // validate award.
         let (activity_map, winner) = self.awards_from_active_epoch(&header.random);
@@ -735,7 +734,7 @@ impl Blockchain {
         if let Some(Transaction::CoinbaseTransaction(tx)) = transactions.get(0) {
             tx.validate()?;
             if tx.block_reward != self.cfg().block_reward {
-                return Err(BlockError::InvalidMacroBlockReward(
+                return Err(BlockError::InvalidMacroblockReward(
                     epoch,
                     block_hash.clone(),
                     tx.block_reward,
@@ -745,7 +744,7 @@ impl Blockchain {
             }
 
             if tx.block_fee != 0 {
-                return Err(BlockError::InvalidMacroBlockFee(
+                return Err(BlockError::InvalidMacroblockFee(
                     epoch,
                     block_hash.clone(),
                     tx.block_fee,
@@ -757,8 +756,7 @@ impl Blockchain {
             // Force coinbase if reward is not zero.
             return Err(BlockError::CoinbaseMustBeFirst(block_hash.clone()).into());
         }
-        let mut full_reward =
-            self.cfg().block_reward * (self.cfg().micro_blocks_in_epoch as i64 + 1i64);
+        let mut full_reward = self.cfg().block_reward * (self.cfg().blocks_in_epoch as i64 + 1i64);
 
         // Add tx if winner found.
         if let Some((k, reward)) = winner {
@@ -804,10 +802,10 @@ impl Blockchain {
         }
 
         // Collect transactions from epoch.
-        let count = self.cfg().micro_blocks_in_epoch as usize;
+        let count = self.cfg().blocks_in_epoch as usize;
         let blocks: Vec<Block> = self.blocks_starting(epoch, 0).take(count).collect();
         for (offset, block) in blocks.into_iter().enumerate() {
-            let block = if let Block::MicroBlock(block) = block {
+            let block = if let Block::Microblock(block) = block {
                 block
             } else {
                 panic!("Expected micro block: epoch={}, offset={}", epoch, offset);
@@ -820,7 +818,7 @@ impl Blockchain {
         let validators = self.next_election_result(header.random).validators;
 
         // Re-create original block.
-        let block = MacroBlock::from_transactions(
+        let block = Macroblock::from_transactions(
             header.previous,
             epoch,
             header.view_change,
@@ -849,9 +847,9 @@ impl Blockchain {
     }
 
     ///
-    /// A helper for validate_micro_block().
+    /// A helper for validate_microblock().
     ///
-    fn validate_micro_block_tx<'a>(
+    fn validate_microblock_tx<'a>(
         &self,
         tx: &'a Transaction,
         leader: pbc::PublicKey,
@@ -923,9 +921,9 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub fn validate_micro_block(
+    pub fn validate_microblock(
         &self,
-        block: &MicroBlock,
+        block: &Microblock,
         timestamp: Timestamp,
         validate_utxo: bool,
     ) -> Result<(), BlockchainError> {
@@ -946,7 +944,7 @@ impl Blockchain {
 
         // Check the block order.
         if self.is_epoch_full() {
-            return Err(BlockchainError::ExpectedMacroBlock(
+            return Err(BlockchainError::ExpectedMacroblock(
                 self.epoch(),
                 self.offset(),
                 block_hash,
@@ -955,7 +953,7 @@ impl Blockchain {
 
         // Check epoch and offset.
         if epoch != self.epoch() || offset != self.offset() {
-            return Err(BlockError::OutOfOrderMicroBlock(
+            return Err(BlockError::OutOfOrderMicroblock(
                 block_hash,
                 epoch,
                 offset,
@@ -967,13 +965,13 @@ impl Blockchain {
 
         // Check new hash.
         if self.contains_block(&block_hash) {
-            return Err(BlockError::MicroBlockHashCollision(epoch, offset, block_hash).into());
+            return Err(BlockError::MicroblockHashCollision(epoch, offset, block_hash).into());
         }
 
         // Check previous hash.
         let previous_hash = self.last_block_hash();
         if previous_hash != block.header.previous {
-            return Err(BlockError::InvalidMicroBlockPreviousHash(
+            return Err(BlockError::InvalidMicroblockPreviousHash(
                 epoch,
                 offset,
                 block_hash,
@@ -995,7 +993,7 @@ impl Blockchain {
         } else if block.header.view_change > 0 {
             match block.header.view_change_proof {
                 Some(ref proof) => {
-                    let chain = ChainInfo::from_micro_block(&block);
+                    let chain = ChainInfo::from_microblock(&block);
                     if let Err(e) = proof.validate(&chain, &self) {
                         return Err(
                             BlockError::InvalidViewChangeProof(epoch, proof.clone(), e).into()
@@ -1026,7 +1024,7 @@ impl Blockchain {
         // Check block reward.
         if let Some(Transaction::CoinbaseTransaction(tx)) = block.transactions.get(0) {
             if tx.block_reward != self.cfg().block_reward {
-                return Err(BlockError::InvalidMicroBlockReward(
+                return Err(BlockError::InvalidMicroblockReward(
                     epoch,
                     offset,
                     block_hash,
@@ -1058,7 +1056,7 @@ impl Blockchain {
 
         // Validate transactions_len.
         if block.header.transactions_len as usize != block.transactions.len() {
-            return Err(BlockError::InvalidMicroBlockTransactionsLen(
+            return Err(BlockError::InvalidMicroblockTransactionsLen(
                 epoch,
                 offset,
                 block_hash,
@@ -1077,11 +1075,11 @@ impl Blockchain {
             input_hashes,
             output_hashes,
             _canary_hashes,
-        ) = MicroBlock::calculate_range_hashes(&block.transactions);
+        ) = Microblock::calculate_range_hashes(&block.transactions);
 
         // Validate transactions_range_hash.
         if block.header.transactions_range_hash != transactions_range_hash {
-            return Err(BlockError::InvalidMicroBlockTransactionsHash(
+            return Err(BlockError::InvalidMicroblockTransactionsHash(
                 epoch,
                 offset,
                 block_hash,
@@ -1093,7 +1091,7 @@ impl Blockchain {
 
         // Validate inputs_len.
         if block.header.inputs_len as usize != input_hashes.len() {
-            return Err(BlockError::InvalidMicroBlockInputsLen(
+            return Err(BlockError::InvalidMicroblockInputsLen(
                 epoch,
                 offset,
                 block_hash,
@@ -1105,7 +1103,7 @@ impl Blockchain {
 
         // Validate inputs_range_hash.
         if block.header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidMicroBlockInputsHash(
+            return Err(BlockError::InvalidMicroblockInputsHash(
                 epoch,
                 offset,
                 block_hash,
@@ -1117,7 +1115,7 @@ impl Blockchain {
 
         // Validate outputs_len.
         if block.header.outputs_len as usize != output_hashes.len() {
-            return Err(BlockError::InvalidMicroBlockOutputsLen(
+            return Err(BlockError::InvalidMicroblockOutputsLen(
                 epoch,
                 offset,
                 block_hash,
@@ -1129,7 +1127,7 @@ impl Blockchain {
 
         // Validate outputs_range_hash.
         if block.header.outputs_range_hash != outputs_range_hash {
-            return Err(BlockError::InvalidMicroBlockOutputsHash(
+            return Err(BlockError::InvalidMicroblockOutputsHash(
                 epoch,
                 offset,
                 block_hash,
@@ -1141,7 +1139,7 @@ impl Blockchain {
 
         // Validate canaries_range_hash.
         if block.header.canaries_range_hash != canaries_range_hash {
-            return Err(BlockError::InvalidMicroBlockCanariesHash(
+            return Err(BlockError::InvalidMicroblockCanariesHash(
                 epoch,
                 offset,
                 block_hash,
@@ -1167,11 +1165,11 @@ impl Blockchain {
                 }
                 coinbase_fee += tx.block_fee;
             }
-            self.validate_micro_block_tx(tx, block.header.pkey, &mut inputs_set, &mut outputs_set)?;
+            self.validate_microblock_tx(tx, block.header.pkey, &mut inputs_set, &mut outputs_set)?;
             fee += tx.fee();
         }
         if coinbase_fee != fee {
-            return Err(BlockError::InvalidMicroBlockFee(
+            return Err(BlockError::InvalidMicroblockFee(
                 epoch,
                 offset,
                 block_hash,
@@ -1197,7 +1195,7 @@ impl Blockchain {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::block::{MacroBlock, Validators};
+    use crate::block::{Macroblock, Validators};
     use crate::output::OutputError;
     use crate::output::PaymentOutput;
     use crate::output::StakeOutput;
@@ -1638,7 +1636,7 @@ pub mod tests {
     }
 
     #[test]
-    fn create_validate_macro_block() {
+    fn create_validate_macroblock() {
         let (_skey1, pkey1) = scc::make_random_keys();
         let (_skey2, pkey2) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
@@ -1661,7 +1659,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(&pkey2, amount).unwrap();
             let outputs1 = vec![output1];
             let gamma = gamma0 - gamma1;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1688,7 +1686,7 @@ pub mod tests {
             let (output1, gamma1) = Output::new_payment(&pkey2, amount - 1).unwrap();
             let outputs1 = vec![output1];
             let gamma = gamma0 - gamma1;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1711,7 +1709,7 @@ pub mod tests {
     }
 
     #[test]
-    fn create_validate_macro_block_with_staking() {
+    fn create_validate_macroblock_with_staking() {
         let (_skey1, pkey1) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
@@ -1736,7 +1734,7 @@ pub mod tests {
                 Output::new_payment(&pkey1, amount).expect("keys are valid");
             let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1766,7 +1764,7 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1798,7 +1796,7 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1834,7 +1832,7 @@ pub mod tests {
             let outputs_gamma = Fr::zero();
             let outputs = vec![output];
             let gamma = inputs_gamma - outputs_gamma;
-            let block = MacroBlock::new(
+            let block = Macroblock::new(
                 previous,
                 epoch,
                 view_change,
@@ -1879,7 +1877,7 @@ pub mod tests {
         let (output, output_gamma) = Output::new_payment(&pkey, output_amount).unwrap();
         let outputs = vec![output];
         let gamma = input_gamma - output_gamma;
-        let block = MacroBlock::new(
+        let block = Macroblock::new(
             previous,
             epoch,
             view_change,

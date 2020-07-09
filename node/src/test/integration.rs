@@ -52,7 +52,7 @@ async fn slash_and_roll() {
         awards_difficulty: 0,
         ..Default::default()
     };
-    cfg.micro_blocks_in_epoch = 2000;
+    cfg.blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -100,14 +100,18 @@ async fn slash_and_roll() {
     let start_offset = p.first().node_service.state().chain.offset();
     let first_leader = p.first().node_service.state().chain.leader();
     let second_leader = p.future_view_change_leader(1);
-    trace!("Creating block, leader = {}", first_leader);
 
+    trace!("Polling everyone...");
     p.poll().await;
 
-    trace!("Initiating a microblock view change...");
+    trace!(
+        "Initiating a Microblock view change, leader = {}...",
+        first_leader
+    );
 
     // init view_change
-    wait(p.config.node.micro_block_timeout).await;
+    let d = config.node.microblock_timeout + Duration::from_secs(5);
+    wait(d).await;
     p.poll().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -145,7 +149,7 @@ async fn slash_and_roll() {
         .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 1));
 
     // wait for block;
-    r.parts.1.skip_micro_block().await;
+    r.parts.1.skip_microblock().await;
 
     // assert that nodes in partition 1 exclude node from partition 0.
     for node in r.parts.1.iter() {
@@ -201,12 +205,12 @@ async fn slash_and_roll() {
 
 // CASE finalized slashing:
 //
-// Asserts that after macroblock slashing is finalized, and proofs are cleared.
+// Asserts that after Macroblock slashing is finalized, and proofs are cleared.
 /*
 #[test]
 fn finalized_slashing() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 20;
+    cfg.blocks_in_epoch = 20;
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
@@ -235,7 +239,7 @@ fn finalized_slashing() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.parts.1.skip_micro_block();
+        r.parts.1.skip_microblock();
 
         // assert that nodes in partition 1 exclude node from partition 0.
         for node in r.parts.1.iter() {
@@ -251,11 +255,11 @@ fn finalized_slashing() {
 
         let offset = r.parts.1.first().node_service.state().chain.offset();
 
-        for _offset in offset..r.config.chain.micro_blocks_in_epoch {
+        for _offset in offset..r.config.chain.blocks_in_epoch {
             r.parts.1.poll();
-            r.parts.1.skip_micro_block();
+            r.parts.1.skip_microblock();
         }
-        r.parts.1.skip_macro_block();
+        r.parts.1.skip_macroblock();
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
@@ -269,7 +273,7 @@ fn finalized_slashing() {
 #[test]
 fn finalized_slashing_with_service_award() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 20;
+    cfg.blocks_in_epoch = 20;
     // execute award alays
     cfg.awards_difficulty = 0;
     let config = SandboxConfig {
@@ -301,7 +305,7 @@ fn finalized_slashing_with_service_award() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.parts.1.skip_micro_block();
+        r.parts.1.skip_microblock();
 
         // assert that nodes in partition 1 exclude node from partition 0.
         for node in r.parts.1.iter() {
@@ -318,13 +322,13 @@ fn finalized_slashing_with_service_award() {
         let offset = r.parts.1.first().node_service.state().chain.offset();
         let epoch = r.parts.1.first().node_service.state().chain.epoch();
 
-        // ignore microblocks for auditor
-        for _offset in offset..r.config.chain.micro_blocks_in_epoch {
+        // ignore Microblocks for auditor
+        for _offset in offset..r.config.chain.blocks_in_epoch {
             r.parts.1.poll();
-            r.parts.1.skip_micro_block();
+            r.parts.1.skip_microblock();
         }
 
-        r.parts.1.skip_macro_block();
+        r.parts.1.skip_macroblock();
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
@@ -334,13 +338,13 @@ fn finalized_slashing_with_service_award() {
             assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
             assert_eq!(
                 node.node_service.state().chain.last_block_hash(),
-                node.node_service.state().chain.last_macro_block_hash()
+                node.node_service.state().chain.last_macroblock_hash()
             );
             let block_hash = node.node_service.state().chain.last_block_hash();
             let block = node
                 .node_service
                 .chain
-                .macro_block(epoch)
+                .Macroblock(epoch)
                 .unwrap()
                 .into_owned();
             assert_eq!(Hash::digest(&block), block_hash);
@@ -365,12 +369,12 @@ fn finalized_slashing_with_service_award() {
 
         let output = output.unwrap();
         let node = r.parts.1.first_mut();
-        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        let mut receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
         node.poll();
         let notification = receive.poll().unwrap();
         let i = match notification {
-            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
-            e => panic!("Expected macroblock info, got ={:?}", e),
+            Async::Ready(NodeResponse::MacroblockInfo(i)) => i,
+            e => panic!("Expected Macroblock info, got ={:?}", e),
         };
         let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
@@ -385,7 +389,7 @@ fn finalized_slashing_with_service_award() {
 #[test]
 fn finalized_slashing_with_service_award_for_auditor() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 20;
+    cfg.blocks_in_epoch = 20;
     // execute award alays
     cfg.awards_difficulty = 0;
     let config = SandboxConfig {
@@ -415,7 +419,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
 
         let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
 
-        // ignore microblocks for auditor
+        // ignore Microblocks for auditor
         let auditor = r.parts.1.auditor.take();
 
         info!(
@@ -428,7 +432,7 @@ fn finalized_slashing_with_service_award_for_auditor() {
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
 
         // wait for block;
-        r.parts.1.skip_micro_block();
+        r.parts.1.skip_microblock();
 
         // assert that nodes in partition 1 exclude node from partition 0.
         for node in r.parts.1.iter() {
@@ -445,13 +449,13 @@ fn finalized_slashing_with_service_award_for_auditor() {
         let offset = r.parts.1.first().node_service.state().chain.offset();
         let epoch = r.parts.1.first().node_service.state().chain.epoch();
 
-        for _offset in offset..r.config.chain.micro_blocks_in_epoch {
+        for _offset in offset..r.config.chain.blocks_in_epoch {
             r.parts.1.poll();
-            r.parts.1.skip_micro_block();
+            r.parts.1.skip_microblock();
         }
 
         r.parts.1.auditor = auditor;
-        r.parts.1.skip_macro_block();
+        r.parts.1.skip_macroblock();
         r.parts
             .1
             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
@@ -462,13 +466,13 @@ fn finalized_slashing_with_service_award_for_auditor() {
             assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
             assert_eq!(
                 node.node_service.state().chain.last_block_hash(),
-                node.node_service.state().chain.last_macro_block_hash()
+                node.node_service.state().chain.last_macroblock_hash()
             );
             let block_hash = node.node_service.state().chain.last_block_hash();
             let block = node
                 .node_service
                 .chain
-                .macro_block(epoch)
+                .Macroblock(epoch)
                 .unwrap()
                 .into_owned();
             assert_eq!(Hash::digest(&block), block_hash);
@@ -494,24 +498,24 @@ fn finalized_slashing_with_service_award_for_auditor() {
 
         let output = output.unwrap();
         let node = r.parts.1.first_mut();
-        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        let mut receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
         node.poll();
         let notification = receive.poll().unwrap();
         let i = match notification {
-            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
-            e => panic!("Expected macroblock info, got ={:?}", e),
+            Async::Ready(NodeResponse::MacroblockInfo(i)) => i,
+            e => panic!("Expected Macroblock info, got ={:?}", e),
         };
         let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
         assert_eq!(output.amount, p.amount);
 
         let node = r.parts.1.auditor.as_mut().unwrap();
-        let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+        let mut receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
         node.poll();
         let notification = receive.poll().unwrap();
         let i = match notification {
-            Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
-            e => panic!("Expected macroblock info, got ={:?}", e),
+            Async::Ready(NodeResponse::MacroblockInfo(i)) => i,
+            e => panic!("Expected Macroblock info, got ={:?}", e),
         };
         let p = i.epoch_info.awardp.payout.unwrap();
         assert_eq!(output.recipient, p.recipient);
@@ -542,26 +546,26 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
     let offset = p.first().node_service.state().chain.offset();
     let epoch = p.first().node_service.state().chain.epoch();
 
-    // ignore microblocks for auditor
-    for _offset in offset..p.config.chain.micro_blocks_in_epoch {
+    // ignore Microblocks for auditor
+    for _offset in offset..p.config.chain.blocks_in_epoch {
         p.poll().await;
-        p.skip_micro_block();
+        p.skip_microblock();
     }
 
-    p.skip_macro_block();
+    p.skip_macroblock();
     let mut output = None;
     for node in p.iter_mut() {
         //award was executed
         assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
         assert_eq!(
             node.node_service.state().chain.last_block_hash(),
-            node.node_service.state().chain.last_macro_block_hash()
+            node.node_service.state().chain.last_macroblock_hash()
         );
         let block_hash = node.node_service.state().chain.last_block_hash();
         let block = node
             .node_service
             .chain
-            .macro_block(epoch)
+            .Macroblock(epoch)
             .unwrap()
             .into_owned();
         assert_eq!(Hash::digest(&block), block_hash);
@@ -585,12 +589,12 @@ fn service_award_round_normal(s: &mut Sandbox, service_award_budget: i64) {
 
     let output = output.unwrap();
     let node = p.first_mut();
-    let mut receive = node.node.request(NodeRequest::MacroBlockInfo { epoch });
+    let mut receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
     node.poll();
     let notification = receive.poll().unwrap();
     let i = match notification {
-        Async::Ready(NodeResponse::MacroBlockInfo(i)) => i,
-        e => panic!("Expected macroblock info, got ={:?}", e),
+        Async::Ready(NodeResponse::MacroblockInfo(i)) => i,
+        e => panic!("Expected Macroblock info, got ={:?}", e),
     };
     let p = i.epoch_info.awardp.payout.unwrap();
     assert_eq!(output.recipient, p.recipient);
@@ -604,15 +608,15 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
     let mut nodes: HashSet<_> = p.iter().map(|n| n.node_service.network_pkey).collect();
 
     // skipp all leaders atleast once
-    for offset in offset..p.config.chain.micro_blocks_in_epoch {
+    for offset in offset..p.config.chain.blocks_in_epoch {
         p.poll().await;
 
         let leader_pk = p.first().chain().leader();
 
         let second_leader = p.future_view_change_leader(1);
-        // if leader already skipper, or next view_change_leader is current, just skip_micro_block
+        // if leader already skipper, or next view_change_leader is current, just skip_microblock
         if !nodes.contains(&leader_pk) || second_leader == leader_pk {
-            p.skip_micro_block();
+            p.skip_microblock();
             continue;
         }
 
@@ -632,7 +636,7 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
         node.handle_vdf();
         node.poll();
 
-        p.wait(p.config.node.micro_block_timeout);
+        p.wait(p.config.node.microblock_timeout);
         p.poll().await;
 
         // emulate dead leader for other nodes
@@ -697,10 +701,10 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
 
     assert!(
         nodes.is_empty(),
-        "Too few microblocks, test failed to skip all leaderp."
+        "Too few Microblocks, test failed to skip all leaderp."
     );
 
-    p.skip_macro_block();
+    p.skip_macroblock();
 
     let service_award_budget = p.config.chain.service_award_per_epoch;
     for node in p.iter_mut() {
@@ -719,13 +723,13 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
         );
         assert_eq!(
             node.node_service.state().chain.last_block_hash(),
-            node.node_service.state().chain.last_macro_block_hash()
+            node.node_service.state().chain.last_macroblock_hash()
         );
         let block_hash = node.node_service.state().chain.last_block_hash();
         let block = node
             .node_service
             .chain
-            .macro_block(epoch)
+            .Macroblock(epoch)
             .unwrap()
             .into_owned();
         assert_eq!(Hash::digest(&block), block_hash);
@@ -747,7 +751,7 @@ fn service_award_round_without_participants(s: &mut Sandbox) {
 #[test]
 fn service_award_state() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 20;
+    cfg.blocks_in_epoch = 20;
     // execute award alays
     cfg.awards_difficulty = 0;
     let config = SandboxConfig {
@@ -769,7 +773,7 @@ fn service_award_state() {
 #[test]
 fn service_award_state_no_winners() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 50;
+    cfg.blocks_in_epoch = 50;
     // execute award alays
     cfg.awards_difficulty = 0;
     let config = SandboxConfig {
@@ -792,7 +796,7 @@ fn service_award_state_no_winners() {
 #[test]
 fn view_change_from_future() {
     let mut cfg: ChainConfig = Default::default();
-    cfg.micro_blocks_in_epoch = 50;
+    cfg.blocks_in_epoch = 50;
     // execute award alays
     cfg.awards_difficulty = 0;
     let config = SandboxConfig {
@@ -803,7 +807,7 @@ fn view_change_from_future() {
 
     Sandbox::start(config, |mut s| {
         p.poll().await;
-        p.skip_micro_block();
+        p.skip_microblock();
         //        pub fn new(chain: ChainInfo, validator_id: ValidatorId, skey: &pbc::SecretKey) -> Self {
 
         let mut msgs = Vec::new();

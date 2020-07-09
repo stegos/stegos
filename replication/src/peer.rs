@@ -945,15 +945,15 @@ impl Peer {
                                 } if !*light => {
                                     *last_clock = Instant::now();
                                     match &block {
-                                        Block::MacroBlock(block) => {
+                                        Block::Macroblock(block) => {
                                             debug!(
-                                                "[{}] -> MacroBlock {{ epoch = {} }}",
+                                                "[{}] -> Macroblock {{ epoch = {} }}",
                                                 peer_id, block.header.epoch
                                             );
                                         }
-                                        Block::MicroBlock(block) => {
+                                        Block::Microblock(block) => {
                                             debug!(
-                                                "[{}] -> MicroBlock {{ epoch = {}, offset = {} }}",
+                                                "[{}] -> Microblock {{ epoch = {}, offset = {} }}",
                                                 peer_id, block.header.epoch, block.header.offset
                                             );
                                         }
@@ -971,15 +971,15 @@ impl Peer {
                                 } if *light => {
                                     *last_clock = Instant::now();
                                     match &block {
-                                        LightBlock::LightMacroBlock(block) => {
+                                        LightBlock::LightMacroblock(block) => {
                                             debug!(
-                                                "[{}] -> LightMacroBlock {{ epoch = {} }}",
+                                                "[{}] -> LightMacroblock {{ epoch = {} }}",
                                                 peer_id, block.header.epoch
                                             );
                                         }
-                                        LightBlock::LightMicroBlock(block) => {
+                                        LightBlock::LightMicroblock(block) => {
                                             debug!(
-                                                "[{}] -> LightMicroBlock {{ epoch = {}, offset = {} }}",
+                                                "[{}] -> LightMicroblock {{ epoch = {}, offset = {} }}",
                                                 peer_id, block.header.epoch, block.header.offset
                                             );
                                         }

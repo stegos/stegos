@@ -25,7 +25,7 @@
 
 use std::convert::TryInto;
 
-use super::block::{Block, MacroBlock, MicroBlock, Validators};
+use super::block::{Block, Macroblock, Microblock, Validators};
 use super::blockchain::{Blockchain, OutputRecovery};
 use super::election::mix;
 use super::error::BlockchainError;
@@ -144,7 +144,7 @@ fn recover_account(
     for block in chain.blocks_starting(epoch, 0) {
         let block_hash = Hash::digest(&block);
         match block {
-            Block::MacroBlock(block) => {
+            Block::Macroblock(block) => {
                 for output in &block.outputs {
                     process_output(
                         &mut account_state,
@@ -167,7 +167,7 @@ fn recover_account(
                 }
                 epoch += 1;
             }
-            Block::MicroBlock(block) => {
+            Block::Microblock(block) => {
                 for tx in block.transactions {
                     for output in tx.txouts() {
                         process_output(
@@ -205,7 +205,7 @@ pub fn fake_genesis(
     timestamp: Timestamp,
     difficulty: usize,
     prng: Option<&mut dyn RngCore>,
-) -> (Vec<KeyChain>, MacroBlock) {
+) -> (Vec<KeyChain>, Macroblock) {
     let mut stakers = Vec::with_capacity(num_nodes);
     let mut keychains = Vec::with_capacity(num_nodes);
     let mut outputs: Vec<Output> = Vec::with_capacity(1 + keychains.len());
@@ -242,9 +242,9 @@ pub fn fake_genesis(
     // Calculate initial values.
     let epoch: u64 = 0;
     let view_change: u32 = 0;
-    let last_macro_block_random = Hash::digest("genesis");
+    let last_macroblock_random = Hash::digest("genesis");
     let previous = Hash::digest("genesis");
-    let seed = mix(last_macro_block_random, view_change);
+    let seed = mix(last_macroblock_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
 
@@ -252,7 +252,7 @@ pub fn fake_genesis(
     let validators = election::select_validators_slots(stakers, random, max_slot_count).validators;
 
     // Create a block.
-    let genesis = MacroBlock::new(
+    let genesis = Macroblock::new(
         previous,
         epoch,
         view_change,
@@ -271,7 +271,7 @@ pub fn fake_genesis(
     (keychains, genesis)
 }
 
-pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychains: &[KeyChain]) {
+pub fn sign_fake_macroblock(block: &mut Macroblock, chain: &Blockchain, keychains: &[KeyChain]) {
     let block_hash = Hash::digest(block);
     let validators = chain.validators();
     let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
@@ -284,30 +284,30 @@ pub fn sign_fake_macro_block(block: &mut MacroBlock, chain: &Blockchain, keychai
     block.multisigmap = multisigmap;
 }
 
-pub fn create_fake_macro_block(
+pub fn create_fake_macroblock(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,
-) -> (MacroBlock, Vec<Transaction>) {
+) -> (Macroblock, Vec<Transaction>) {
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let (mut block, extra_transactions) = chain.create_macro_block(
+    let (mut block, extra_transactions) = chain.create_macroblock(
         view_change,
         &keys.account_pkey,
         &keys.network_skey,
         keys.network_pkey,
         timestamp,
     );
-    sign_fake_macro_block(&mut block, chain, keychains);
+    sign_fake_macroblock(&mut block, chain, keychains);
     (block, extra_transactions)
 }
 
-pub fn create_fake_micro_block(
+pub fn create_fake_microblock(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,
-) -> (MicroBlock, Vec<Hash>, Vec<Hash>) {
+) -> (Microblock, Vec<Hash>, Vec<Hash>) {
     let epoch = chain.epoch();
     let offset = chain.offset();
     let view_change = chain.view_change();
@@ -441,7 +441,7 @@ pub fn create_fake_micro_block(
         input_hashes.extend(tx.txins());
         output_hashes.extend(tx.txouts().iter().map(Hash::digest));
     }
-    let mut block = MicroBlock::new(
+    let mut block = Microblock::new(
         previous,
         epoch,
         offset,
@@ -457,11 +457,11 @@ pub fn create_fake_micro_block(
     (block, input_hashes, output_hashes)
 }
 
-pub fn create_micro_block_with_coinbase(
+pub fn create_microblock_with_coinbase(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,
-) -> MicroBlock {
+) -> Microblock {
     let previous = chain.last_block_hash().clone();
     let epoch = chain.epoch();
     let offset = chain.offset();
@@ -506,7 +506,7 @@ pub fn create_micro_block_with_coinbase(
         txouts,
     };
     let txs = vec![coinbase.into()];
-    let mut block = MicroBlock::new(
+    let mut block = Microblock::new(
         previous,
         epoch,
         offset,

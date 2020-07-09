@@ -71,7 +71,7 @@ pub fn chain_to_prefix(network: &str) -> &'static str {
     }
 }
 
-pub fn initialize_chain(chain: &str) -> Result<(MacroBlock, ChainConfig), Error> {
+pub fn initialize_chain(chain: &str) -> Result<(Macroblock, ChainConfig), Error> {
     let (genesis, chain_cfg): (&[u8], ChainConfig) = match chain {
         "dev" => (
             include_bytes!("../../chains/dev/genesis.bin"),

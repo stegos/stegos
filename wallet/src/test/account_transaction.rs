@@ -95,7 +95,7 @@ fn create_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_micro_block();
+        s.skip_microblock();
 
         accounts[0].poll();
 
@@ -225,7 +225,7 @@ fn create_tx_with_certificate() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_micro_block();
+        s.skip_microblock();
 
         accounts[0].poll();
 
@@ -289,7 +289,7 @@ fn process_tx(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>) -> Hash {
         } => assert_eq!(tx_hash, my_tx),
         _ => unreachable!(),
     }
-    s.skip_micro_block();
+    s.skip_microblock();
 
     accounts[0].poll();
 
@@ -469,7 +469,7 @@ fn wait_for_epoch_end_with_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_micro_block();
+        s.skip_microblock();
 
         accounts[0].poll();
 
@@ -483,11 +483,11 @@ fn wait_for_epoch_end_with_tx() {
 
         let offset = s.first().chain().offset();
 
-        for offset in offset..s.config.chain.micro_blocks_in_epoch {
+        for offset in offset..s.config.chain.blocks_in_epoch {
             s.poll();
-            s.skip_micro_block()
+            s.skip_microblock()
         }
-        s.skip_macro_block();
+        s.skip_macroblock();
         accounts[0].poll();
 
         // ignore multiple notification, and assert that notification not equal to our.
@@ -541,12 +541,12 @@ fn create_public_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_micro_block();
+        s.skip_microblock();
 
         let epoch = s.first().chain().epoch();
         let offset = s.first().chain().offset();
-        let microblock = s.first().chain().micro_block(epoch, offset - 1).unwrap();
-        let our_tx = microblock.transactions.last();
+        let Microblock = s.first().chain().Microblock(epoch, offset - 1).unwrap();
+        let our_tx = Microblock.transactions.last();
         let our_tx = match our_tx {
             Some(Transaction::PaymentTransaction(tx)) => tx,
             _ => panic!(" not expeceted tx"),
@@ -617,7 +617,7 @@ fn recovery_acount_after_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_micro_block();
+        s.skip_microblock();
 
         accounts[0].poll();
 
@@ -784,7 +784,7 @@ fn precondition_each_account_has_tokens(
         s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
         genesis_account.poll();
     }
 
@@ -841,10 +841,10 @@ fn create_snowball_tx() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1078,7 +1078,7 @@ fn create_snowball_tx() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1122,10 +1122,10 @@ fn snowball_lock_utxo() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1214,10 +1214,10 @@ fn snowball_failed_join() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1269,7 +1269,7 @@ fn snowball_failed_join() {
 #[test]
 fn annihilation() {
     let cfg = ChainConfig {
-        micro_blocks_in_epoch: 3,
+        blocks_in_epoch: 3,
         ..Default::default()
     };
     let config = SandboxConfig {
@@ -1279,7 +1279,7 @@ fn annihilation() {
     };
     Sandbox::start(config, |mut s| {
         let mut accounts = genesis_accounts(&mut s);
-        for _offset in 0..s.config.chain.micro_blocks_in_epoch - 1 {
+        for _offset in 0..s.config.chain.blocks_in_epoch - 1 {
             let recipient = accounts[0].account_service.account_pkey;
             let rx = accounts[0].account.request(AccountRequest::Payment {
                 recipient,
@@ -1295,12 +1295,12 @@ fn annihilation() {
             s.poll();
             // rebroadcast transaction to each node
             s.broadcast(stegos_node::TX_TOPIC);
-            s.skip_micro_block();
+            s.skip_microblock();
             accounts[0].poll();
         }
         s.poll();
-        s.skip_micro_block();
-        s.skip_macro_block();
+        s.skip_microblock();
+        s.skip_macroblock();
     });
 }
 
@@ -1311,10 +1311,10 @@ fn snowball_with_wrong_facilitator_pool() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1363,10 +1363,10 @@ fn create_snowball_simple() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1452,7 +1452,7 @@ fn create_snowball_simple() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1482,10 +1482,10 @@ fn create_snowball_fail_share_key() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1580,7 +1580,7 @@ fn create_snowball_fail_share_key() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1606,10 +1606,10 @@ fn create_snowball_fail_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1715,7 +1715,7 @@ fn create_snowball_fail_commitment() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let (notification) = status;
@@ -1741,10 +1741,10 @@ fn create_snowball_fail_cloacked_vals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -1850,7 +1850,7 @@ fn create_snowball_fail_cloacked_vals() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_micro_block();
+        s.skip_microblock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1969,10 +1969,10 @@ fn create_snowball_asymetric_dropouts_sharing() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -2047,10 +2047,10 @@ fn create_snowball_asymetric_dropouts_cloackedvals() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -2129,10 +2129,10 @@ fn create_snowball_asymetric_dropouts_commitment() {
     const SEND_TOKENS: i64 = 10;
     // send MINIMAL_TOKEN + FEE
     const MIN_AMOUNT: i64 = SEND_TOKENS + 2 * PAYMENT_FEE;
-    // set micro_blocks to some big value.
+    // set Microblocks to some big value.
     let config = SandboxConfig {
         chain: ChainConfig {
-            micro_blocks_in_epoch: 2000,
+            blocks_in_epoch: 2000,
             ..Default::default()
         },
         ..Default::default()
@@ -2265,7 +2265,7 @@ fn perform_restart_asymetric(
     debug!("===== BROADCAST SB TRANSACTION =====");
     s.poll();
     s.broadcast(stegos_node::TX_TOPIC);
-    s.skip_micro_block();
+    s.skip_microblock();
 
     for (id, (account, status)) in accounts.iter_mut().zip(&mut notifications_new).enumerate() {
         let notification = status;

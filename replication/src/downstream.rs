@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
-use stegos_blockchain::{MacroBlockHeader, MicroBlockHeader};
+use stegos_blockchain::{MacroblockHeader, MicroblockHeader};
 use stegos_network::{Multiaddr, PeerId, ReplicationVersion};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::time::Instant;
@@ -54,19 +54,19 @@ impl IntoReplicationResponse for LightBlock {
 }
 
 trait NextEpochOffset {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32);
+    fn next_epoch_offset(&self, blocks_in_epoch: u32) -> (u64, u32);
 }
 
-impl NextEpochOffset for MacroBlockHeader {
-    fn next_epoch_offset(&self, _micro_blocks_in_epoch: u32) -> (u64, u32) {
+impl NextEpochOffset for MacroblockHeader {
+    fn next_epoch_offset(&self, _blocks_in_epoch: u32) -> (u64, u32) {
         (self.epoch + 1, 0)
     }
 }
 
-impl NextEpochOffset for MicroBlockHeader {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
-        if self.offset + 1 >= micro_blocks_in_epoch {
-            (self.epoch, micro_blocks_in_epoch)
+impl NextEpochOffset for MicroblockHeader {
+    fn next_epoch_offset(&self, blocks_in_epoch: u32) -> (u64, u32) {
+        if self.offset + 1 >= blocks_in_epoch {
+            (self.epoch, blocks_in_epoch)
         } else {
             (self.epoch, self.offset + 1)
         }
@@ -74,23 +74,19 @@ impl NextEpochOffset for MicroBlockHeader {
 }
 
 impl NextEpochOffset for Block {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
+    fn next_epoch_offset(&self, blocks_in_epoch: u32) -> (u64, u32) {
         match self {
-            Block::MacroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
-            Block::MicroBlock(block) => block.header.next_epoch_offset(micro_blocks_in_epoch),
+            Block::Macroblock(block) => block.header.next_epoch_offset(blocks_in_epoch),
+            Block::Microblock(block) => block.header.next_epoch_offset(blocks_in_epoch),
         }
     }
 }
 
 impl NextEpochOffset for LightBlock {
-    fn next_epoch_offset(&self, micro_blocks_in_epoch: u32) -> (u64, u32) {
+    fn next_epoch_offset(&self, blocks_in_epoch: u32) -> (u64, u32) {
         match self {
-            LightBlock::LightMacroBlock(block) => {
-                block.header.next_epoch_offset(micro_blocks_in_epoch)
-            }
-            LightBlock::LightMicroBlock(block) => {
-                block.header.next_epoch_offset(micro_blocks_in_epoch)
-            }
+            LightBlock::LightMacroblock(block) => block.header.next_epoch_offset(blocks_in_epoch),
+            LightBlock::LightMicroblock(block) => block.header.next_epoch_offset(blocks_in_epoch),
         }
     }
 }
@@ -177,7 +173,7 @@ impl Downstream {
         cx: &mut Context,
         current_epoch: u64,
         current_offset: u32,
-        micro_blocks_in_epoch: u32,
+        blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
     ) -> Poll<()> {
         match self {
@@ -281,8 +277,8 @@ impl Downstream {
                         let found_outputs = match block_reader.get_block(request.block_epoch, request.block_offset) {
                             Ok(block ) => {
                                 let outputs: Box<dyn Iterator<Item=_>> = match block.borrow() {
-                                    Block::MacroBlock(b) => Box::new(b.outputs.iter()),
-                                    Block::MicroBlock(b) => Box::new(b.outputs()),
+                                    Block::Macroblock(b) => Box::new(b.outputs.iter()),
+                                    Block::Microblock(b) => Box::new(b.outputs()),
                                 };
                                 let mut resulting_outputs = Vec::new();
                                 let ids: HashSet<_> = request.outputs_ids.into_iter().collect();
@@ -369,7 +365,7 @@ impl Downstream {
                             blocks,
                             current_epoch,
                             current_offset,
-                            micro_blocks_in_epoch,
+                            blocks_in_epoch,
                         );
                     } else {
                         let blocks = match block_reader.iter_starting(*epoch, *offset) {
@@ -384,7 +380,7 @@ impl Downstream {
                             blocks,
                             current_epoch,
                             current_offset,
-                            micro_blocks_in_epoch,
+                            blocks_in_epoch,
                         );
                     }
                 }
@@ -403,7 +399,7 @@ impl Downstream {
         blocks: BlocksIter,
         current_epoch: u64,
         current_offset: u32,
-        micro_blocks_in_epoch: u32,
+        blocks_in_epoch: u32,
     ) -> bool
     where
         BlocksIter: IntoIterator<Item = I>,
@@ -444,7 +440,7 @@ impl Downstream {
                 cx.waker().wake_by_ref();
                 break;
             }
-            let (next_epoch, next_offset) = block.next_epoch_offset(micro_blocks_in_epoch);
+            let (next_epoch, next_offset) = block.next_epoch_offset(blocks_in_epoch);
             let response: ReplicationResponse =
                 block.into_replication_response(current_epoch, current_offset);
             let response = response.into_buffer().unwrap();
@@ -485,11 +481,11 @@ impl Downstream {
         cx: &mut Context,
         block: &Block,
         light_block: &LightBlock,
-        micro_blocks_in_epoch: u32,
+        blocks_in_epoch: u32,
     ) -> bool {
         let (current_epoch, current_offset) = match &block {
-            Block::MacroBlock(block) => (block.header.epoch, micro_blocks_in_epoch),
-            Block::MicroBlock(block) => (block.header.epoch, block.header.offset),
+            Block::Macroblock(block) => (block.header.epoch, blocks_in_epoch),
+            Block::Microblock(block) => (block.header.epoch, block.header.offset),
         };
         match self {
             Downstream::Sending {
@@ -505,7 +501,7 @@ impl Downstream {
                         blocks.into_iter(),
                         current_epoch,
                         current_offset,
-                        micro_blocks_in_epoch,
+                        blocks_in_epoch,
                     );
                 } else {
                     let light_blocks = vec![light_block.clone()];
@@ -514,7 +510,7 @@ impl Downstream {
                         light_blocks.into_iter(),
                         current_epoch,
                         current_offset,
-                        micro_blocks_in_epoch,
+                        blocks_in_epoch,
                     );
                 }
             }

@@ -23,17 +23,17 @@
 
 use crate::error::*;
 use std::fmt;
-use stegos_blockchain::{MacroBlockHeader, Transaction};
+use stegos_blockchain::{MacroblockHeader, Transaction};
 use stegos_crypto::hash::{Hash, Hashable, Hasher};
 use stegos_crypto::pbc;
 
 #[derive(Clone, Debug)]
-pub struct MacroBlockProposal {
-    pub header: MacroBlockHeader,
+pub struct MacroblockProposal {
+    pub header: MacroblockHeader,
     pub transactions: Vec<Transaction>,
 }
 
-impl Hashable for MacroBlockProposal {
+impl Hashable for MacroblockProposal {
     fn hash(&self, state: &mut Hasher) {
         self.header.hash(state);
         let tx_count: u64 = self.transactions.len() as u64;
@@ -48,7 +48,7 @@ impl Hashable for MacroBlockProposal {
 #[derive(Clone, Debug)]
 pub enum ConsensusMessageBody {
     /// Propose Message (preprepare).
-    Proposal(MacroBlockProposal),
+    Proposal(MacroblockProposal),
     /// Pre-vote Message (prepare).
     Prevote,
     /// Pre-commit Message (commit).

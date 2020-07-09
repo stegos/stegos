@@ -27,7 +27,7 @@ use std::time::Duration;
 #[derive(Copy, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Ord, PartialOrd)]
 #[serde(rename_all = "snake_case")]
 pub enum ConsistencyCheck {
-    /// Don't check anything in macroblock. Only block multisig.
+    /// Don't check anything in Macroblock. Only block multisig.
     None,
     /// Load chain by blocks, rather than fast load from snapshot.
     LoadChain,
@@ -48,7 +48,7 @@ pub struct ChainConfig {
     /// How many epochs stake is valid.
     pub stake_epochs: u64,
     /// The number of blocks per epoch.
-    pub micro_blocks_in_epoch: u32,
+    pub blocks_in_epoch: u32,
     /// Difficulty in bits, of service awards.
     pub awards_difficulty: usize,
     /// Block reward for creating block.
@@ -65,15 +65,15 @@ const STG: i64 = 1_000_000;
 
 impl Default for ChainConfig {
     fn default() -> Self {
-        let micro_blocks_in_epoch: u32 = 60;
+        let blocks_in_epoch: u32 = 60;
         ChainConfig {
             max_slot_count: 1000,
             min_stake_amount: 50_000 * STG,
-            micro_blocks_in_epoch,
+            blocks_in_epoch,
             stake_epochs: 10,
             awards_difficulty: 10, // 10 bits = mean(2^10 epochs) ~ 5 days.
             block_reward: 24 * STG,
-            service_award_per_epoch: 12 * STG * (micro_blocks_in_epoch as i64 + 1), // 12 STG per block
+            service_award_per_epoch: 12 * STG * (blocks_in_epoch as i64 + 1), // 12 STG per block
             // Sic: synchronize this value with NodeConfig::{micro, macro}_block_timeout.
             vetted_timestamp_delta: Duration::from_secs(30),
             sync_timeout: Duration::from_secs(5 * 60), // should >= block_timeout.

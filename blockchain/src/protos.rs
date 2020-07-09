@@ -72,24 +72,24 @@ impl ProtoConvert for OutputKey {
     fn into_proto(&self) -> Self::Proto {
         let mut msg = Self::Proto::new();
         match self {
-            OutputKey::MacroBlock { epoch, output_id } => {
-                let mut sub = blockchain::MacroBlockOutputKey::new();
+            OutputKey::Macroblock { epoch, output_id } => {
+                let mut sub = blockchain::MacroblockOutputKey::new();
                 sub.set_epoch(*epoch);
                 sub.set_output_id(*output_id);
-                msg.set_macro_block(sub);
+                msg.set_macroblock(sub);
             }
-            OutputKey::MicroBlock {
+            OutputKey::Microblock {
                 epoch,
                 offset,
                 tx_id,
                 txout_id,
             } => {
-                let mut sub = blockchain::MicroBlockOutputKey::new();
+                let mut sub = blockchain::MicroblockOutputKey::new();
                 sub.set_epoch(*epoch);
                 sub.set_offset(*offset);
                 sub.set_tx_id(*tx_id);
                 sub.set_txout_id(*txout_id);
-                msg.set_micro_block(sub);
+                msg.set_microblock(sub);
             }
         }
         msg
@@ -97,18 +97,18 @@ impl ProtoConvert for OutputKey {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let data = match proto.key {
-            Some(blockchain::OutputKey_oneof_key::macro_block(ref msg)) => {
+            Some(blockchain::OutputKey_oneof_key::Macroblock(ref msg)) => {
                 let epoch = msg.get_epoch();
                 let output_id = msg.get_output_id();
 
-                OutputKey::MacroBlock { epoch, output_id }
+                OutputKey::Macroblock { epoch, output_id }
             }
-            Some(blockchain::OutputKey_oneof_key::micro_block(ref msg)) => {
+            Some(blockchain::OutputKey_oneof_key::Microblock(ref msg)) => {
                 let epoch = msg.get_epoch();
                 let offset = msg.get_offset();
                 let tx_id = msg.get_tx_id();
                 let txout_id = msg.get_txout_id();
-                OutputKey::MicroBlock {
+                OutputKey::Microblock {
                     epoch,
                     offset,
                     tx_id,
@@ -420,7 +420,7 @@ impl ProtoConvert for LightEpochInfo {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let header = MacroblockHeader::from_proto(proto.get_header())?;
         let facilitator = ProtoConvert::from_proto(proto.get_facilitator())?;
         let mut validators = Validators::new();
         for validator in &proto.validators {
@@ -890,10 +890,10 @@ impl ProtoConvert for Transaction {
     }
 }
 
-impl ProtoConvert for MicroBlockHeader {
-    type Proto = blockchain::MicroBlockHeader;
+impl ProtoConvert for MicroblockHeader {
+    type Proto = blockchain::MicroblockHeader;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MicroBlockHeader::new();
+        let mut proto = blockchain::MicroblockHeader::new();
         proto.set_version(self.version);
         proto.set_previous(self.previous.into_proto());
         proto.set_epoch(self.epoch);
@@ -939,7 +939,7 @@ impl ProtoConvert for MicroBlockHeader {
         let outputs_len = proto.get_outputs_len();
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         let canaries_range_hash = Hash::from_proto(proto.get_canaries_range_hash())?;
-        Ok(MicroBlockHeader {
+        Ok(MicroblockHeader {
             version,
             previous,
             epoch,
@@ -961,10 +961,10 @@ impl ProtoConvert for MicroBlockHeader {
     }
 }
 
-impl ProtoConvert for MicroBlock {
-    type Proto = blockchain::MicroBlock;
+impl ProtoConvert for Microblock {
+    type Proto = blockchain::Microblock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MicroBlock::new();
+        let mut proto = blockchain::Microblock::new();
         proto.set_header(self.header.into_proto());
         proto.set_sig(self.sig.into_proto());
         for transaction in &self.transactions {
@@ -974,7 +974,7 @@ impl ProtoConvert for MicroBlock {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MicroBlockHeader::from_proto(proto.get_header())?;
+        let header = MicroblockHeader::from_proto(proto.get_header())?;
         let sig = if proto.has_sig() {
             pbc::Signature::from_proto(proto.get_sig())?
         } else {
@@ -984,7 +984,7 @@ impl ProtoConvert for MicroBlock {
         for transaction in proto.transactions.iter() {
             transactions.push(Transaction::from_proto(transaction)?);
         }
-        Ok(MicroBlock {
+        Ok(Microblock {
             header,
             sig,
             transactions,
@@ -992,10 +992,10 @@ impl ProtoConvert for MicroBlock {
     }
 }
 
-impl ProtoConvert for LightMicroBlock {
-    type Proto = blockchain::LightMicroBlock;
+impl ProtoConvert for LightMicroblock {
+    type Proto = blockchain::LightMicroblock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::LightMicroBlock::new();
+        let mut proto = blockchain::LightMicroblock::new();
         proto.set_header(self.header.into_proto());
         proto.set_sig(self.sig.into_proto());
         for input_hash in &self.input_hashes {
@@ -1011,7 +1011,7 @@ impl ProtoConvert for LightMicroBlock {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MicroBlockHeader::from_proto(proto.get_header())?;
+        let header = MicroblockHeader::from_proto(proto.get_header())?;
         let sig = pbc::Signature::from_proto(proto.get_sig())?;
         let mut input_hashes = Vec::<Hash>::with_capacity(proto.input_hashes.len());
         for input_hash in proto.input_hashes.iter() {
@@ -1025,7 +1025,7 @@ impl ProtoConvert for LightMicroBlock {
         for canary in proto.canaries.iter() {
             canaries.push(Canary::from_proto(canary)?);
         }
-        Ok(LightMicroBlock {
+        Ok(LightMicroblock {
             header,
             sig,
             input_hashes,
@@ -1035,10 +1035,10 @@ impl ProtoConvert for LightMicroBlock {
     }
 }
 
-impl ProtoConvert for MacroBlockHeader {
-    type Proto = blockchain::MacroBlockHeader;
+impl ProtoConvert for MacroblockHeader {
+    type Proto = blockchain::MacroblockHeader;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MacroBlockHeader::new();
+        let mut proto = blockchain::MacroblockHeader::new();
         proto.set_version(self.version);
         proto.set_previous(self.previous.into_proto());
         proto.set_epoch(self.epoch);
@@ -1079,7 +1079,7 @@ impl ProtoConvert for MacroBlockHeader {
         let outputs_len = proto.get_outputs_len();
         let outputs_range_hash = Hash::from_proto(proto.get_outputs_range_hash())?;
         let canaries_range_hash = Hash::from_proto(proto.get_canaries_range_hash())?;
-        Ok(MacroBlockHeader {
+        Ok(MacroblockHeader {
             version,
             previous,
             epoch,
@@ -1102,10 +1102,10 @@ impl ProtoConvert for MacroBlockHeader {
     }
 }
 
-impl ProtoConvert for MacroBlock {
-    type Proto = blockchain::MacroBlock;
+impl ProtoConvert for Macroblock {
+    type Proto = blockchain::Macroblock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::MacroBlock::new();
+        let mut proto = blockchain::Macroblock::new();
         proto.set_header(self.header.into_proto());
         proto.set_multisig(self.multisig.into_proto());
         proto.multisigmap.extend(self.multisigmap.iter());
@@ -1119,7 +1119,7 @@ impl ProtoConvert for MacroBlock {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let header = MacroblockHeader::from_proto(proto.get_header())?;
         let multisig = if proto.has_multisig() {
             pbc::Signature::from_proto(proto.get_multisig())?
         } else {
@@ -1137,7 +1137,7 @@ impl ProtoConvert for MacroBlock {
             outputs.push(Output::from_proto(output)?);
         }
 
-        Ok(MacroBlock {
+        Ok(Macroblock {
             header,
             multisig,
             multisigmap,
@@ -1147,10 +1147,10 @@ impl ProtoConvert for MacroBlock {
     }
 }
 
-impl ProtoConvert for LightMacroBlock {
-    type Proto = blockchain::LightMacroBlock;
+impl ProtoConvert for LightMacroblock {
+    type Proto = blockchain::LightMacroblock;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = blockchain::LightMacroBlock::new();
+        let mut proto = blockchain::LightMacroblock::new();
         proto.set_header(self.header.into_proto());
         proto.set_multisig(self.multisig.into_proto());
         proto.multisigmap.extend(self.multisigmap.iter());
@@ -1173,7 +1173,7 @@ impl ProtoConvert for LightMacroBlock {
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let header = MacroBlockHeader::from_proto(proto.get_header())?;
+        let header = MacroblockHeader::from_proto(proto.get_header())?;
         let multisig = if proto.has_multisig() {
             pbc::Signature::from_proto(proto.get_multisig())?
         } else {
@@ -1199,7 +1199,7 @@ impl ProtoConvert for LightMacroBlock {
         for canary in proto.canaries.iter() {
             canaries.push(Canary::from_proto(canary)?);
         }
-        Ok(LightMacroBlock {
+        Ok(LightMacroblock {
             header,
             multisig,
             multisigmap,
@@ -1216,21 +1216,21 @@ impl ProtoConvert for Block {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::Block::new();
         match self {
-            Block::MacroBlock(macro_block) => proto.set_macro_block(macro_block.into_proto()),
-            Block::MicroBlock(micro_block) => proto.set_micro_block(micro_block.into_proto()),
+            Block::Macroblock(macroblock) => proto.set_macroblock(macroblock.into_proto()),
+            Block::Microblock(microblock) => proto.set_microblock(microblock.into_proto()),
         }
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = match proto.block {
-            Some(blockchain::Block_oneof_block::macro_block(ref macro_block)) => {
-                let macro_block = MacroBlock::from_proto(macro_block)?;
-                Block::MacroBlock(macro_block)
+            Some(blockchain::Block_oneof_block::Macroblock(ref macroblock)) => {
+                let macroblock = Macroblock::from_proto(macroblock)?;
+                Block::Macroblock(macroblock)
             }
-            Some(blockchain::Block_oneof_block::micro_block(ref micro_block)) => {
-                let micro_block = MicroBlock::from_proto(micro_block)?;
-                Block::MicroBlock(micro_block)
+            Some(blockchain::Block_oneof_block::Microblock(ref microblock)) => {
+                let microblock = Microblock::from_proto(microblock)?;
+                Block::Microblock(microblock)
             }
             None => {
                 return Err(
@@ -1247,11 +1247,11 @@ impl ProtoConvert for LightBlock {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::LightBlock::new();
         match self {
-            LightBlock::LightMacroBlock(macro_block) => {
-                proto.set_light_macro_block(macro_block.into_proto())
+            LightBlock::LightMacroblock(macroblock) => {
+                proto.set_light_macroblock(macroblock.into_proto())
             }
-            LightBlock::LightMicroBlock(micro_block) => {
-                proto.set_light_micro_block(micro_block.into_proto())
+            LightBlock::LightMicroblock(microblock) => {
+                proto.set_light_microblock(microblock.into_proto())
             }
         }
         proto
@@ -1259,13 +1259,13 @@ impl ProtoConvert for LightBlock {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = match proto.block {
-            Some(blockchain::LightBlock_oneof_block::light_macro_block(ref macro_block)) => {
-                let macro_block = LightMacroBlock::from_proto(macro_block)?;
-                LightBlock::LightMacroBlock(macro_block)
+            Some(blockchain::LightBlock_oneof_block::light_macroblock(ref macroblock)) => {
+                let macroblock = LightMacroblock::from_proto(macroblock)?;
+                LightBlock::LightMacroblock(macroblock)
             }
-            Some(blockchain::LightBlock_oneof_block::light_micro_block(ref micro_block)) => {
-                let micro_block = LightMicroBlock::from_proto(micro_block)?;
-                LightBlock::LightMicroBlock(micro_block)
+            Some(blockchain::LightBlock_oneof_block::light_microblock(ref microblock)) => {
+                let microblock = LightMicroblock::from_proto(microblock)?;
+                LightBlock::LightMicroblock(microblock)
             }
             None => {
                 return Err(
@@ -1331,8 +1331,8 @@ impl ProtoConvert for SlashingProof {
         proto
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
-        let block1 = MicroBlock::from_proto(proto.get_block1())?;
-        let block2 = MicroBlock::from_proto(proto.get_block2())?;
+        let block1 = Microblock::from_proto(proto.get_block1())?;
+        let block2 = Microblock::from_proto(proto.get_block2())?;
         Ok(SlashingProof { block1, block2 })
     }
 }
@@ -1460,7 +1460,7 @@ mod tests {
     }
 
     #[test]
-    fn micro_blocks() {
+    fn Microblocks() {
         init_test_network_prefix();
         let (skey, pkey) = scc::make_random_keys();
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
@@ -1485,7 +1485,7 @@ mod tests {
                 .expect("Invalid transaction");
         let transactions: Vec<Transaction> = vec![tx.into()];
 
-        let mut block = MicroBlock::new(
+        let mut block = Microblock::new(
             previous,
             epoch,
             offset,
@@ -1502,11 +1502,11 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
-        let light_block = block.clone().into_light_micro_block();
+        let light_block = block.clone().into_light_microblock();
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block2, light_block);
 
-        let block = Block::MicroBlock(block);
+        let block = Block::Microblock(block);
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
@@ -1514,7 +1514,7 @@ mod tests {
         let block3: Block = serde_json::from_str(&block_json).unwrap();
         assert_eq!(block, block3);
 
-        let light_block = LightBlock::LightMicroBlock(light_block);
+        let light_block = LightBlock::LightMicroblock(light_block);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
 
@@ -1524,7 +1524,7 @@ mod tests {
     }
 
     #[test]
-    fn macro_blocks() {
+    fn Macroblocks() {
         init_test_network_prefix();
         let (_skey1, pkey1) = scc::make_random_keys();
         let (_skey2, pkey2) = scc::make_random_keys();
@@ -1552,7 +1552,7 @@ mod tests {
         let difficulty = 100500u64;
         let validators = Validators(vec![(pkeypbc.clone(), 100500i64)]);
 
-        let block = MacroBlock::new(
+        let block = Macroblock::new(
             previous,
             epoch,
             view_change,
@@ -1572,11 +1572,11 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
-        let light_block = block.clone().into_light_macro_block(validators);
+        let light_block = block.clone().into_light_macroblock(validators);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
 
-        let block = Block::MacroBlock(block);
+        let block = Block::Macroblock(block);
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
@@ -1584,7 +1584,7 @@ mod tests {
         let block3: Block = serde_json::from_str(&block_json).unwrap();
         assert_eq!(block, block3);
 
-        let light_block = LightBlock::LightMacroBlock(light_block);
+        let light_block = LightBlock::LightMacroblock(light_block);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
 
@@ -1601,7 +1601,7 @@ mod tests {
 
     #[test]
     fn roundtrip_output_key() {
-        let key = OutputKey::MacroBlock {
+        let key = OutputKey::Macroblock {
             epoch: 12,
             output_id: 43,
         };

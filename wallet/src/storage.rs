@@ -50,7 +50,7 @@ const COLON_FAMILIES: &[&'static str] = &[HISTORY, UNSPENT, META];
 const EPOCH_KEY: &[u8; 5] = b"epoch";
 
 /// A special offset used to tore Macro Blocks on the disk.
-const MACRO_BLOCK_OFFSET: u32 = u32::max_value();
+const MACROBLOCK_OFFSET: u32 = u32::max_value();
 
 #[derive(Debug, Default, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize)]
 struct LSN(u64, u32); // use `struct` to disable explicit casts.
@@ -76,17 +76,17 @@ pub struct LightDatabase {
     /// The hash of genesis block.
     genesis_hash: Hash,
     /// Copy of the last macro block hash.
-    last_macro_block_hash: Hash,
+    last_macroblock_hash: Hash,
     /// Copy of the last macro block random.
-    last_macro_block_random: Hash,
+    last_macroblock_random: Hash,
     /// Copy of the last macro block timestamp.
-    last_macro_block_timestamp: Timestamp,
+    last_macroblock_timestamp: Timestamp,
     /// Validators on the start of the epoch.
     validators: Validators,
     /// Facilitator.
     facilitator_pkey: pbc::PublicKey,
     /// Micro blocks for the current epoch.
-    micro_blocks: Vec<MicroBlockHeader>,
+    microblocks: Vec<MicroblockHeader>,
 
     /// In-memory index of all UTXOs.
     utxos: OutputByHashMap,
@@ -126,12 +126,12 @@ impl LightDatabase {
             epoch: 0,
             cfg,
             genesis_hash,
-            last_macro_block_hash: Hash::digest("genesis"),
-            last_macro_block_random: Hash::digest("genesis"),
-            last_macro_block_timestamp: Timestamp::now(),
+            last_macroblock_hash: Hash::digest("genesis"),
+            last_macroblock_random: Hash::digest("genesis"),
+            last_macroblock_timestamp: Timestamp::now(),
             validators: Validators::new(),
             facilitator_pkey: pbc::PublicKey::dum(),
-            micro_blocks: Vec::new(),
+            microblocks: Vec::new(),
             created_txs: HashMap::new(),
             locked_inputs: HashMap::new(),
             pending_txs: HashSet::new(),
@@ -169,8 +169,8 @@ impl LightDatabase {
             offset: self.offset(),
             view_change: 0,
             last_block_hash: self.last_block_hash(),
-            last_macro_block_hash: self.last_macro_block_hash,
-            last_macro_block_timestamp: self.last_macro_block_timestamp,
+            last_macroblock_hash: self.last_macroblock_hash,
+            last_macroblock_timestamp: self.last_macroblock_timestamp,
             local_timestamp: Timestamp::now(),
         }
     }
@@ -184,7 +184,7 @@ impl LightDatabase {
     /// Returns the number of blocks in the current epoch.
     #[inline(always)]
     pub fn offset(&self) -> u32 {
-        self.micro_blocks.len() as u32
+        self.microblocks.len() as u32
     }
 
     /// Returns a hash of genetic block.
@@ -208,28 +208,28 @@ impl LightDatabase {
 
     /// Returns the last block hash.
     pub fn last_block_hash(&self) -> Hash {
-        if let Some(header) = self.micro_blocks.last() {
+        if let Some(header) = self.microblocks.last() {
             Hash::digest(header)
         } else {
-            self.last_macro_block_hash
+            self.last_macroblock_hash
         }
     }
 
     /// Returns the last random.
     pub fn last_block_random(&self) -> Hash {
-        if let Some(header) = self.micro_blocks.last() {
+        if let Some(header) = self.microblocks.last() {
             header.random.rand
         } else {
-            self.last_macro_block_random
+            self.last_macroblock_random
         }
     }
 
     /// Returns the last block timestamp.
     pub fn last_block_timestamp(&self) -> Timestamp {
-        if let Some(header) = self.micro_blocks.last() {
+        if let Some(header) = self.microblocks.last() {
             header.timestamp
         } else {
-            self.last_macro_block_timestamp
+            self.last_macroblock_timestamp
         }
     }
 
@@ -335,13 +335,13 @@ impl LightDatabase {
         };
         let epoch_info = LightEpochInfo::from_buffer(&epoch_info).expect("LightEpochInfo is valid");
         self.epoch = epoch_info.header.epoch + 1;
-        assert!(self.micro_blocks.is_empty());
-        self.last_macro_block_hash = Hash::digest(&epoch_info.header);
-        self.last_macro_block_random = epoch_info.header.random.rand;
-        self.last_macro_block_timestamp = epoch_info.header.timestamp;
+        assert!(self.microblocks.is_empty());
+        self.last_macroblock_hash = Hash::digest(&epoch_info.header);
+        self.last_macroblock_random = epoch_info.header.random.rand;
+        self.last_macroblock_timestamp = epoch_info.header.timestamp;
         self.facilitator_pkey = epoch_info.facilitator;
         self.validators = epoch_info.validators;
-        let lsn = LSN(epoch_info.header.epoch, MACRO_BLOCK_OFFSET);
+        let lsn = LSN(epoch_info.header.epoch, MACROBLOCK_OFFSET);
         let cf_unspent = self
             .database
             .cf_handle(UNSPENT)
@@ -392,8 +392,8 @@ impl LightDatabase {
         drop(static_db);
 
         info!(
-            "Recovered database: epoch={}, last_macro_block={}",
-            self.epoch, self.last_macro_block_hash
+            "Recovered database: epoch={}, last_macroblock={}",
+            self.epoch, self.last_macroblock_hash
         );
     }
 
@@ -477,7 +477,7 @@ impl LightDatabase {
     }
 
     ///
-    /// Common part of push_macro_block()/push_micro_block().
+    /// Common part of push_macroblock()/push_microblock().
     ///
     fn register_inputs_and_outputs(
         &mut self,
@@ -611,9 +611,9 @@ impl LightDatabase {
     ///
     /// Validates the light macro block.
     ///
-    pub fn validate_macro_block(
+    pub fn validate_macroblock(
         &mut self,
-        header: &MacroBlockHeader,
+        header: &MacroblockHeader,
         multisig: &pbc::Signature,
         multisigmap: &BitVec,
         input_hashes: &[Hash],
@@ -642,17 +642,17 @@ impl LightDatabase {
         // Check epoch.
         if header.epoch != self.epoch {
             return Err(
-                BlockError::OutOfOrderMacroBlock(block_hash, header.epoch, self.epoch).into(),
+                BlockError::OutOfOrderMacroblock(block_hash, header.epoch, self.epoch).into(),
             );
         }
 
         // Check previous hash.
-        if self.last_macro_block_hash != header.previous {
-            return Err(BlockError::InvalidMacroBlockPreviousHash(
+        if self.last_macroblock_hash != header.previous {
+            return Err(BlockError::InvalidMacroblockPreviousHash(
                 header.epoch,
                 block_hash,
                 header.previous,
-                self.last_macro_block_hash,
+                self.last_macroblock_hash,
             )
             .into());
         }
@@ -672,7 +672,7 @@ impl LightDatabase {
         }
 
         // Check VRF.
-        let seed = mix(self.last_macro_block_random.clone(), header.view_change);
+        let seed = mix(self.last_macroblock_random.clone(), header.view_change);
         if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(header.epoch, block_hash).into());
         }
@@ -681,7 +681,7 @@ impl LightDatabase {
         // Validate inputs.
         //
         if header.inputs_len as usize != input_hashes.len() {
-            return Err(BlockError::InvalidMacroBlockInputsLen(
+            return Err(BlockError::InvalidMacroblockInputsLen(
                 header.epoch,
                 block_hash,
                 header.inputs_len as usize,
@@ -691,7 +691,7 @@ impl LightDatabase {
         }
         let inputs_range_hash = Merkle::root_hash_from_array(&input_hashes);
         if header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidMacroBlockInputsHash(
+            return Err(BlockError::InvalidMacroblockInputsHash(
                 header.epoch,
                 block_hash,
                 inputs_range_hash,
@@ -704,7 +704,7 @@ impl LightDatabase {
         // Validate outputs.
         //
         if header.outputs_len as usize != output_hashes.len() {
-            return Err(BlockError::InvalidMacroBlockInputsLen(
+            return Err(BlockError::InvalidMacroblockInputsLen(
                 header.epoch,
                 block_hash,
                 header.outputs_len as usize,
@@ -714,7 +714,7 @@ impl LightDatabase {
         }
         let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
         if header.outputs_range_hash != outputs_range_hash {
-            return Err(BlockError::InvalidMacroBlockOutputsHash(
+            return Err(BlockError::InvalidMacroblockOutputsHash(
                 header.epoch,
                 block_hash,
                 outputs_range_hash,
@@ -729,7 +729,7 @@ impl LightDatabase {
         let canary_hashes: Vec<Hash> = canaries.iter().map(Hash::digest).collect();
         let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
         if header.canaries_range_hash != canaries_range_hash {
-            return Err(BlockError::InvalidMacroBlockCanariesHash(
+            return Err(BlockError::InvalidMacroblockCanariesHash(
                 header.epoch,
                 block_hash,
                 canaries_range_hash,
@@ -762,9 +762,9 @@ impl LightDatabase {
     ///
     /// Validate the light micro block.
     ///
-    pub fn validate_light_micro_block(
+    pub fn validate_light_microblock(
         &mut self,
-        header: &MicroBlockHeader,
+        header: &MicroblockHeader,
         sig: &pbc::Signature,
         input_hashes: &[Hash],
         output_hashes: &[Hash],
@@ -785,7 +785,7 @@ impl LightDatabase {
 
         // Check epoch and offset.
         if header.epoch != self.epoch() || header.offset != self.offset() {
-            return Err(BlockError::OutOfOrderMicroBlock(
+            return Err(BlockError::OutOfOrderMicroblock(
                 block_hash,
                 header.epoch,
                 header.offset,
@@ -796,15 +796,15 @@ impl LightDatabase {
         }
 
         // Check the block order.
-        if self.offset() >= self.cfg.micro_blocks_in_epoch {
+        if self.offset() >= self.cfg.blocks_in_epoch {
             return Err(
-                BlockchainError::ExpectedMacroBlock(self.epoch, self.offset(), block_hash).into(),
+                BlockchainError::ExpectedMacroblock(self.epoch, self.offset(), block_hash).into(),
             );
         }
 
         // Check previous hash.
         if self.last_block_hash() != header.previous {
-            return Err(BlockError::InvalidMicroBlockPreviousHash(
+            return Err(BlockError::InvalidMicroblockPreviousHash(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -834,7 +834,7 @@ impl LightDatabase {
         // Validate inputs.
         //
         if header.inputs_len as usize != input_hashes.len() {
-            return Err(BlockError::InvalidMicroBlockInputsLen(
+            return Err(BlockError::InvalidMicroblockInputsLen(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -845,7 +845,7 @@ impl LightDatabase {
         }
         let inputs_range_hash = Merkle::root_hash_from_array(&input_hashes);
         if header.inputs_range_hash != inputs_range_hash {
-            return Err(BlockError::InvalidMicroBlockInputsHash(
+            return Err(BlockError::InvalidMicroblockInputsHash(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -859,7 +859,7 @@ impl LightDatabase {
         // Validate outputs.
         //
         if header.outputs_len as usize != output_hashes.len() {
-            return Err(BlockError::InvalidMicroBlockInputsLen(
+            return Err(BlockError::InvalidMicroblockInputsLen(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -870,7 +870,7 @@ impl LightDatabase {
         }
         let outputs_range_hash = Merkle::root_hash_from_array(&output_hashes);
         if header.outputs_range_hash != outputs_range_hash {
-            return Err(BlockError::InvalidMicroBlockOutputsHash(
+            return Err(BlockError::InvalidMicroblockOutputsHash(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -886,7 +886,7 @@ impl LightDatabase {
         let canary_hashes: Vec<Hash> = canaries.iter().map(Hash::digest).collect();
         let canaries_range_hash = Merkle::root_hash_from_array(&canary_hashes);
         if header.canaries_range_hash != canaries_range_hash {
-            return Err(BlockError::InvalidMicroBlockCanariesHash(
+            return Err(BlockError::InvalidMicroblockCanariesHash(
                 header.epoch,
                 header.offset,
                 block_hash,
@@ -904,9 +904,9 @@ impl LightDatabase {
     ///
     /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
     ///
-    pub fn apply_light_macro_block<'a, InputsIter, OutputsIter>(
+    pub fn apply_light_macroblock<'a, InputsIter, OutputsIter>(
         &mut self,
-        header: MacroBlockHeader,
+        header: MacroblockHeader,
         inputs_iter: InputsIter,
         outputs_iter: OutputsIter,
         validators: Validators,
@@ -924,17 +924,17 @@ impl LightDatabase {
         // Revert micro blocks.
         //
         let mut transaction_statuses: HashMap<Hash, TransactionStatus> = HashMap::new();
-        while self.micro_blocks.len() > 0 {
-            for (tx_hash, tx_status) in self.revert_micro_block() {
+        while self.microblocks.len() > 0 {
+            for (tx_hash, tx_status) in self.revert_microblock() {
                 transaction_statuses.insert(tx_hash, tx_status);
             }
         }
 
         let (my_inputs, my_outputs) =
             self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
-        assert!(self.micro_blocks.is_empty(), "micro blocks are removed");
+        assert!(self.microblocks.is_empty(), "micro blocks are removed");
         let block_hash = Hash::digest(&header);
-        let lsn = LSN(epoch, MACRO_BLOCK_OFFSET);
+        let lsn = LSN(epoch, MACROBLOCK_OFFSET);
         let mut batch = rocksdb::WriteBatch::default();
         let transaction_statuses2 = self.register_inputs_and_outputs(
             lsn,
@@ -951,10 +951,10 @@ impl LightDatabase {
         let facilitator = election::select_facilitator(&header.random.rand, &validators);
         self.facilitator_pkey = facilitator;
         self.epoch += 1;
-        self.micro_blocks.clear();
-        self.last_macro_block_hash = block_hash;
-        self.last_macro_block_random = header.random.rand;
-        self.last_macro_block_timestamp = header.timestamp;
+        self.microblocks.clear();
+        self.last_macroblock_hash = block_hash;
+        self.last_macroblock_random = header.random.rand;
+        self.last_macroblock_timestamp = header.timestamp;
         self.validators = validators;
         self.current_epoch_balance_changed = false;
 
@@ -1011,9 +1011,9 @@ impl LightDatabase {
     ///
     /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
     ///
-    pub fn apply_light_micro_block<'a, InputsIter, OutputsIter>(
+    pub fn apply_light_microblock<'a, InputsIter, OutputsIter>(
         &mut self,
-        header: MicroBlockHeader,
+        header: MicroblockHeader,
         inputs_iter: InputsIter,
         outputs_iter: OutputsIter,
         account_pkey: &scc::PublicKey,
@@ -1047,7 +1047,7 @@ impl LightDatabase {
             my_inputs,
             my_outputs,
         );
-        self.micro_blocks.push(header);
+        self.microblocks.push(header);
 
         info!(
             "Applied a micro block: epoch={}, offset={}, block={}",
@@ -1060,13 +1060,13 @@ impl LightDatabase {
     ///
     /// Revertts the light micro block.
     ///
-    pub fn revert_micro_block(&mut self) -> HashMap<Hash, TransactionStatus> {
-        let header = self.micro_blocks.pop().expect("have microblocks");
+    pub fn revert_microblock(&mut self) -> HashMap<Hash, TransactionStatus> {
+        let header = self.microblocks.pop().expect("have Microblocks");
         let block_hash = Hash::digest(&header);
-        let lsn = if self.micro_blocks.len() == 0 {
-            LSN(self.epoch - 1, MACRO_BLOCK_OFFSET)
+        let lsn = if self.microblocks.len() == 0 {
+            LSN(self.epoch - 1, MACROBLOCK_OFFSET)
         } else {
-            LSN(self.epoch, (self.micro_blocks.len() - 1) as u32)
+            LSN(self.epoch, (self.microblocks.len() - 1) as u32)
         };
         self.utxos.rollback_to_lsn(lsn);
         let current_offset = self.offset();

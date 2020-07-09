@@ -104,7 +104,7 @@ message Transaction {
     }
 }
 
-message MacroBlockHeader {
+message MacroblockHeader {
     uint64 version = 1;
     stegos.crypto.Hash previous = 2;
     uint64 epoch = 3;
@@ -125,16 +125,16 @@ message MacroBlockHeader {
     stegos.crypto.Hash canaries_range_hash = 18;
 }
 
-message MacroBlock {
-    MacroBlockHeader header = 1;
+message Macroblock {
+    MacroblockHeader header = 1;
     stegos.crypto.SecureSignature multisig = 2;
     repeated bool multisigmap = 3;
     repeated stegos.crypto.Hash inputs = 4;
     repeated Output outputs = 5;
 }
 
-message LightMacroBlock {
-    MacroBlockHeader header = 1;
+message LightMacroblock {
+    MacroblockHeader header = 1;
     stegos.crypto.SecureSignature multisig = 2;
     repeated bool multisigmap = 3;
     repeated Staker validators = 4;
@@ -143,7 +143,7 @@ message LightMacroBlock {
     repeated Canary canaries = 7;
 }
 
-message MicroBlockHeader {
+message MicroblockHeader {
     uint64 version = 1;
     stegos.crypto.Hash previous = 2;
     uint64 epoch = 3;
@@ -163,14 +163,14 @@ message MicroBlockHeader {
     stegos.crypto.Hash canaries_range_hash = 17;
 }
 
-message MicroBlock {
-    MicroBlockHeader header = 1;
+message Microblock {
+    MicroblockHeader header = 1;
     stegos.crypto.SecureSignature sig = 2;
     repeated Transaction transactions = 3;
 }
 
-message LightMicroBlock {
-    MicroBlockHeader header = 1;
+message LightMicroblock {
+    MicroblockHeader header = 1;
     stegos.crypto.SecureSignature sig = 2;
     repeated stegos.crypto.Hash input_hashes = 5;
     repeated stegos.crypto.Hash output_hashes = 6;
@@ -179,21 +179,21 @@ message LightMicroBlock {
 
 message Block {
     oneof block {
-        MacroBlock macro_block = 1;
-        MicroBlock micro_block = 2;
+        Macroblock Macroblock = 1;
+        Microblock Microblock = 2;
     }
 }
 
 message LightBlock {
     oneof block {
-        LightMacroBlock light_macro_block = 1;
-        LightMicroBlock light_micro_block = 2;
+        LightMacroblock light_macroblock = 1;
+        LightMicroblock light_microblock = 2;
     }
 }
 
 message SlashingProof {
-    MicroBlock block1 = 1;
-    MicroBlock block2 = 2;
+    Microblock block1 = 1;
+    Microblock block2 = 2;
 }
 
 message LSN {
@@ -201,12 +201,12 @@ message LSN {
     uint32 offset = 2;
 }
 
-message MacroBlockOutputKey {
+message MacroblockOutputKey {
     uint64 epoch = 1;
     uint32 output_id = 2;
 }
 
-message MicroBlockOutputKey {
+message MicroblockOutputKey {
     uint64 epoch = 1;
     uint32 offset = 2;
     uint32 tx_id = 3;
@@ -215,8 +215,8 @@ message MicroBlockOutputKey {
 
 message OutputKey {
     oneof key {
-        MacroBlockOutputKey macro_block = 1;
-        MicroBlockOutputKey micro_block = 2;
+        MacroblockOutputKey Macroblock = 1;
+        MicroblockOutputKey Microblock = 2;
     }
 }
 
@@ -293,7 +293,7 @@ message EpochInfo {
 }
 
 message LightEpochInfo {
-    MacroBlockHeader header = 1;
+    MacroblockHeader header = 1;
     stegos.crypto.SecurePublicKey facilitator = 2;
     repeated Staker validators = 3;
 }

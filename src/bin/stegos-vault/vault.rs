@@ -451,9 +451,9 @@ impl VaultService {
         trace!("Received new notification = {:?}", response);
         match response.kind {
             ResponseKind::ChainNotification(node_chain) => {
-                if let ChainNotification::MacroBlockCommitted(block) = node_chain {
+                if let ChainNotification::MacroblockCommitted(block) = node_chain {
                     info!(
-                        "Received new macro_block epoch={}, processing",
+                        "Received new Macroblock epoch={}, processing",
                         block.block.header.epoch
                     );
                     let validators = block.epoch_info.into_stakers_group();
@@ -464,7 +464,7 @@ impl VaultService {
                         error!("Failed to process deposit = {}", e)
                     }
                     let outputs = block.block.outputs.clone();
-                    let light_block = block.block.into_light_macro_block(validators);
+                    let light_block = block.block.into_light_macroblock(validators);
                     let event = stegos_wallet::ReplicationOutEvent::FullBlock {
                         block: light_block.into(),
                         outputs,
@@ -943,8 +943,8 @@ impl VaultService {
                 offset: 0,
                 view_change: 0,
                 last_block_hash: Hash::zero(),
-                last_macro_block_hash: Hash::zero(),
-                last_macro_block_timestamp: Timestamp::now(),
+                last_macroblock_hash: Hash::zero(),
+                last_macroblock_timestamp: Timestamp::now(),
                 local_timestamp: Timestamp::now(),
             },
             chain_tx,

@@ -281,8 +281,8 @@ impl WalletService {
                 offset: 0,
                 view_change: 0,
                 last_block_hash: Hash::zero(),
-                last_macro_block_hash: Hash::zero(),
-                last_macro_block_timestamp: Timestamp::now(),
+                last_macroblock_hash: Hash::zero(),
+                last_macroblock_timestamp: Timestamp::now(),
                 local_timestamp: Timestamp::now(),
             },
             unsealed: false,
@@ -703,8 +703,8 @@ impl<B> BlockState<B> {
 
 pub struct ReplicationBlockCollector {
     replication: Replication,
-    pending_blocks: VecDeque<BlockState<LightMacroBlock>>,
-    micro_blocks: VecDeque<BlockState<LightMicroBlock>>,
+    pending_blocks: VecDeque<BlockState<LightMacroblock>>,
+    microblocks: VecDeque<BlockState<LightMicroblock>>,
     chain_cfg: ChainConfig,
 
     replication_responses: stream::FuturesUnordered<
@@ -719,7 +719,7 @@ impl ReplicationBlockCollector {
         Self {
             replication,
             pending_blocks: VecDeque::new(),
-            micro_blocks: VecDeque::new(),
+            microblocks: VecDeque::new(),
             chain_cfg,
             replication_responses: stream::FuturesUnordered::new(),
             timer: tokio::time::interval(Duration::from_secs(2)),
@@ -739,7 +739,7 @@ impl ReplicationBlockCollector {
     }
 
     fn first_offset(&self) -> Option<u32> {
-        self.micro_blocks.front().map(|b| b.block().header.offset)
+        self.microblocks.front().map(|b| b.block().header.offset)
     }
 
     fn block_process_event<B: BlockInfo>(
@@ -978,7 +978,7 @@ impl ReplicationBlockCollector {
     pub fn process_block_event(&mut self, event: BlockEvent) {
         let epoch = event.epoch();
         let offset = event.offset();
-        // microblock
+        // Microblock
         if let Some(offset) = offset {
             if let Some(first_offset) = self.first_offset() {
                 if first_offset > offset {
@@ -989,14 +989,14 @@ impl ReplicationBlockCollector {
                     return;
                 }
                 let id = offset - first_offset;
-                if let Some(block) = self.micro_blocks.get_mut(id as usize) {
+                if let Some(block) = self.microblocks.get_mut(id as usize) {
                     Self::block_process_event(&mut self.replication, block, event)
                 } else {
                     warn!("Not found block for event = {:?}", event);
                 }
             }
         }
-        // macroblock
+        // Macroblock
         else if let Some(first_epoch) = self.first_epoch() {
             if first_epoch > epoch {
                 warn!(
@@ -1016,7 +1016,7 @@ impl ReplicationBlockCollector {
 
     pub fn process_timer(&mut self, now: Instant) {
         Self::process_timer_inner(&mut self.replication, self.pending_blocks.iter_mut(), now);
-        Self::process_timer_inner(&mut self.replication, self.micro_blocks.iter_mut(), now);
+        Self::process_timer_inner(&mut self.replication, self.microblocks.iter_mut(), now);
     }
 
     fn process_timer_inner<'a, B: BlockInfo + 'static, I>(
@@ -1079,7 +1079,7 @@ impl ReplicationBlockCollector {
                     active_accounts.push(account_id.clone());
                 }
                 match block {
-                    LightBlock::LightMacroBlock(b) => {
+                    LightBlock::LightMacroblock(b) => {
                         let epoch = b.header.epoch;
                         let canaries = b.canaries.clone();
                         let output_hashes = b.output_hashes.clone();
@@ -1094,20 +1094,20 @@ impl ReplicationBlockCollector {
                             error!("Failed to broadcast canary = {}", e);
                         }
                         self.pending_blocks.push_back(block);
-                        self.micro_blocks.clear();
+                        self.microblocks.clear();
                     }
-                    LightBlock::LightMicroBlock(b) => {
+                    LightBlock::LightMicroblock(b) => {
                         let epoch = b.header.epoch;
                         let offset = b.header.offset;
                         let canaries = b.canaries.clone();
                         let output_hashes = b.output_hashes.clone();
-                        if let Some(micro_block) = self.micro_blocks.back() {
-                            assert_eq!(micro_block.block().header.epoch, epoch);
-                            assert_eq!(micro_block.block().header.offset + 1, offset);
+                        if let Some(microblock) = self.microblocks.back() {
+                            assert_eq!(microblock.block().header.epoch, epoch);
+                            assert_eq!(microblock.block().header.offset + 1, offset);
                         } else {
                             if let Some(our_epoch) = self.last_full_epoch() {
                                 if our_epoch + 1 != epoch {
-                                    warn!("First micro_block in epoch should continue our history, our_epoch={}, micro_block_epoch={}", our_epoch, epoch);
+                                    warn!("First Microblock in epoch should continue our history, our_epoch={}, Microblock_epoch={}", our_epoch, epoch);
                                     return None;
                                 }
                             }
@@ -1126,7 +1126,7 @@ impl ReplicationBlockCollector {
                         }
                         debug!("Add micro block epoch = {}, offset = {}", epoch, offset);
                         let block = BlockState::init(b, active_accounts.clone());
-                        self.micro_blocks.push_back(block);
+                        self.microblocks.push_back(block);
                     }
                 }
             }
@@ -1163,8 +1163,8 @@ impl ReplicationBlockCollector {
         }
 
         if self.pending_blocks.is_empty() {
-            while let Some(BlockState::BlockReady { .. }) = self.micro_blocks.front() {
-                match self.micro_blocks.pop_front() {
+            while let Some(BlockState::BlockReady { .. }) = self.microblocks.front() {
+                match self.microblocks.pop_front() {
                     Some(BlockState::BlockReady { block, outputs }) => {
                         if let Err(e) = self.broadcast_block(accounts, block.into(), outputs).await
                         {
@@ -1207,19 +1207,19 @@ impl ReplicationBlockCollector {
                 let () = future.await;
             }
 
-            let micro_blocks_in_epoch = self.chain_cfg.micro_blocks_in_epoch;
+            let blocks_in_epoch = self.chain_cfg.blocks_in_epoch;
             let block_reader = DummyBlockReady {};
             if let Some(epoch) = self.last_full_epoch() {
                 let mut epoch = epoch;
                 // We processing epoch that is not full.
-                if self.micro_blocks.len() > 0 {
+                if self.microblocks.len() > 0 {
                     epoch += 1;
                     current_offset = 0;
                 }
 
                 if epoch < current_epoch {
                     debug!("Removing all history, because wallet request history from future: current_epoch = {}, epoch_requested = {}", epoch, current_epoch);
-                    self.micro_blocks.clear();
+                    self.microblocks.clear();
                     self.pending_blocks.clear();
                 }
             }
@@ -1235,7 +1235,7 @@ impl ReplicationBlockCollector {
             }
 
             // TODO: move this logic into replication.
-            if let Some(b) = self.micro_blocks.back() {
+            if let Some(b) = self.microblocks.back() {
                 current_epoch = b.block().header.epoch;
                 current_offset = b.block().header.offset + 1;
             } else if let Some(epoch) = self.last_full_epoch() {
@@ -1254,7 +1254,7 @@ impl ReplicationBlockCollector {
                     cx,
                     current_epoch,
                     current_offset,
-                    micro_blocks_in_epoch,
+                    blocks_in_epoch,
                     &block_reader,
                 )
             });
@@ -1301,7 +1301,7 @@ trait BlockInfo: std::fmt::Debug {
     fn offset(&self) -> Option<u32>;
 }
 
-impl BlockInfo for LightMacroBlock {
+impl BlockInfo for LightMacroblock {
     fn epoch(&self) -> u64 {
         self.header.epoch
     }
@@ -1309,7 +1309,7 @@ impl BlockInfo for LightMacroBlock {
         None
     }
 }
-impl BlockInfo for LightMicroBlock {
+impl BlockInfo for LightMicroblock {
     fn epoch(&self) -> u64 {
         self.header.epoch
     }

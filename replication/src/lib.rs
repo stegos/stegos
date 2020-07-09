@@ -181,11 +181,10 @@ impl Replication {
         cx: &mut Context,
         block: Block,
         light_block: LightBlock,
-        micro_blocks_in_epoch: u32,
+        blocks_in_epoch: u32,
     ) {
-        self.downstreams.retain(|_peer_id, peer| {
-            peer.on_block(cx, &block, &light_block, micro_blocks_in_epoch)
-        });
+        self.downstreams
+            .retain(|_peer_id, peer| peer.on_block(cx, &block, &light_block, blocks_in_epoch));
     }
 
     ///
@@ -246,7 +245,7 @@ impl Replication {
         cx: &mut Context,
         current_epoch: u64,
         current_offset: u32,
-        micro_blocks_in_epoch: u32,
+        blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
     ) -> Poll<Option<ReplicationRow>> {
         trace!("Poll");
@@ -354,7 +353,7 @@ impl Replication {
                 cx,
                 current_epoch,
                 current_offset,
-                micro_blocks_in_epoch,
+                blocks_in_epoch,
                 block_reader,
             ) {
                 Poll::Ready(()) => false,

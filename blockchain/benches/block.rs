@@ -5,7 +5,7 @@ use log::*;
 use simple_logger;
 use std::path::Path;
 use std::time::Duration;
-use stegos_blockchain::{test, Blockchain, ChainConfig, ConsistencyCheck, MacroBlock, Timestamp};
+use stegos_blockchain::{test, Blockchain, ChainConfig, ConsistencyCheck, Macroblock, Timestamp};
 use tempdir::TempDir;
 
 fn generate_chain(
@@ -13,7 +13,7 @@ fn generate_chain(
     chain_dir: &Path,
     num_nodes: usize,
     epochs: u64,
-) -> Vec<MacroBlock> {
+) -> Vec<Macroblock> {
     //
     // Initialize blockchain.
     //
@@ -39,33 +39,33 @@ fn generate_chain(
     //
     // Generate epochs.
     //
-    let mut blocks: Vec<MacroBlock> = Vec::new();
+    let mut blocks: Vec<Macroblock> = Vec::new();
     blocks.push(genesis);
     for epoch in 1..=epochs {
         assert_eq!(chain.epoch(), epoch);
         info!("Generating epoch={}", epoch);
-        for _offset in 0..cfg.micro_blocks_in_epoch {
+        for _offset in 0..cfg.blocks_in_epoch {
             timestamp += Duration::from_millis(1);
             let (block, _input_hashes, _output_hashes) =
-                test::create_fake_micro_block(&mut chain, &keychains, timestamp);
+                test::create_fake_microblock(&mut chain, &keychains, timestamp);
             chain
-                .push_micro_block(block, timestamp)
+                .push_microblock(block, timestamp)
                 .expect("no I/O errors");
         }
-        assert_eq!(chain.offset(), cfg.micro_blocks_in_epoch);
+        assert_eq!(chain.offset(), cfg.blocks_in_epoch);
 
         // Create a macro block.
         timestamp += Duration::from_millis(1);
         let (block, _extra_transactions) =
-            test::create_fake_macro_block(&chain, &keychains, timestamp);
+            test::create_fake_macroblock(&chain, &keychains, timestamp);
 
         // Remove all micro blocks.
         while chain.offset() > 0 {
-            chain.pop_micro_block().expect("no I/O errors");
+            chain.pop_microblock().expect("no I/O errors");
         }
 
         // Push macro block.
-        chain.push_macro_block(block.clone(), timestamp).unwrap();
+        chain.push_macroblock(block.clone(), timestamp).unwrap();
         blocks.push(block);
     }
     assert_eq!(chain.epoch(), 1 + epochs);
@@ -73,12 +73,12 @@ fn generate_chain(
     blocks
 }
 
-fn push_macro_block(b: &mut Bencher) {
+fn push_macroblock(b: &mut Bencher) {
     const NUM_NODES: usize = 32;
     const EPOCHS: u64 = 10;
     let cfg = ChainConfig {
         stake_epochs: 100,
-        micro_blocks_in_epoch: 1,
+        blocks_in_epoch: 1,
         ..Default::default()
     };
     let chain_dir = TempDir::new("bench").unwrap();
@@ -102,18 +102,18 @@ fn push_macro_block(b: &mut Bencher) {
         },
         |(mut chain, _temp_dir, blocks)| {
             for block in blocks.into_iter().skip(1) {
-                chain.push_macro_block(block, timestamp).unwrap();
+                chain.push_macroblock(block, timestamp).unwrap();
             }
         },
     );
 }
 
-fn recover_macro_block(b: &mut Bencher) {
+fn recover_macroblock(b: &mut Bencher) {
     const NUM_NODES: usize = 32;
     const EPOCHS: u64 = 10;
     let cfg = ChainConfig {
         stake_epochs: 100,
-        micro_blocks_in_epoch: 1,
+        blocks_in_epoch: 1,
         ..Default::default()
     };
     let chain_dir = TempDir::new("bench").unwrap();
@@ -136,8 +136,8 @@ fn recover_macro_block(b: &mut Bencher) {
 
 fn blocks_benchmark(c: &mut Criterion) {
     simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
-    c.bench_function("blockchain::push_macro_block(10)", push_macro_block);
-    c.bench_function("blockchain::recover_macro_block(10)", recover_macro_block);
+    c.bench_function("blockchain::push_macroblock(10)", push_macroblock);
+    c.bench_function("blockchain::recover_macroblock(10)", recover_macroblock);
 }
 
 criterion_group! {

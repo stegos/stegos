@@ -745,11 +745,11 @@ mod tests {
         )
         .unwrap();
 
-        let block = blockchain.macro_block(26).unwrap().into_owned();
+        let block = blockchain.Macroblock(26).unwrap().into_owned();
 
         let block_serialized = serde_json::to_string(&block).unwrap();
 
-        let block_deserialized: stegos_blockchain::MacroBlock =
+        let block_deserialized: stegos_blockchain::Macroblock =
             serde_json::from_str(&block_serialized).unwrap();
         println!("left: {:#?}", block);
         println!("right: {:#?}", block_deserialized);

@@ -33,7 +33,7 @@ use std::ops::RangeBounds;
 
 /// The Undo record.
 /// Used to undo changes when a map is rolled back.
-/// And to publish changes when macroblock committed.
+/// And to publish changes when Macroblock committed.
 #[derive(Debug, Clone)]
 pub enum UndoRecord<K, V, LSN>
 where

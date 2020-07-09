@@ -60,7 +60,7 @@ impl VDFExecution {
             // if we wait for micro block, and we are leader for micro block,
             // then synchronously wait until vdf computes.
             VDFExecution::WaitForVDF => tx.send(data).unwrap(),
-            // if we not waiting for microblock, save vdf for future computation.
+            // if we not waiting for Microblock, save vdf for future computation.
             VDFExecution::Nothing => {
                 *self = VDFExecution::PendingVDF { tx, data };
             }

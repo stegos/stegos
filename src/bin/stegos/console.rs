@@ -963,11 +963,11 @@ impl ConsoleService {
                 let offset: u32 = offset.as_str().parse().unwrap();
                 let epoch = caps.name("epoch").unwrap().as_str();
                 let epoch: u64 = epoch.parse()?;
-                NodeRequest::MicroBlockInfo { epoch, offset }
+                NodeRequest::MicroblockInfo { epoch, offset }
             } else {
                 let epoch = caps.name("epoch").unwrap();
                 let epoch: u64 = epoch.as_str().parse()?;
-                NodeRequest::MacroBlockInfo { epoch }
+                NodeRequest::MacroblockInfo { epoch }
             };
             self.send_node_request(request).await?
         } else if msg.starts_with("subscribe chain") {
@@ -1050,7 +1050,7 @@ impl ConsoleService {
             let request = WalletControlRequest::DeleteAccount { account_id };
             self.send_wallet_control_request(request).await?;
         } else if msg == "pop block" {
-            let request = NodeRequest::PopMicroBlock {};
+            let request = NodeRequest::PopMicroblock {};
             self.send_node_request(request).await?
         } else if msg == "enable restaking" {
             let request = NodeRequest::EnableRestaking {};

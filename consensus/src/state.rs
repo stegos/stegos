@@ -28,7 +28,7 @@ use log::*;
 use std::collections::BTreeMap;
 use std::mem;
 use stegos_blockchain::{
-    check_supermajority, create_multi_signature, ElectionResult, MacroBlock, Timestamp,
+    check_supermajority, create_multi_signature, ElectionResult, Macroblock, Timestamp,
 };
 use stegos_crypto::hash::Hash;
 use stegos_crypto::pbc;
@@ -67,8 +67,8 @@ macro_rules! serror {
 #[derive(Debug)]
 struct LockedRound {
     precommits: BTreeMap<pbc::PublicKey, pbc::Signature>,
-    block: MacroBlock,
-    block_proposal: MacroBlockProposal,
+    block: Macroblock,
+    block_proposal: MacroblockProposal,
 }
 
 #[derive(Debug, Eq, Copy, PartialEq, Clone)]
@@ -136,11 +136,11 @@ pub struct Consensus {
     /// Current consensus round.
     round: u32,
     /// The block.
-    block: Option<MacroBlock>,
+    block: Option<Macroblock>,
     /// The Hash of block.
     block_hash: Option<Hash>,
     /// Information needed to re-create the block.
-    block_proposal: Option<MacroBlockProposal>,
+    block_proposal: Option<MacroblockProposal>,
     /// This state is used when some validator collect majority of prevotes.
     /// At this phase node is
     /// locked to some round, and didn't produce any new proposes.
@@ -308,12 +308,12 @@ impl Consensus {
     ///
     /// Propose a new block.
     ///
-    pub fn propose(&mut self, block_hash: Hash, block_proposal: MacroBlockProposal) {
+    pub fn propose(&mut self, block_hash: Hash, block_proposal: MacroblockProposal) {
         assert!(self.should_propose(), "invalid state");
         self.propose_unchecked(block_hash, block_proposal);
     }
 
-    fn propose_unchecked(&mut self, block_hash: Hash, block_proposal: MacroBlockProposal) {
+    fn propose_unchecked(&mut self, block_hash: Hash, block_proposal: MacroblockProposal) {
         sdebug!(
             self,
             "{}({}:{}): propose block = {}",
@@ -340,7 +340,7 @@ impl Consensus {
     ///
     /// Pre-vote the request.
     ///
-    pub fn prevote(&mut self, block: MacroBlock) {
+    pub fn prevote(&mut self, block: Macroblock) {
         assert!(self.should_prevote());
         let block_hash = Hash::digest(&block);
         assert_eq!(&block_hash, self.block_hash.as_ref().unwrap());
@@ -783,7 +783,7 @@ impl Consensus {
     ///
     /// Return a proposal to validate.
     ///
-    pub fn get_proposal(&self) -> (&Hash, &MacroBlockProposal, u32) {
+    pub fn get_proposal(&self) -> (&Hash, &MacroblockProposal, u32) {
         assert_ne!(self.state, ConsensusState::Propose, "Have no proposal");
         (
             self.block_hash.as_ref().unwrap(),
@@ -795,9 +795,9 @@ impl Consensus {
     ///
     /// Sign and commit the request and move to the next round.
     ///
-    /// Returns negotiated MacroBlock.
+    /// Returns negotiated Macroblock.
     ///
-    pub fn commit(mut self) -> MacroBlock {
+    pub fn commit(mut self) -> Macroblock {
         assert!(self.should_commit());
 
         // TODO: Use id instead of PublicKey.

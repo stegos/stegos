@@ -25,12 +25,12 @@ use prometheus::*;
 lazy_static! {
     pub static ref INCOMING_TRAFFIC: IntGauge = register_int_gauge!(
         "gossip_network_incoming_traffic",
-        "Amount of slots node has in received macroblock."
+        "Amount of slots node has in received Macroblock."
     )
     .unwrap();
     pub static ref OUTGOING_TRAFFIC: IntGauge = register_int_gauge!(
         "gossip_network_outgoing_traffic",
-        "Amount of slots node has in received macroblock."
+        "Amount of slots node has in received Macroblock."
     )
     .unwrap();
 }

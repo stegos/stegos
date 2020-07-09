@@ -29,11 +29,11 @@ use std::time::Duration;
 #[serde(default)]
 pub struct NodeConfig {
     /// How long wait for the micro blocks.
-    pub micro_block_timeout: Duration,
+    pub microblock_timeout: Duration,
     /// How long wait for the key blocks.
-    pub macro_block_timeout: Duration,
+    pub macroblock_timeout: Duration,
     /// Timeout to check is_synchronized status.
-    pub sync_change_timeout: Duration,
+    pub sync_timeout: Duration,
     /// The maximal number of outputs in a transaction.
     pub max_inputs_in_tx: usize,
     /// The maximal number of outputs in a transaction.
@@ -56,9 +56,9 @@ impl Default for NodeConfig {
     fn default() -> Self {
         NodeConfig {
             // Sic: synchronize this value with ChainConfig::vetted_timeout.
-            micro_block_timeout: Duration::from_secs(30),
-            macro_block_timeout: Duration::from_secs(30),
-            sync_change_timeout: Duration::from_secs(30), // should >= block_timeout.
+            microblock_timeout: Duration::from_secs(30),
+            macroblock_timeout: Duration::from_secs(30),
+            sync_timeout: Duration::from_secs(30), // should >= block_timeout.
             max_inputs_in_tx: 100,
             max_outputs_in_tx: 100, // snowball::MAX_UTXOS * txpool::MAX_PARTICIPANTS.
             max_inputs_in_block: 1000,

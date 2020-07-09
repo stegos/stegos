@@ -464,7 +464,7 @@ impl VaultService {
                         error!("Failed to process deposit = {}", e)
                     }
                     let outputs = block.block.outputs.clone();
-                    let light_block = block.block.into_light_macroblock(validators);
+                    let light_block = block.block.into_light_mblock(validators);
                     let event = stegos_wallet::ReplicationOutEvent::FullBlock {
                         block: light_block.into(),
                         outputs,
@@ -943,8 +943,8 @@ impl VaultService {
                 offset: 0,
                 view_change: 0,
                 last_block_hash: Hash::zero(),
-                last_macroblock_hash: Hash::zero(),
-                last_macroblock_timestamp: Timestamp::now(),
+                last_mblock_hash: Hash::zero(),
+                last_mblock_timestamp: Timestamp::now(),
                 local_timestamp: Timestamp::now(),
             },
             chain_tx,

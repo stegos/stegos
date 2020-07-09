@@ -58,7 +58,7 @@ fn select_1000_slots_out_of_16(b: &mut Bencher) {
 
     b.iter(|| {
         test::black_box(election::select_validators_slots(
-            test::black_box(stakers.clone()),
+            test::black_box(Validators(stakers.clone())),
             random,
             SLOTS_COUNT,
         ));

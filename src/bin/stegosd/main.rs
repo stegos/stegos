@@ -177,10 +177,10 @@ async fn report_metrics(_req: Request<Body>) -> Result<Response<Body>, hyper::Er
     //
     // Calculate actual value of BLOCK_IDLE metric.
     //
-    let block_local_timestamp: f64 = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
-    if block_local_timestamp > 0.0 {
-        let timestamp: f64 = Timestamp::now().into();
-        stegos_node::metrics::BLOCK_IDLE.set(timestamp - block_local_timestamp);
+    let block_ts: f64 = stegos_node::metrics::BLOCK_LOCAL_TIMESTAMP.get();
+    if block_ts > 0.0 {
+        let ts: f64 = Timestamp::now().into();
+        stegos_node::metrics::BLOCK_IDLE.set(ts - block_ts);
     }
     let mut buffer = vec![];
     encoder.encode(&metric_families, &mut buffer).unwrap();
@@ -564,13 +564,13 @@ async fn run() -> Result<(), Error> {
     );
     let (node, wallet): (_, Option<_>) = if !args.is_present("light") {
         info!("Starting the full node");
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let chain = Blockchain::new(
             chain_cfg.clone(),
             &chain_dir,
             cfg.general.consistency_check,
             genesis,
-            timestamp,
+            ts,
         )?;
         // Initialize node
         let (mut node_service, node) = NodeService::new(
@@ -667,14 +667,14 @@ mod tests {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let chain = "testnet";
         let (genesis, chain_cfg) = initialize_chain(chain).expect("testnet looks like unloadable.");
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         Blockchain::new(
             chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,
-            timestamp,
+            ts,
         )
         .expect("testnet looks like unloadable.");
     }
@@ -685,14 +685,14 @@ mod tests {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let chain = "mainnet";
         let (genesis, chain_cfg) = initialize_chain(chain).expect("mainnet looks like unloadable.");
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         Blockchain::new(
             chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,
-            timestamp,
+            ts,
         )
         .expect("mainnet looks like unloadable.");
     }
@@ -702,14 +702,14 @@ mod tests {
         let _ = simple_logger::init_with_level(log::Level::Debug);
         let chain = "dev";
         let (genesis, chain_cfg) = initialize_chain(chain).expect("dev looks like unloadable.");
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         Blockchain::new(
             chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,
-            timestamp,
+            ts,
         )
         .expect("dev looks like unloadable.");
     }
@@ -731,7 +731,7 @@ mod tests {
     fn serde() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let (genesis, chain_cfg) = initialize_chain(&"testnet").unwrap();
 
         stegos_crypto::set_network_prefix(chain_to_prefix(&"testnet")).ok();
@@ -741,11 +741,11 @@ mod tests {
             OsStr::new("/home/vladimir/stegos/data/chain").as_ref(),
             ConsistencyCheck::None,
             genesis,
-            timestamp,
+            ts,
         )
         .unwrap();
 
-        let block = blockchain.Macroblock(26).unwrap().into_owned();
+        let block = blockchain.mblock(26).unwrap().into_owned();
 
         let block_serialized = serde_json::to_string(&block).unwrap();
 

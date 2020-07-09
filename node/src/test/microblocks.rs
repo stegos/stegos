@@ -62,7 +62,7 @@ async fn dead_leader() {
         // let leader shoot his block
         p.poll().await;
         // emulate timeout on other nodes, and wait for request
-        wait(config.node.microblock_timeout).await;
+        wait(config.node.ublock_timeout).await;
 
         info!("PARTITION BEGIN");
         p.poll().await;
@@ -145,7 +145,7 @@ async fn dead_leader() {
 //         let new_leader = s.future_view_change_leader(1);
 
 //         s.poll();
-//         s.wait(s.config.node.microblock_timeout);
+//         s.wait(s.config.node.ub_timeout);
 //         info!("======= PARTITION BEGIN =======");
 //         s.poll();
 //         // emulate dead leader for other nodes
@@ -256,7 +256,7 @@ async fn dead_leader() {
 //                 break;
 //             }
 
-//             s.skip_microblock();
+//             s.skip_ublock();
 //             blocks += 1;
 //         }
 //         assert!(blocks < s.config.chain.blocks_in_epoch as u32 - 2);
@@ -265,7 +265,7 @@ async fn dead_leader() {
 //         s.for_each(|node| assert_eq!(starting_view_changes, node.chain.view_change()));
 
 //         s.poll();
-//         s.wait(s.config.node.microblock_timeout);
+//         s.wait(s.config.node.ub_timeout);
 //         info!("======= PARTITION BEGIN =======");
 //         s.poll();
 //         // emulate dead leader for other nodes
@@ -320,7 +320,7 @@ async fn dead_leader() {
 //                 );
 //             }
 
-//             s.wait(s.config.node.microblock_timeout);
+//             s.wait(s.config.node.ub_timeout);
 //             let mut r = s.split(&[leader_pk, new_leader]);
 //             r.parts.1.poll();
 
@@ -400,7 +400,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.microblock_timeout);
+//         s.wait(s.config.node.ub_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -511,7 +511,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.microblock_timeout);
+//         s.wait(s.config.node.ub_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -634,7 +634,7 @@ async fn dead_leader() {
 //             .network_service
 //             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
 
-//         s.wait(s.config.node.microblock_timeout);
+//         s.wait(s.config.node.ub_timeout);
 //         s.poll();
 //         // emulate dead leader for other nodes
 
@@ -690,7 +690,7 @@ async fn dead_leader() {
 //             .get_unicast_to_peer(crate::VIEW_CHANGE_DIRECT, &leader_pk);
 
 //         // wait half of view_change timer
-//         r.wait(r.config.node.microblock_timeout / 2);
+//         r.wait(r.config.node.ub_timeout / 2);
 
 //         let first_leader = r.parts.0.first_mut();
 //         assert_eq!(leader_pk, first_leader.node_service.network_pkey);
@@ -717,11 +717,11 @@ async fn dead_leader() {
 //         assert_eq!(first_leader.node_service.chain.offset(), starting_offset);
 
 //         // wait for panic.
-//         r.wait(r.config.node.microblock_timeout - r.config.node.microblock_timeout / 2);
+//         r.wait(r.config.node.ub_timeout - r.config.node.ub_timeout / 2);
 //         r.parts.0.poll();
 
 //         // if panic was fixed, check for message.
-//         r.wait(r.config.node.microblock_timeout / 2);
+//         r.wait(r.config.node.ub_timeout / 2);
 //         r.parts.0.poll();
 
 //         let first_leader = r.parts.0.first_mut();
@@ -766,7 +766,7 @@ async fn dead_leader() {
 //             let last_random = s.nodes[0].node_service.chain.last_random();
 //             let leader_node = s.node(&leader_pk).unwrap();
 
-//             let timestamp = Timestamp::now();
+//             let ts = Timestamp::now();
 //             let seed = mix(last_random, round);
 //             let random = pbc::make_VRF(&leader_node.node_service.network_skey, &seed);
 //             let difficulty = leader_node.node_service.chain.difficulty();
@@ -829,7 +829,7 @@ async fn dead_leader() {
 // }
 
 // #[test]
-// fn invalid_microblock() {
+// fn invalid_ublock() {
 //     let config = SandboxConfig {
 //         num_nodes: 3,
 //         ..Default::default()
@@ -984,7 +984,7 @@ async fn dead_leader() {
 //         r.parts
 //             .1
 //             .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
-//         r.parts.1.skip_microblock();
+//         r.parts.1.skip_ublock();
 
 //         // assert that nodes in partition 1 exclude node from partition 0.
 //         for node in r.parts.1.iter() {

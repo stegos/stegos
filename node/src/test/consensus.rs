@@ -43,8 +43,8 @@ async fn smoke_test() {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            microblock_timeout: Duration::from_secs(500),
-            macroblock_timeout: Duration::from_secs(1000),
+            ublock_timeout: Duration::from_secs(500),
+            mblock_timeout: Duration::from_secs(1000),
             sync_timeout: Duration::from_secs(10000),
             ..Default::default()
         },
@@ -56,9 +56,9 @@ async fn smoke_test() {
 
     for _epoch in 1..=(1 + NUM_RESTAKES * config.chain.stake_epochs + 1) {
         for _offset in 0..config.chain.blocks_in_epoch {
-            p.skip_microblock().await;
+            p.skip_ublock().await;
         }
-        p.skip_macroblock().await;
+        p.skip_mblock().await;
     }
 }
 
@@ -77,13 +77,13 @@ async fn autocommit() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let chain = p.chain();
     let epoch = chain.epoch();
     let last_block_hash = chain.last_block_hash();
 
-    let (_block, block_hash, _) = p.create_macroblock().await;
+    let (_block, block_hash, _) = p.create_mblock().await;
     let leader_pk = p.leader();
     let leader = p.find_mut(&leader_pk).unwrap();
     leader.advance().await;
@@ -103,7 +103,7 @@ async fn autocommit() {
         trace!("[{}] Start autocommit check...", pk);
 
         // Wait for macro block timeout.
-        wait(config.node.macroblock_timeout).await;
+        wait(config.node.mblock_timeout).await;
 
         if pk == leader_pk {
             trace!("[{}] I'm the leader, moving on!", pk);
@@ -136,7 +136,7 @@ async fn autocommit() {
     }
 
     // wait more time, to check if counter will not overflow.
-    wait(config.node.macroblock_timeout).await;
+    wait(config.node.mblock_timeout).await;
 
     p.poll().await;
     p.filter_broadcast(&[SEALED_BLOCK_TOPIC, VIEW_CHANGE_TOPIC, CONSENSUS_TOPIC]);
@@ -157,7 +157,7 @@ async fn round() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = CONSENSUS_TOPIC;
 
@@ -169,7 +169,7 @@ async fn round() {
 
     let epoch = p.first().state().chain.epoch();
     let round = p.first().state().chain.view_change() + 1;
-    wait(config.node.macroblock_timeout).await;
+    wait(config.node.mblock_timeout).await;
 
     trace!("Waiting for a Macroblock timeout");
     p.poll().await;
@@ -224,8 +224,8 @@ async fn round() {
         .get_broadcast(crate::SEALED_BLOCK_TOPIC);
     let block_hash = Hash::digest(&block);
 
-    let macroblock = block.clone().unwrap_macro();
-    assert_eq!(macroblock.header.view_change, round);
+    let mb = block.clone().unwrap_macro();
+    assert_eq!(mb.header.view_change, round);
     for node in p.iter_except(&[leader_pk]) {
         node.network_service
             .receive_broadcast(crate::SEALED_BLOCK_TOPIC, block.clone());
@@ -268,7 +268,7 @@ async fn multiple_rounds() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let view_change = p.first_mut().state().chain.view_change();
     trace!("View change = {}", view_change);
@@ -276,7 +276,7 @@ async fn multiple_rounds() {
 
     // not timeout yet
     let now = Instant::now();
-    let d = config.node.macroblock_timeout - Duration::from_secs(1);
+    let d = config.node.mblock_timeout - Duration::from_secs(1);
     trace!("(0) Timing out for {:?}...", d);
     wait(d).await;
     trace!("Really elapsed = {:?}", now.elapsed());
@@ -303,7 +303,7 @@ async fn multiple_rounds() {
 
     // Macroblock timeout should double with each view change!
     let now = Instant::now();
-    let d = config.node.macroblock_timeout * 2 - Duration::from_secs(1);
+    let d = config.node.mblock_timeout * 2 - Duration::from_secs(1);
     trace!("(2) Timing out for {:?}", d);
     wait(d).await;
     trace!("Really elapsed {:?}", now.elapsed());
@@ -329,7 +329,7 @@ async fn multiple_rounds() {
     ensure_consensus_messages(&mut p, view_change + 2);
 }
 
-// check if locked node will rebroadcast propose.
+// Locked node should rebroadcast proposal.
 
 #[tokio::test]
 async fn lock() {
@@ -345,7 +345,7 @@ async fn lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -376,13 +376,13 @@ async fn lock() {
         round += 1;
         // wait for current round end
         let view_change = p.first_mut().state().chain.view_change();
-        let d = config.node.macroblock_timeout * (round - view_change);
+        let d = config.node.mblock_timeout * (round - view_change);
         wait(d).await;
     }
 
     assert!(ready);
 
-    info!("Starting test.");
+    info!("Starting test...");
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
     let leader_pk = p.first_mut().state().chain.select_leader(round);
@@ -423,9 +423,9 @@ async fn lock() {
     p.poll().await;
 
     let view_change = p.first_mut().state().chain.view_change();
-    let d = config.node.macroblock_timeout * (round - view_change + 1);
+    let d = config.node.mblock_timeout * (round - view_change + 1);
     trace!(
-        "Waiting for Macroblock timeout of {:?}. Round = {}, view_change = {}",
+        "Waiting for macroblock timeout of {:?}. Round = {}, view_change = {}",
         d,
         round,
         view_change
@@ -463,7 +463,7 @@ async fn second_propose_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -496,7 +496,7 @@ async fn second_propose_lock() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
     assert!(ready);
@@ -546,7 +546,7 @@ async fn second_propose_lock() {
         let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
     }
     p.poll().await;
-    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
@@ -590,7 +590,7 @@ async fn pack_of_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -623,7 +623,7 @@ async fn pack_of_prevotes() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
 
@@ -686,7 +686,7 @@ async fn pack_of_prevotes() {
 
     first_node.poll().await;
 
-    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
     info!("====== Waiting for Macroblock timeout. =====");
@@ -726,7 +726,7 @@ async fn ensure_leader_change<'a>(p: &mut Partition<'a>) -> u32 {
         old_round += 1;
         // wait for current round end
         let new_round = p.first_mut().state().chain.view_change();
-        wait(p.config.node.macroblock_timeout * (old_round - new_round)).await;
+        wait(p.config.node.mblock_timeout * (old_round - new_round)).await;
     }
     assert!(ready);
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -748,7 +748,7 @@ async fn second_proposal_lock() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -821,7 +821,7 @@ async fn second_proposal_lock() {
     let leader = p.find_mut(&second_leader_pk).unwrap();
     leader.advance().await;
 
-    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
     p.poll().await;
 
@@ -896,7 +896,7 @@ async fn second_proposal_lock() {
     let leader = p.find_mut(&second_leader_pk).unwrap();
     leader.advance().await;
 
-    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 2))
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 2))
         .await;
 
     trace!("Waiting for a Macroblock timeout once more...");
@@ -920,7 +920,7 @@ async fn prevotes_and_precommits() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -953,7 +953,7 @@ async fn prevotes_and_precommits() {
         let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
         round += 1;
         // wait for current round end
-        wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change()))
+        wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change()))
             .await;
     }
 
@@ -1023,7 +1023,7 @@ async fn prevotes_and_precommits() {
 
     first_node.poll().await;
 
-    wait(config.node.macroblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
 
     info!("====== Waiting for Macroblock timeout. =====");
@@ -1054,7 +1054,7 @@ async fn out_of_order_microblock() {
     let leader_pk = p.first_mut().state().chain.leader();
 
     //create valid but out of order fake micro block.
-    let timestamp = Timestamp::now();
+    let ts = Timestamp::now();
 
     let view_change = p.first_mut().state().chain.view_change();
     let last_block_hash = p.first_mut().state().chain.last_block_hash();
@@ -1076,7 +1076,7 @@ async fn out_of_order_microblock() {
         leader.state().network_pkey,
         random,
         solution,
-        timestamp,
+        ts,
     );
     let leader_node = p.find_mut(&leader_pk).unwrap();
     block.sign(
@@ -1317,7 +1317,7 @@ async fn invalid_proposes() {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            macroblock_timeout: Duration::from_secs(300),
+            mblock_timeout: Duration::from_secs(300),
             ..Default::default()
         },
         ..Default::default()
@@ -1328,7 +1328,7 @@ async fn invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let round = p.first_mut().state().chain.view_change();
     invalid_proposes_inner(&mut p, round).await;
@@ -1343,7 +1343,7 @@ async fn second_round_invalid_proposes() {
         chain: cfg,
         num_nodes: 3,
         node: NodeConfig {
-            macroblock_timeout: Duration::from_secs(300),
+            mblock_timeout: Duration::from_secs(300),
             ..Default::default()
         },
         ..Default::default()
@@ -1354,7 +1354,7 @@ async fn second_round_invalid_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
 
@@ -1363,7 +1363,7 @@ async fn second_round_invalid_proposes() {
     // skip proposal and prevote of last leader.
     let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
     let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-    wait(config.node.macroblock_timeout).await;
+    wait(config.node.mblock_timeout).await;
 
     info!("====== Waiting for keyblock timeout. =====");
     p.poll().await;
@@ -1393,7 +1393,7 @@ async fn multiple_proposes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -1481,7 +1481,7 @@ async fn invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
@@ -1557,7 +1557,7 @@ async fn leader_invalid_prevotes() {
     let mut p = sb.partition();
 
     // Create one micro block.
-    p.skip_microblock().await;
+    p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();

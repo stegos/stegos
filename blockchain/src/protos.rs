@@ -76,7 +76,7 @@ impl ProtoConvert for OutputKey {
                 let mut sub = blockchain::MacroblockOutputKey::new();
                 sub.set_epoch(*epoch);
                 sub.set_output_id(*output_id);
-                msg.set_macroblock(sub);
+                msg.set_mblock(sub);
             }
             OutputKey::Microblock {
                 epoch,
@@ -89,7 +89,7 @@ impl ProtoConvert for OutputKey {
                 sub.set_offset(*offset);
                 sub.set_tx_id(*tx_id);
                 sub.set_txout_id(*txout_id);
-                msg.set_microblock(sub);
+                msg.set_ublock(sub);
             }
         }
         msg
@@ -97,13 +97,13 @@ impl ProtoConvert for OutputKey {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let data = match proto.key {
-            Some(blockchain::OutputKey_oneof_key::Macroblock(ref msg)) => {
+            Some(blockchain::OutputKey_oneof_key::mblock(ref msg)) => {
                 let epoch = msg.get_epoch();
                 let output_id = msg.get_output_id();
 
                 OutputKey::Macroblock { epoch, output_id }
             }
-            Some(blockchain::OutputKey_oneof_key::Microblock(ref msg)) => {
+            Some(blockchain::OutputKey_oneof_key::ublock(ref msg)) => {
                 let epoch = msg.get_epoch();
                 let offset = msg.get_offset();
                 let tx_id = msg.get_tx_id();
@@ -905,8 +905,8 @@ impl ProtoConvert for MicroblockHeader {
         proto.set_pkey(self.pkey.into_proto());
         proto.set_random(self.random.into_proto());
         proto.set_solution(self.solution.clone());
-        let timestamp: u64 = self.timestamp.into();
-        proto.set_timestamp(timestamp);
+        let ts: u64 = self.timestamp.into();
+        proto.set_timestamp(ts);
         proto.set_transactions_len(self.transactions_len);
         proto.set_transactions_range_hash(self.transactions_range_hash.into_proto());
         proto.set_inputs_len(self.inputs_len);
@@ -931,7 +931,7 @@ impl ProtoConvert for MicroblockHeader {
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
         let solution = proto.get_solution().to_vec();
-        let timestamp: Timestamp = proto.get_timestamp().into();
+        let ts: Timestamp = proto.get_timestamp().into();
         let transactions_len = proto.get_transactions_len();
         let transactions_range_hash = Hash::from_proto(proto.get_transactions_range_hash())?;
         let inputs_len = proto.get_inputs_len();
@@ -949,7 +949,7 @@ impl ProtoConvert for MicroblockHeader {
             pkey,
             random,
             solution,
-            timestamp,
+            timestamp: ts,
             transactions_len,
             transactions_range_hash,
             inputs_len,
@@ -1068,7 +1068,7 @@ impl ProtoConvert for MacroblockHeader {
         let pkey = pbc::PublicKey::from_proto(proto.get_pkey())?;
         let random = pbc::VRF::from_proto(proto.get_random())?;
         let difficulty = proto.get_difficulty();
-        let timestamp = proto.get_timestamp().into();
+        let ts = proto.get_timestamp().into();
         let block_reward = proto.get_block_reward();
         let gamma = Fr::from_proto(proto.get_gamma())?;
         let activity_map = BitVec::from_iter(proto.activity_map.iter().map(|x| *x));
@@ -1087,7 +1087,7 @@ impl ProtoConvert for MacroblockHeader {
             pkey,
             random,
             difficulty,
-            timestamp,
+            timestamp: ts,
             block_reward,
             gamma,
             activity_map,
@@ -1216,21 +1216,21 @@ impl ProtoConvert for Block {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::Block::new();
         match self {
-            Block::Macroblock(macroblock) => proto.set_macroblock(macroblock.into_proto()),
-            Block::Microblock(microblock) => proto.set_microblock(microblock.into_proto()),
+            Block::Macroblock(mb) => proto.set_mblock(mb.into_proto()),
+            Block::Microblock(ub) => proto.set_ublock(ub.into_proto()),
         }
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = match proto.block {
-            Some(blockchain::Block_oneof_block::Macroblock(ref macroblock)) => {
-                let macroblock = Macroblock::from_proto(macroblock)?;
-                Block::Macroblock(macroblock)
+            Some(blockchain::Block_oneof_block::mblock(ref mb)) => {
+                let mb = Macroblock::from_proto(mb)?;
+                Block::Macroblock(mb)
             }
-            Some(blockchain::Block_oneof_block::Microblock(ref microblock)) => {
-                let microblock = Microblock::from_proto(microblock)?;
-                Block::Microblock(microblock)
+            Some(blockchain::Block_oneof_block::ublock(ref ub)) => {
+                let ub = Microblock::from_proto(ub)?;
+                Block::Microblock(ub)
             }
             None => {
                 return Err(
@@ -1247,25 +1247,21 @@ impl ProtoConvert for LightBlock {
     fn into_proto(&self) -> Self::Proto {
         let mut proto = blockchain::LightBlock::new();
         match self {
-            LightBlock::LightMacroblock(macroblock) => {
-                proto.set_light_macroblock(macroblock.into_proto())
-            }
-            LightBlock::LightMicroblock(microblock) => {
-                proto.set_light_microblock(microblock.into_proto())
-            }
+            LightBlock::LightMacroblock(mb) => proto.set_light_mblock(mb.into_proto()),
+            LightBlock::LightMicroblock(ub) => proto.set_light_ublock(ub.into_proto()),
         }
         proto
     }
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let block = match proto.block {
-            Some(blockchain::LightBlock_oneof_block::light_macroblock(ref macroblock)) => {
-                let macroblock = LightMacroblock::from_proto(macroblock)?;
-                LightBlock::LightMacroblock(macroblock)
+            Some(blockchain::LightBlock_oneof_block::light_mblock(ref mb)) => {
+                let mb = LightMacroblock::from_proto(mb)?;
+                LightBlock::LightMacroblock(mb)
             }
-            Some(blockchain::LightBlock_oneof_block::light_microblock(ref microblock)) => {
-                let microblock = LightMicroblock::from_proto(microblock)?;
-                LightBlock::LightMicroblock(microblock)
+            Some(blockchain::LightBlock_oneof_block::light_ublock(ref ub)) => {
+                let ub = LightMicroblock::from_proto(ub)?;
+                LightBlock::LightMicroblock(ub)
             }
             None => {
                 return Err(
@@ -1466,7 +1462,7 @@ mod tests {
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let view_change = 15;
         let previous = Hash::digest(&"test".to_string());
         let offset = 20;
@@ -1494,7 +1490,7 @@ mod tests {
             pkeypbc,
             random,
             solution,
-            timestamp,
+            ts,
             transactions,
         );
         roundtrip(&block.header);
@@ -1502,7 +1498,7 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
-        let light_block = block.clone().into_light_microblock();
+        let light_block = block.clone().into_light_ublock();
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block2, light_block);
 
@@ -1531,7 +1527,7 @@ mod tests {
         let (skeypbc, pkeypbc) = pbc::make_random_keys();
 
         let epoch: u64 = 10;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let view_change = 15;
         let amount: i64 = 1_000_000;
         let block_reward = 1000;
@@ -1559,7 +1555,7 @@ mod tests {
             pkeypbc,
             random,
             difficulty,
-            timestamp,
+            ts,
             block_reward,
             gamma,
             activity_map,
@@ -1572,7 +1568,7 @@ mod tests {
         let block2 = roundtrip(&block);
         assert_eq!(block, block2);
 
-        let light_block = block.clone().into_light_macroblock(validators);
+        let light_block = block.clone().into_light_mblock(validators);
         let light_block2 = roundtrip(&light_block);
         assert_eq!(light_block, light_block2);
 

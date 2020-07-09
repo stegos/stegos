@@ -315,8 +315,8 @@ impl Hashable for SystemTime {
         let since_the_epoch = self
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time is valid");
-        let timestamp = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
-        timestamp.hash(state);
+        let ts = since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_millis() as u64;
+        ts.hash(state);
     }
 }
 

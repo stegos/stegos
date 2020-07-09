@@ -90,7 +90,7 @@ pub async fn precondition_n_different_block_leaders<'a>(
     p: &mut Partition<'a>,
     different_leaders: u32,
 ) {
-    p.skip_microblocks_until(|p| {
+    p.skip_ubs_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| p.future_block_leader(id).unwrap())
             .collect();
@@ -108,7 +108,7 @@ pub async fn precondition_n_different_viewchange_leaders<'a>(
     p: &mut Partition<'a>,
     different_leaders: u32,
 ) {
-    p.skip_microblocks_until(|p| {
+    p.skip_ubs_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| p.future_view_change_leader(id))
             .collect();

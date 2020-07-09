@@ -380,12 +380,12 @@ impl NodeState {
         }
 
         // Validate transaction.
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let result = validate_external_transaction(
             &tx,
             &self.mempool,
             &self.chain,
-            timestamp,
+            ts,
             self.cfg.min_payment_fee,
             self.cfg.min_stake_fee,
         );
@@ -604,7 +604,7 @@ impl NodeState {
         let offset = remote.header.offset;
         let remote_hash = Hash::digest(&remote);
         let remote_view_change = remote.header.view_change;
-        let local = self.chain.microblock(epoch, offset)?;
+        let local = self.chain.ub(epoch, offset)?;
         let local_hash = Hash::digest(local.as_ref());
 
         // check multiple blocks with same view_change
@@ -625,7 +625,7 @@ impl NodeState {
                 return Err(ForkError::Canceled);
             }
 
-            swarn!(self, "Detected two Microblocks from the same leader: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
+            swarn!(self, "Detected two microblocks from the same leader: epoch={}, offset={}, local_block={}, remote_block={}, local_previous={}, remote_previous={}, local_view_change={}, remote_view_change={}",
                   epoch,
                   offset,
                   local_hash,
@@ -663,7 +663,7 @@ impl NodeState {
         }
 
         // Check the proof.
-        let chain = ChainInfo::from_microblock(&remote);
+        let chain = ChainInfo::from_ublock(&remote);
         let sealed_proof = match remote.header.view_change_proof {
             Some(ref proof) => SealedViewChangeProof {
                 proof: proof.clone(),
@@ -696,7 +696,7 @@ impl NodeState {
         let offset = proof.chain.offset;
         let local = if offset < self.chain.offset() {
             // Get local block.
-            let local = self.chain.microblock(epoch, offset)?;
+            let local = self.chain.ub(epoch, offset)?;
             ChainInfo {
                 epoch,
                 offset: local.header.offset,
@@ -770,7 +770,7 @@ impl NodeState {
 
         // Truncate the blockchain.
         while self.chain.offset() > offset {
-            self.pop_microblock()?;
+            self.pop_ublock()?;
         }
         assert_eq!(offset, self.chain.offset());
 
@@ -781,24 +781,24 @@ impl NodeState {
     }
 
     /// Handle a macro block from the network.
-    fn handle_macroblock(&mut self, block: Macroblock) -> Result<(), Error> {
+    fn handle_mblock(&mut self, block: Macroblock) -> Result<(), Error> {
         if block.header.epoch < self.chain.epoch() {
             // Ignore outdated block.
             let block_hash = Hash::digest(&block);
             sdebug!(
                 self,
-                "Skip outdated Macroblock: block={}, epoch={}",
+                "Skip outdated macroblock: block={}, epoch={}",
                 block_hash,
                 block.header.epoch
             );
             Ok(())
         } else if block.header.epoch == self.chain.epoch() {
-            self.apply_macroblock(block)
+            self.apply_mblock(block)
         } else {
             let block_hash = Hash::digest(&block);
             sdebug!(
                 self,
-                "Skip Macroblock from the future: block={}, epoch={}",
+                "Skip macroblock from the future: block={}, epoch={}",
                 block_hash,
                 block.header.epoch
             );
@@ -807,11 +807,11 @@ impl NodeState {
     }
 
     /// Handle a micro block from the network.
-    fn handle_microblock(&mut self, block: Microblock) -> Result<(), Error> {
+    fn handle_ublock(&mut self, block: Microblock) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         if block.header.epoch < self.chain.epoch() {
             sdebug!(self,
-                "Ignore outdated Microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
+                "Ignore outdated microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
                 block.header.offset,
@@ -823,7 +823,7 @@ impl NodeState {
             || block.header.offset > self.chain.offset()
         {
             sdebug!(self,
-                "Ignore Microblock from the future: block={}, epoch={}, offset={}, view_change={}, previous={}",
+                "Ignore microblock from the future: block={}, epoch={}, offset={}, view_change={}, previous={}",
                 block_hash,
                 block.header.epoch,
                 block.header.offset,
@@ -840,7 +840,7 @@ impl NodeState {
 
         sdebug!(
             self,
-            "Process Microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
+            "Process microblock: block={}, epoch={}, offset={}, view_change={}, previous={}",
             block_hash,
             block.header.epoch,
             block.header.offset,
@@ -893,10 +893,10 @@ impl NodeState {
         assert_eq!(block.header.offset, self.chain.offset());
 
         let view_change = block.header.view_change;
-        if let Err(e) = self.apply_microblock(block) {
+        if let Err(e) = self.apply_ublock(block) {
             serror!(
                 self,
-                "Failed to apply Microblock: block={}, error={}",
+                "Failed to apply microblock: block={}, error={}",
                 block_hash,
                 e
             );
@@ -961,15 +961,15 @@ impl NodeState {
     /// Handle incoming blocks received from network.
     fn handle_block(&mut self, block: Block) -> Result<(), Error> {
         match block {
-            Block::Microblock(block) => self.handle_microblock(block),
-            Block::Macroblock(block) => self.handle_macroblock(block),
+            Block::Microblock(block) => self.handle_ublock(block),
+            Block::Macroblock(block) => self.handle_mblock(block),
         }
     }
 
     /// Try to apply a new micro block into the blockchain.
-    fn apply_macroblock(&mut self, block: Macroblock) -> Result<(), Error> {
+    fn apply_mblock(&mut self, block: Macroblock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let was_synchronized = self.chain.is_synchronized();
@@ -986,11 +986,11 @@ impl NodeState {
 
         // Remove all micro blocks.
         while self.chain.offset() > 0 {
-            self.pop_microblock()?;
+            self.pop_ublock()?;
         }
         assert_eq!(0, self.chain.offset());
 
-        let (inputs, outputs) = self.chain.push_macroblock(block.clone(), timestamp)?;
+        let (inputs, outputs) = self.chain.push_mblock(block.clone(), ts)?;
 
         // Remove conflict transactions from the mempool.
         self.mempool.prune(inputs.iter(), outputs.keys());
@@ -998,14 +998,14 @@ impl NodeState {
         let epoch_info = self
             .chain
             .epoch_info(epoch)?
-            .expect("Expect epoch info for last Macroblock.")
+            .expect("Expect epoch info for last macroblock.")
             .clone();
 
         let old_epoch_info = if epoch > 0 {
             Some(
                 self.chain
                     .epoch_info(epoch - 1)?
-                    .expect("Expect epoch info for last Macroblock.")
+                    .expect("Expect epoch info for last macroblock.")
                     .clone(),
             )
         } else {
@@ -1020,16 +1020,16 @@ impl NodeState {
         self.on_facilitator_changed();
         self.on_block_added(block_timestamp, notification.into(), was_synchronized);
 
-        let apply_time = Timestamp::now().duration_since(timestamp).as_secs_f64();
+        let apply_time = Timestamp::now().duration_since(ts).as_secs_f64();
         metrics::MACROBLOCK_APPLY_TIME.set(apply_time);
 
         Ok(())
     }
 
     /// Try to apply a new micro block into the blockchain.
-    fn apply_microblock(&mut self, block: Microblock) -> Result<(), Error> {
+    fn apply_ublock(&mut self, block: Microblock) -> Result<(), Error> {
         let hash = Hash::digest(&block);
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let block_timestamp = block.header.timestamp;
         let epoch = block.header.epoch;
         let offset = block.header.offset;
@@ -1048,7 +1048,7 @@ impl NodeState {
         let outputs_len: usize = block.transactions.iter().map(|tx| tx.txouts().len()).sum();
         let txs_len = block.transactions.len();
         sdebug!(self,
-            "Validating Microblock: epoch = {}, offset = {}, block = {}, inputs_len = {}, outputs_len = {}, txs_len = {}",
+            "Validating microblock: epoch = {}, offset = {}, block = {}, inputs_len = {}, outputs_len = {}, txs_len = {}",
             epoch, offset, &hash, inputs_len, outputs_len, txs_len
         );
         let start_clock = Instant::now();
@@ -1073,8 +1073,7 @@ impl NodeState {
             match outputs.into_par_iter().try_for_each(Output::validate) {
                 Ok(()) => {
                     let validate_utxo = false; // validated above.
-                    self.chain
-                        .validate_microblock(&block, timestamp, validate_utxo)
+                    self.chain.validate_ublock(&block, ts, validate_utxo)
                 }
                 Err(e) => Err(e),
             }
@@ -1099,9 +1098,8 @@ impl NodeState {
             }
         }
 
-        // Apply Micro Block.
-        let (inputs, outputs, _block_transactions) =
-            self.chain.push_microblock(block.clone(), timestamp)?;
+        // Apply microblock.
+        let (inputs, outputs, _block_transactions) = self.chain.push_ublock(block.clone(), ts)?;
 
         // Remove conflict transactions from the mempool.
         self.mempool.prune(inputs.iter(), outputs.keys());
@@ -1172,9 +1170,9 @@ impl NodeState {
         let light_block: LightBlock = match &block {
             Block::Macroblock(block) => block
                 .clone()
-                .into_light_macroblock(self.chain.validators_at_epoch_start())
+                .into_light_mblock(self.chain.validators_at_epoch_start())
                 .into(),
-            Block::Microblock(block) => block.clone().into_light_microblock().into(),
+            Block::Microblock(block) => block.clone().into_light_ublock().into(),
         };
         self.outgoing
             .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
@@ -1234,10 +1232,10 @@ impl NodeState {
     ///
     /// * `notify_tx_statuses` - notify subscribers that transactions has been reverted.
     ///
-    fn pop_microblock(&mut self) -> Result<(), Error> {
-        let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_microblock()?;
+    fn pop_ublock(&mut self) -> Result<(), Error> {
+        let (pruned_outputs, recovered_inputs, txs, block) = self.chain.pop_ublock()?;
         self.last_block_clock = Instant::now();
-        self.mempool.pop_microblock(txs);
+        self.mempool.pop_ublock(txs);
 
         // Update validation status.
         self.validation_status_changed = true;
@@ -1258,7 +1256,7 @@ impl NodeState {
     }
 
     /// Handler for NodeMessage::RevertMicroblock.
-    fn handle_pop_microblock(&mut self) -> Result<(), Error> {
+    fn handle_pop_ublock(&mut self) -> Result<(), Error> {
         swarn!(self, "Received equest to revert the latest block");
         if self.chain.offset() == 0 {
             return Err(format_err!(
@@ -1266,7 +1264,7 @@ impl NodeState {
                 self.chain.epoch()
             ));
         }
-        self.pop_microblock()?;
+        self.pop_ublock()?;
         Ok(())
     }
 
@@ -1282,7 +1280,7 @@ impl NodeState {
             Block::Macroblock(ref block) => {
                 sinfo!(
                     self,
-                    "Sent Macroblock to the network: epoch={}, block={}, previous={}",
+                    "Sent macroblock to the network: epoch={}, block={}, previous={}",
                     block.header.epoch,
                     block_hash,
                     block.header.previous
@@ -1291,7 +1289,7 @@ impl NodeState {
             Block::Microblock(ref block) => {
                 sinfo!(
                     self,
-                    "Sent Microblock to the network: epoch={}, offset={}, block={}, previous={}",
+                    "Sent microblock to the network: epoch={}, offset={}, block={}, previous={}",
                     block.header.epoch,
                     block.header.offset,
                     block_hash,
@@ -1307,11 +1305,11 @@ impl NodeState {
     //----------------------------------------------------------------------------------------------
 
     /// Called when a leader for the next micro block has changed.
-    fn on_microblock_leader_changed(&mut self) {
+    fn on_ublock_leader_changed(&mut self) {
         let leader = self.chain.leader();
         if leader == self.network_pkey {
             sinfo!(self,
-                "I'm the leader. Collecting txs for the next Microblock: epoch={}, offset={}, view_change={}, last_block={}",
+                "I'm the leader. Collecting txs for the next microblock: epoch={}, offset={}, view_change={}, last_block={}",
                 self.chain.epoch(),
                 self.chain.offset(),
                 self.chain.view_change(),
@@ -1327,11 +1325,11 @@ impl NodeState {
                 });
             strace!(
                 self,
-                "Pushed Microblock propose, {} items in outgoing queue",
+                "Will propose microblock, {} items in outgoing queue",
                 self.outgoing.len()
             );
         } else {
-            sinfo!(self, "I'm a validator. Waiting for the next Microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
+            sinfo!(self, "I'm a validator. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
                   self.chain.offset(),
                   self.chain.view_change(),
@@ -1346,17 +1344,17 @@ impl NodeState {
 
         strace!(
             self,
-            "Setting the Microblock view change timer to {:?}",
-            self.cfg.microblock_timeout
+            "Setting the microblock view change timer to {:?}",
+            self.cfg.ublock_timeout
         );
         self.outgoing
             .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
-                self.cfg.microblock_timeout,
+                self.cfg.ublock_timeout,
             ));
     }
 
     /// Called when a leader for the next macro block has changed.
-    fn on_macroblock_leader_changed(&mut self) {
+    fn on_mblock_leader_changed(&mut self) {
         let (consensus, autocommit_counter) = match &mut self.validation {
             MacroblockValidator {
                 consensus,
@@ -1371,7 +1369,7 @@ impl NodeState {
 
         if consensus.is_leader() {
             sinfo!(self,
-                "I'm the leader. Proposing Macroblock: epoch={}, view_change={}, last_block={}, propose?={}",
+                "I'm the leader. Proposing macroblock: epoch={}, view_change={}, last_block={}, propose?={}",
                 self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash(),
@@ -1385,7 +1383,7 @@ impl NodeState {
             }
         } else {
             sinfo!(self,
-                "I'm a validator. Waiting for the next Macroblock: epoch={}, view_change={}, last_block={}, leader={}",
+                "I'm a validator. Waiting for the next macroblock: epoch={}, view_change={}, last_block={}, leader={}",
                 self.chain.epoch(),
                 consensus.round(),
                 self.chain.last_block_hash(),
@@ -1396,10 +1394,10 @@ impl NodeState {
         }
 
         let round = 1 + consensus.round();
-        let d = self.cfg.macroblock_timeout * round;
+        let d = self.cfg.mblock_timeout * round;
         strace!(
             self,
-            ">>> Setting the Macroblock view change timer to {:?} for round = {}",
+            ">>> Setting the macroblock view change timer to {:?} for round = {}",
             d,
             round
         );
@@ -1430,7 +1428,7 @@ impl NodeState {
             // Expected Micro Block.
             let _prev = std::mem::replace(&mut self.validation, MicroblockAuditor);
             if !self.chain.is_validator(&self.network_pkey) {
-                sinfo!(self, "I'm an auditor. Waiting for the next Microblock: epoch={}, offset={}, view_change={}, last_block={}",
+                sinfo!(self, "I'm an auditor. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}",
                       self.chain.epoch(),
                       self.chain.offset(),
                       self.chain.view_change(),
@@ -1448,14 +1446,14 @@ impl NodeState {
                 view_change_collector,
                 future_consensus_messages: Vec::new(),
             };
-            self.on_microblock_leader_changed();
+            self.on_ublock_leader_changed();
         } else {
             // Expected Macro Block.
             let prev = std::mem::replace(&mut self.validation, MacroblockAuditor);
             if !self.chain.is_validator(&self.network_pkey) {
                 sinfo!(
                     self,
-                    "I'm an auditor. Waiting for the next Macroblock: epoch={}, last_block={}",
+                    "I'm an auditor. Waiting for the next macroblock: epoch={}, last_block={}",
                     self.chain.epoch(),
                     self.chain.last_block_hash()
                 );
@@ -1494,7 +1492,7 @@ impl NodeState {
                 autocommit_counter: 0,
             };
 
-            self.on_macroblock_leader_changed();
+            self.on_mblock_leader_changed();
             self.handle_consensus_events();
         }
     }
@@ -1521,7 +1519,7 @@ impl NodeState {
                 // TODO: remove queue and use request-responses to get message from other nodes.
                 strace!(
                     self,
-                    "I'm a Microblock validator, must skip consensus messages!"
+                    "I'm a microblock validator, must skip consensus messages!"
                 );
                 future_consensus_messages.push(msg);
                 return Ok(());
@@ -1548,12 +1546,12 @@ impl NodeState {
             let (block_hash, block_proposal, view_change) = consensus.get_proposal();
             sdebug!(
                 self,
-                "Validating Macroblock proposal: epoch={}, block={}",
+                "Validating macroblock proposal: epoch={}, block={}",
                 epoch,
                 &block_hash
             );
             let start_clock = Instant::now();
-            let r = self.chain.validate_proposed_macroblock(
+            let r = self.chain.validate_proposed_mblock(
                 view_change,
                 block_hash,
                 &block_proposal.header,
@@ -1564,7 +1562,7 @@ impl NodeState {
             metrics::MACROBLOCK_VALIDATE_TIME.set(duration);
             metrics::MACROBLOCK_VALIDATE_TIME_HG.observe(duration);
             match r {
-                Ok(macroblock) => {
+                Ok(mb) => {
                     sdebug!(
                         self,
                         "Macroblock proposal is valid: epoch={}, block={}, duration={:.3}",
@@ -1572,7 +1570,7 @@ impl NodeState {
                         &block_hash,
                         duration
                     );
-                    consensus.prevote(macroblock)
+                    consensus.prevote(mb)
                 }
                 Err(e) => {
                     serror!(
@@ -1610,9 +1608,9 @@ impl NodeState {
 
     /// Get a timestamp for the next block.
     fn next_block_timestamp(&self) -> Timestamp {
-        let timestamp = Timestamp::now();
-        if timestamp > self.chain.last_block_timestamp() {
-            timestamp
+        let ts = Timestamp::now();
+        if ts > self.chain.last_block_timestamp() {
+            ts
         } else {
             // Timestamp must be increasing.
             self.chain.last_block_timestamp() + Duration::from_millis(1)
@@ -1620,8 +1618,8 @@ impl NodeState {
     }
 
     /// Propose a new macro block.
-    fn propose_macroblock(&mut self) -> Result<(), Error> {
-        let timestamp = self.next_block_timestamp();
+    fn propose_mblock(&mut self) -> Result<(), Error> {
+        let ts = self.next_block_timestamp();
         let consensus = match &mut self.validation {
             MacroblockValidator { consensus, .. } => consensus,
             _ => panic!("Expected MacroblockValidator state"),
@@ -1631,12 +1629,12 @@ impl NodeState {
 
         // Set view_change timer.
         let relevant_round = 1 + consensus.round();
-        let duration = relevant_round * self.cfg.macroblock_timeout;
+        let duration = relevant_round * self.cfg.mblock_timeout;
         self.outgoing
             .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
         sdebug!(
             self,
-            "Creating a new Macroblock proposal: epoch={}, view_change={}",
+            "Creating a new macroblock proposal: epoch={}, view_change={}",
             self.chain.epoch(),
             consensus.round()
         );
@@ -1648,12 +1646,12 @@ impl NodeState {
             .account_by_network_key(&self.network_pkey)
             .expect("Staked");
 
-        let (block, transactions) = self.chain.create_macroblock(
+        let (block, transactions) = self.chain.create_mblock(
             consensus.round(),
             &recipient_pkey,
             &self.network_skey,
             self.network_pkey.clone(),
-            timestamp,
+            ts,
         );
         let block_hash = Hash::digest(&block);
 
@@ -1669,7 +1667,7 @@ impl NodeState {
         metrics::MACROBLOCK_CREATE_TIME_HG.observe(duration);
         sinfo!(
             self,
-            "Created a new Macroblock proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
+            "Created a new macroblock proposal: epoch={}, view_change={}, hash={}, duration={:.3}",
             self.chain.epoch(),
             consensus.round(),
             block_hash,
@@ -1684,10 +1682,8 @@ impl NodeState {
     }
 
     /// Checks if it's time to perform a view change on a micro block.
-    fn handle_macroblock_viewchange_timer(&mut self) -> Result<(), Error> {
-        assert!(
-            Instant::now().duration_since(self.last_block_clock) >= self.cfg.macroblock_timeout
-        );
+    fn handle_mblock_viewchange_timer(&mut self) -> Result<(), Error> {
+        assert!(Instant::now().duration_since(self.last_block_clock) >= self.cfg.mblock_timeout);
 
         // Check that a block has been committed but haven't send by the leader.
         let (consensus, autocommit) = match &mut self.validation {
@@ -1720,11 +1716,11 @@ impl NodeState {
             if !is_relay {
                 *autocommit += 1;
                 strace!(self,
-                    "It's not time to send Macroblock, waiting for next autocommit timer, current_leader={}",
+                    "It's not time to send macroblock, waiting for next autocommit timer, current_leader={}",
                     leader.0
                 );
                 let relevant_round = 1 + consensus.round();
-                let duration = relevant_round * self.cfg.macroblock_timeout;
+                let duration = relevant_round * self.cfg.mblock_timeout;
                 self.outgoing
                     .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
                 return Ok(());
@@ -1736,7 +1732,7 @@ impl NodeState {
         }
 
         swarn!(self,
-            "Timed out while waiting for a Macroblock, going to the next round: epoch={}, view_change={}, leader = {}",
+            "Timed out while waiting for a macroblock, going to the next round: epoch={}, view_change={}, leader = {}",
             self.chain.epoch(), consensus.round() + 1, self.chain.leader()
 
         );
@@ -1744,7 +1740,7 @@ impl NodeState {
         // Go to the next round.
         metrics::MACROBLOCK_VIEW_CHANGES.inc();
         consensus.next_round();
-        self.on_macroblock_leader_changed();
+        self.on_mblock_leader_changed();
         self.handle_consensus_events();
 
         self.on_status_changed();
@@ -1796,7 +1792,7 @@ impl NodeState {
                     .set_view_change(self.chain.view_change() + 1, proof);
 
                 // Change leader.
-                self.on_microblock_leader_changed();
+                self.on_ublock_leader_changed();
             }
             Ok(None) => {}
             Err(ref e) if e.is_future_viewchange() => {
@@ -1819,20 +1815,20 @@ impl NodeState {
     }
 
     /// Checks if it's time to perform a view change on a micro block.
-    fn handle_microblock_viewchange_timer(&mut self) -> Result<(), Error> {
+    fn handle_ublock_viewchange_timer(&mut self) -> Result<(), Error> {
         let elapsed = Instant::now().duration_since(self.last_block_clock);
         strace!(
             self,
             "Elapsed {:?} since last block clock. Microblock timeout = {:?}",
             elapsed,
-            self.cfg.microblock_timeout
+            self.cfg.ublock_timeout
         );
         #[cfg(not(test))]
-        assert!(elapsed >= self.cfg.microblock_timeout);
+        assert!(elapsed >= self.cfg.ublock_timeout);
         let leader = self.chain.leader();
         swarn!(
             self,
-            "Timed out while waiting for a Microblock: epoch = {}, leader = {}, elapsed = {:?}",
+            "Timed out while waiting for a microblock: epoch = {}, leader = {}, elapsed = {:?}",
             self.chain.epoch(),
             leader,
             elapsed
@@ -1850,7 +1846,7 @@ impl NodeState {
         };
 
         // Update timer.
-        let duration = self.cfg.microblock_timeout;
+        let duration = self.cfg.ublock_timeout;
         self.outgoing
             .push(NodeOutgoingEvent::MicroblockViewChangeTimer(duration));
         // Send a view_change message.
@@ -1904,7 +1900,7 @@ impl NodeState {
     ///
     /// Create a new micro block.
     ///
-    fn create_microblock(&mut self, solution: Vec<u8>) -> Result<(), Error> {
+    fn create_ublock(&mut self, solution: Vec<u8>) -> Result<(), Error> {
         match &self.validation {
             MicroblockValidator { .. } => {}
             _ => panic!("Expected MicroblockValidator State"),
@@ -1919,7 +1915,7 @@ impl NodeState {
         let view_change_proof = self.chain.view_change_proof().clone();
         sdebug!(
             self,
-            "Creating a new Microblock: epoch={}, offset={}, view_change={}, last_block={}",
+            "Creating a new microblock: epoch={}, offset={}, view_change={}, last_block={}",
             epoch,
             offset,
             view_change,
@@ -1944,7 +1940,7 @@ impl NodeState {
             .chain
             .account_by_network_key(&self.network_pkey)
             .expect("Staked");
-        let timestamp = self.next_block_timestamp();
+        let ts = self.next_block_timestamp();
         let mut block = self.mempool.create_block(
             previous,
             epoch,
@@ -1959,7 +1955,7 @@ impl NodeState {
             &self.network_pkey,
             self.cfg.max_inputs_in_block,
             self.cfg.max_outputs_in_block,
-            timestamp,
+            ts,
         );
 
         let block_hash = Hash::digest(&block);
@@ -1972,7 +1968,7 @@ impl NodeState {
         metrics::MICROBLOCK_CREATE_TIME.set(duration);
         metrics::MICROBLOCK_CREATE_TIME_HG.observe(duration);
         sinfo!(self,
-            "Created a Microblock: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
+            "Created a microblock: epoch={}, offset={}, view_change={}, block={}, transactions={}, duration={:.3}",
             epoch,
             offset,
             view_change,
@@ -1982,12 +1978,12 @@ impl NodeState {
         );
 
         let block2 = block.clone();
-        self.apply_microblock(block).expect("created a valid block");
+        self.apply_ublock(block).expect("created a valid block");
         self.send_block(Block::Microblock(block2))
             .expect("failed to send sealed micro block");
         self.outgoing
             .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
-                self.cfg.microblock_timeout,
+                self.cfg.ublock_timeout,
             ));
         Ok(())
     }
@@ -2000,23 +1996,22 @@ impl NodeState {
         // Commit the block.
         match std::mem::replace(&mut self.validation, Validation::MacroblockAuditor) {
             MacroblockValidator { consensus, .. } => {
-                let macroblock = consensus.commit();
-                let macroblock2 = macroblock.clone();
-                self.apply_macroblock(macroblock)
-                    .expect("block is validated before");
-                self.send_block(Block::Macroblock(macroblock2))
+                let mb = consensus.commit();
+                let mb2 = mb.clone();
+                self.apply_mblock(mb).expect("block is validated before");
+                self.send_block(Block::Macroblock(mb2))
                     .expect("failed to send sealed micro block");
             }
             _ => unreachable!("Expected MacroblockValidator state"),
         }
     }
 
-    fn handle_macroblock_info(&self, epoch: u64) -> Result<ExtendedMacroblock, Error> {
+    fn handle_mblock_info(&self, epoch: u64) -> Result<ExtendedMacroblock, Error> {
         if epoch >= self.chain.epoch() {
             return Err(format_err!("Macroblock does not exist: epoch={}", epoch));
         }
 
-        let block = self.chain.macroblock(epoch)?.into_owned();
+        let block = self.chain.mblock(epoch)?.into_owned();
         let epoch_info = self.chain.epoch_info(epoch)?.unwrap().clone();
         let old_epoch_info = if epoch > 0 {
             Some(self.chain.epoch_info(epoch - 1)?.unwrap().clone())
@@ -2031,7 +2026,7 @@ impl NodeState {
         Ok(msg)
     }
 
-    fn handle_microblock_info(&self, epoch: u64, offset: u32) -> Result<Microblock, Error> {
+    fn handle_ublock_info(&self, epoch: u64, offset: u32) -> Result<Microblock, Error> {
         if epoch != self.chain.epoch() || offset >= self.chain.offset() {
             return Err(format_err!(
                 "Microblock does not exist: epoch={}, offset={}",
@@ -2039,7 +2034,7 @@ impl NodeState {
                 offset
             ));
         }
-        let block = self.chain.microblock(epoch, offset)?.into_owned();
+        let block = self.chain.ub(epoch, offset)?.into_owned();
         Ok(block)
     }
 
@@ -2115,7 +2110,7 @@ impl NodeState {
                     NodeRequest::EscrowInfo {} => {
                         NodeResponse::EscrowInfo(self.chain.escrow_info())
                     }
-                    NodeRequest::PopMicroblock {} => match self.handle_pop_microblock() {
+                    NodeRequest::PopMicroblock {} => match self.handle_pop_ublock() {
                         Ok(()) => NodeResponse::MicroblockPopped,
                         Err(e) => NodeResponse::Error {
                             error: format!("{}", e),
@@ -2259,16 +2254,14 @@ impl NodeState {
                         }
                     }
 
-                    NodeRequest::MacroblockInfo { epoch } => {
-                        match self.handle_macroblock_info(epoch) {
-                            Ok(block_info) => NodeResponse::MacroblockInfo(block_info),
-                            Err(e) => NodeResponse::Error {
-                                error: format!("{}", e),
-                            },
-                        }
-                    }
+                    NodeRequest::MacroblockInfo { epoch } => match self.handle_mblock_info(epoch) {
+                        Ok(block_info) => NodeResponse::MacroblockInfo(block_info),
+                        Err(e) => NodeResponse::Error {
+                            error: format!("{}", e),
+                        },
+                    },
                     NodeRequest::MicroblockInfo { epoch, offset } => {
-                        match self.handle_microblock_info(epoch, offset) {
+                        match self.handle_ublock_info(epoch, offset) {
                             Ok(block_info) => NodeResponse::MicroblockInfo(block_info),
                             Err(e) => NodeResponse::Error {
                                 error: format!("{}", e),
@@ -2336,19 +2329,19 @@ impl NodeState {
             }
             NodeIncomingEvent::ProposeMacroblock => {
                 //
-                self.propose_macroblock()
+                self.propose_mblock()
             }
             NodeIncomingEvent::MacroblockViewChangeTimer => {
                 //
-                self.handle_macroblock_viewchange_timer()
+                self.handle_mblock_viewchange_timer()
             }
             NodeIncomingEvent::ProposeMicroblock(solution) => {
                 //
-                self.create_microblock(solution)
+                self.create_ublock(solution)
             }
             NodeIncomingEvent::MicroblockViewChangeTimer => {
                 //
-                self.handle_microblock_viewchange_timer()
+                self.handle_ublock_viewchange_timer()
             }
             NodeIncomingEvent::ChainLoaderMessage { from: _, data: _ } => {
                 unreachable!("Must be handled by NodeService");

@@ -52,7 +52,7 @@ impl CoinbaseTransaction {
         }
 
         // Validate that fee is not negative.
-        // Exact value is checked by upper levels (validate_microblock()).
+        // Exact value is checked by upper levels (validate_ublock()).
         if self.block_fee < 0 {
             return Err(TransactionError::NegativeFee(tx_hash).into());
         }
@@ -374,7 +374,7 @@ impl Macroblock {
     ///
     /// Validate the block monetary balance.
     ///
-    /// This function is a lightweight version of Blockchain.validate_microblock().
+    /// This function is a lightweight version of Blockchain.validate_ublock().
     /// The only monetary balance is validated. For test purposes only.
     ///
     /// # Arguments
@@ -446,9 +446,9 @@ impl Blockchain {
     }
 
     ///
-    /// A common part of validate_macroblock() and validate_proposed_macroblock().
+    /// A common part of validate_mblock() and validate_proposed_mblock().
     ///
-    fn validate_macroblock_basic(
+    fn validate_mblock_basic(
         &self,
         block_hash: &Hash,
         header: &MacroblockHeader,
@@ -478,7 +478,7 @@ impl Blockchain {
         }
 
         // Check previous hash.
-        let previous_hash = self.last_macroblock_hash();
+        let previous_hash = self.last_mblock_hash();
         if previous_hash != header.previous {
             return Err(BlockError::InvalidMacroblockPreviousHash(
                 epoch,
@@ -504,7 +504,7 @@ impl Blockchain {
         }
 
         // Check VRF.
-        let seed = mix(self.last_macroblock_random(), header.view_change);
+        let seed = mix(self.last_mblock_random(), header.view_change);
         if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(epoch, *block_hash).into());
         }
@@ -515,7 +515,7 @@ impl Blockchain {
     ///
     /// Validate a macro block from the disk.
     ///
-    pub(crate) fn validate_macroblock(
+    pub(crate) fn validate_mblock(
         &mut self,
         block: &Macroblock,
         timestamp: Timestamp,
@@ -548,14 +548,14 @@ impl Blockchain {
         //
         // Basic validation.
         //
-        self.validate_macroblock_basic(&block_hash, &block.header, timestamp)?;
+        self.validate_mblock_basic(&block_hash, &block.header, timestamp)?;
 
         //
         // Validate Awards.
         //
         if epoch > 0 {
             let validators_activity =
-                self.epoch_activity_from_macroblock(&block.header.activity_map)?;
+                self.epoch_activity_from_mblock(&block.header.activity_map)?;
             let mut service_awards = self.service_awards().clone();
             service_awards.finalize_epoch(self.cfg().service_award_per_epoch, validators_activity);
             let winner = service_awards.check_winners(block.header.random.rand);
@@ -681,7 +681,7 @@ impl Blockchain {
     ///
     /// Validate proposed macro block.
     ///
-    pub fn validate_proposed_macroblock(
+    pub fn validate_proposed_mblock(
         &self,
         view_change: u32,
         block_hash: &Hash,
@@ -718,7 +718,7 @@ impl Blockchain {
         // Validate base header.
         //
         let current_timestamp = Timestamp::now();
-        self.validate_macroblock_basic(block_hash, &header, current_timestamp)?;
+        self.validate_mblock_basic(block_hash, &header, current_timestamp)?;
 
         // validate award.
         let (activity_map, winner) = self.awards_from_active_epoch(&header.random);
@@ -847,9 +847,9 @@ impl Blockchain {
     }
 
     ///
-    /// A helper for validate_microblock().
+    /// A helper for validate_ublock().
     ///
-    fn validate_microblock_tx<'a>(
+    fn validate_ublock_tx<'a>(
         &self,
         tx: &'a Transaction,
         leader: pbc::PublicKey,
@@ -921,7 +921,7 @@ impl Blockchain {
     /// * `timestamp` - current time.
     ///                         Used to validating escrow.
     ///
-    pub fn validate_microblock(
+    pub fn validate_ublock(
         &self,
         block: &Microblock,
         timestamp: Timestamp,
@@ -993,7 +993,7 @@ impl Blockchain {
         } else if block.header.view_change > 0 {
             match block.header.view_change_proof {
                 Some(ref proof) => {
-                    let chain = ChainInfo::from_microblock(&block);
+                    let chain = ChainInfo::from_ublock(&block);
                     if let Err(e) = proof.validate(&chain, &self) {
                         return Err(
                             BlockError::InvalidViewChangeProof(epoch, proof.clone(), e).into()
@@ -1165,7 +1165,7 @@ impl Blockchain {
                 }
                 coinbase_fee += tx.block_fee;
             }
-            self.validate_microblock_tx(tx, block.header.pkey, &mut inputs_set, &mut outputs_set)?;
+            self.validate_ublock_tx(tx, block.header.pkey, &mut inputs_set, &mut outputs_set)?;
             fee += tx.fee();
         }
         if coinbase_fee != fee {
@@ -1636,13 +1636,13 @@ pub mod tests {
     }
 
     #[test]
-    fn create_validate_macroblock() {
+    fn create_validate_mblock() {
         let (_skey1, pkey1) = scc::make_random_keys();
         let (_skey2, pkey2) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest("test");
@@ -1666,7 +1666,7 @@ pub mod tests {
                 npkey,
                 random,
                 complexity,
-                timestamp,
+                ts,
                 0,
                 gamma,
                 BitVec::new(),
@@ -1693,7 +1693,7 @@ pub mod tests {
                 npkey,
                 random,
                 complexity,
-                timestamp,
+                ts,
                 0,
                 gamma,
                 BitVec::new(),
@@ -1709,12 +1709,12 @@ pub mod tests {
     }
 
     #[test]
-    fn create_validate_macroblock_with_staking() {
+    fn create_validate_mblock_with_staking() {
         let (_skey1, pkey1) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let view_change = 0;
         let amount: i64 = 1_000_000;
         let previous = Hash::digest(&"test".to_string());
@@ -1741,7 +1741,7 @@ pub mod tests {
                 npkey,
                 random,
                 complexity,
-                timestamp,
+                ts,
                 0,
                 gamma,
                 BitVec::new(),
@@ -1771,7 +1771,7 @@ pub mod tests {
                 npkey,
                 random,
                 complexity,
-                timestamp,
+                ts,
                 0,
                 gamma,
                 BitVec::new(),
@@ -1862,7 +1862,7 @@ pub mod tests {
         let (nskey, npkey) = pbc::make_random_keys();
 
         let epoch: u64 = 0;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let view_change = 0;
         let previous = Hash::digest(&"test".to_string());
 

@@ -286,11 +286,11 @@ fn main() {
     let epoch: u64 = 0;
     let view_change: u32 = 0;
     let previous = Hash::digest("genesis");
-    let last_macroblock_random = Hash::digest("genesis");
-    let seed = mix(last_macroblock_random, view_change);
+    let last_mblock_random = Hash::digest("genesis");
+    let seed = mix(last_mblock_random, view_change);
     let random = pbc::make_VRF(&keychains[0].2, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
-    let timestamp = Timestamp::now();
+    let ts = Timestamp::now();
     let validators =
         election::select_validators_slots(stakers, random, cfg.max_slot_count).validators;
 
@@ -302,7 +302,7 @@ fn main() {
         keychains[0].3.clone(),
         random,
         difficulty,
-        timestamp,
+        ts,
         coins,
         -outputs_gamma,
         activity_map,

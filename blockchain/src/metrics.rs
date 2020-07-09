@@ -64,56 +64,56 @@ lazy_static! {
     pub static ref EMISSION: IntGauge =
         register_int_gauge!("stegos_blockchain_emission", "Monetary emission").unwrap();
     pub static ref MACROBLOCK_INPUTS: IntGauge = register_int_gauge!(
-        "stegos_macroblocks_inputs",
+        "stegos_mbs_inputs",
         "The number of inputs in a macro block."
     )
     .unwrap();
     pub static ref MACROBLOCK_INPUTS_HG: Histogram = register_histogram!(
-        "stegos_macroblocks_inputs_hg",
+        "stegos_mbs_inputs_hg",
         "Histogram of the number of inputs in a macro block.",
         vec![1., 5., 10., 20., 30., 40., 50., 100., 1000.0]
     )
     .unwrap();
     pub static ref MACROBLOCK_OUTPUTS: IntGauge = register_int_gauge!(
-        "stegos_macroblocks_outputs",
+        "stegos_mbs_outputs",
         "The number of outputs in a macro block."
     )
     .unwrap();
     pub static ref MACROBLOCK_OUTPUTS_HG: Histogram = register_histogram!(
-        "stegos_macroblocks_outputs_hg",
+        "stegos_mbs_outputs_hg",
         "Histogram of the number of outputs in a macro block.",
         vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )
     .unwrap();
     pub static ref MICROBLOCK_INPUTS: IntGauge = register_int_gauge!(
-        "stegos_microblocks_inputs",
+        "stegos_ubs_inputs",
         "The number of inputs in a micro block."
     )
     .unwrap();
     pub static ref MICROBLOCK_INPUTS_HG: Histogram = register_histogram!(
-        "stegos_microblocks_inputs_hg",
+        "stegos_ubs_inputs_hg",
         "Histogram of the number of inputs in a micro block.",
         vec![1., 5., 10., 20., 30., 40., 50., 100., 1000.0]
     )
     .unwrap();
     pub static ref MICROBLOCK_OUTPUTS: IntGauge = register_int_gauge!(
-        "stegos_microblocks_outputs",
+        "stegos_ubs_outputs",
         "The number of outputs in a micro block."
     )
     .unwrap();
     pub static ref MICROBLOCK_OUTPUTS_HG: Histogram = register_histogram!(
-        "stegos_microblocks_outputs_hg",
+        "stegos_ubs_outputs_hg",
         "Histogram of the number of outputs in a micro block.",
         vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )
     .unwrap();
     pub static ref MICROBLOCK_TRANSACTIONS: IntGauge = register_int_gauge!(
-        "stegos_microblocks_transactions",
+        "stegos_ubs_transactions",
         "The number of transactions in a micro block."
     )
     .unwrap();
     pub static ref MICROBLOCK_TRANSACTIONS_HG: Histogram = register_histogram!(
-        "stegos_microblocks_transactions_hg",
+        "stegos_ubs_transactions_hg",
         "Histogram of the number of transactions in a micro block.",
         vec![1., 5., 10., 20., 30., 40., 50., 100.]
     )

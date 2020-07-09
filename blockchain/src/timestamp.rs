@@ -36,8 +36,8 @@ impl Timestamp {
     pub const UNIX_EPOCH: Timestamp = Timestamp(0);
 
     pub fn now() -> Self {
-        let timestamp = SystemTime::now();
-        timestamp.into()
+        let ts = SystemTime::now();
+        ts.into()
     }
 
     /// Returns `Some(t)` where `t` is the time `self + duration` if `t` can be represented as
@@ -78,8 +78,8 @@ impl Timestamp {
     /// then returns a new `Timestamp`.
     pub fn parse_rfc3339(s: &str) -> Result<Timestamp, Error> {
         let dt = DateTime::parse_from_rfc3339(s)?;
-        let timestamp = dt.timestamp_nanos() as u64;
-        Ok(timestamp.into())
+        let ts = dt.timestamp_nanos() as u64;
+        Ok(ts.into())
     }
 }
 
@@ -124,9 +124,9 @@ impl From<SystemTime> for Timestamp {
         let since_the_epoch = timestamp
             .duration_since(std::time::UNIX_EPOCH)
             .expect("time is valid");
-        let timestamp =
+        let ts =
             since_the_epoch.as_secs() * 1_000_000_000u64 + since_the_epoch.subsec_nanos() as u64;
-        Timestamp(timestamp)
+        Timestamp(ts)
     }
 }
 
@@ -216,10 +216,10 @@ mod tests {
     #[test]
     fn serde() {
         // check deserialization with millis precision.
-        let timestamp: Timestamp = 1560850195_123456789u64.into();
-        assert_tokens(&timestamp, &[Token::Str("2019-06-18T09:29:55.123456789Z")]);
-        let timestamp_str = serde_json::to_string(&timestamp).unwrap();
-        let timestamp_new: Timestamp = serde_json::from_str(&timestamp_str).unwrap();
-        assert_eq!(timestamp, timestamp_new)
+        let ts: Timestamp = 1560850195_123456789u64.into();
+        assert_tokens(&ts, &[Token::Str("2019-06-18T09:29:55.123456789Z")]);
+        let ts_str = serde_json::to_string(&ts).unwrap();
+        let ts_new: Timestamp = serde_json::from_str(&ts_str).unwrap();
+        assert_eq!(ts, ts_new)
     }
 }

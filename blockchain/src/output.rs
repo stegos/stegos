@@ -70,7 +70,7 @@ pub enum OutputError {
     #[fail(display = "Invalid signature on validator pkey: utxo={}", _0)]
     InvalidStakeSignature(Hash),
     #[fail(
-        display = "Input is locked: hash={}, tx_time={}, last_macroblock_time={}",
+        display = "Input is locked: hash={}, tx_time={}, last_mblock_time={}",
         _0, _1, _2
     )]
     UtxoLocked(Hash, Timestamp, Timestamp),

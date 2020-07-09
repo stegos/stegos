@@ -124,7 +124,7 @@ pub struct AccountBalance {
     /// PaymentUTXO + PublicPaymentUTXO + StakeUTXO.
     #[serde(flatten)]
     pub total: Balance,
-    /// Is account balance finalized (was updated before last macroblock).
+    /// Is account balance finalized (was updated before last mb).
     pub is_final: bool,
     #[serde(default)]
     pub epoch: u64,

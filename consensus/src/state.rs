@@ -487,7 +487,8 @@ impl Consensus {
                     self,
                     "{}({}:{}): invalid block hash: expected {} but got {}, msg = {}",
                     self.state.name(),
-                    self.epoch, self.round,
+                    self.epoch,
+                    self.round,
                     &expected_block_hash,
                     &msg.block_hash,
                     &msg

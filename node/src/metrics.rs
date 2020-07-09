@@ -54,52 +54,52 @@ lazy_static! {
     // Macro Blocks.
     //
     pub static ref MACROBLOCK_AUTOCOMMITS: IntCounter = register_int_counter!(
-        "stegos_macroblock_autocommits",
+        "stegos_mblock_autocommits",
         "The number of auto-commits of proposed block"
     )
     .unwrap();
     pub static ref MACROBLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(
-        "stegos_macroblock_view_changes",
+        "stegos_mblock_view_changes",
         "The number of forced view_changes for the macro blocks."
     )
     .unwrap();
 
     pub static ref MACROBLOCK_APPLY_TIME: Gauge = register_gauge!(
-        "stegos_macroblock_apply_time",
+        "stegos_mblock_apply_time",
         "Macro block applying time."
     )
     .unwrap();
 
     pub static ref MACROBLOCK_CREATE_TIME: Gauge = register_gauge!(
-        "stegos_macroblock_create_time",
+        "stegos_mblock_create_time",
         "Macro block create time."
     )
     .unwrap();
     pub static ref MACROBLOCK_CREATE_TIME_HG: Histogram = register_histogram!(
-        "stegos_macroblock_create_time_hg",
+        "stegos_mblock_create_time_hg",
         "Histogram of macro block creation time",
          vec![0.020, 0.030, 0.040, 0.050, 0.060, 0.070, 0.080, 0.090, 0.100]
     )
     .unwrap();
     pub static ref MACROBLOCK_VALIDATE_TIME: Gauge = register_gauge!(
-        "stegos_macroblock_validate_time",
+        "stegos_mblock_validate_time",
         "Macro block validate time."
     )
     .unwrap();
     pub static ref MACROBLOCK_VALIDATE_TIME_HG: Histogram = register_histogram!(
-        "stegos_macroblock_validate_time_hg",
+        "stegos_mblock_validate_time_hg",
         "Histogram of macro block validation time",
           vec![0.005, 0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040, 0.050, 0.100]
     )
     .unwrap();
     pub static ref MACROBLOCK_LAG: Gauge = register_gauge!(
-        "stegos_macroblock_lag",
+        "stegos_mblock_lag",
         "Macro block creation + validation + propagation time, i.e. it is the time difference between the local time at a remote leader when the last block began to be created and the local time at this node when this block was registered."
     )
     .unwrap();
     pub static ref MACROBLOCK_LAG_HG: Histogram = register_histogram!(
-        "stegos_macroblock_lag_hg",
-        "Histogram of stegos_macroblock_lag",
+        "stegos_mblock_lag_hg",
+        "Histogram of stegos_mblock_lag",
          vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1., 2., 3., 4., 5.]
     )
     .unwrap();
@@ -108,60 +108,60 @@ lazy_static! {
     // Micro Blocks.
     //
     pub static ref MICROBLOCKS_FORKS: IntCounter = register_int_counter!(
-        "stegos_microblocks_forks",
+        "stegos_ubs_forks",
         "The number of forks detected"
     )
     .unwrap();
     pub static ref MICROBLOCKS_CHEATS: IntCounter = register_int_counter!(
-        "stegos_microblocks_cheats",
+        "stegos_ubs_cheats",
         "The number of duplicate blocks for the same slot detected"
     )
     .unwrap();
     pub static ref MICROBLOCK_VIEW_CHANGES: IntCounter = register_int_counter!(
-        "stegos_microblock_view_changes",
+        "stegos_ublock_view_changes",
         "The number of forced view_changes for the micro blocks."
     )
     .unwrap();
     pub static ref MICROBLOCK_CREATE_TIME: Gauge = register_gauge!(
-        "stegos_microblock_create_time",
+        "stegos_ublock_create_time",
         "Micro block create time."
     )
     .unwrap();
     pub static ref MICROBLOCK_CREATE_TIME_HG: Histogram = register_histogram!(
-        "stegos_microblock_create_time_hg",
+        "stegos_ublock_create_time_hg",
         "Histogram of micro block creation time",
          vec![0.020, 0.030, 0.040, 0.050, 0.060, 0.070, 0.080, 0.090, 0.100]
     )
     .unwrap();
     pub static ref MICROBLOCK_VALIDATE_TIME: Gauge = register_gauge!(
-        "stegos_microblock_validate_time",
+        "stegos_ublock_validate_time",
         "Micro block validate time."
     )
     .unwrap();
     pub static ref MICROBLOCK_VALIDATE_TIME_HG: Histogram = register_histogram!(
-        "stegos_microblock_validate_time_hg",
+        "stegos_ublock_validate_time_hg",
         "Histogram of micro block validation time",
          vec![0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2., 3., 4., 5.]
     )
     .unwrap();
     pub static ref MICROBLOCK_LAG: Gauge = register_gauge!(
-        "stegos_microblock_lag",
-        "Like stegos_macroblock_lag, but for micro blocks."
+        "stegos_ublock_lag",
+        "Like stegos_mblock_lag, but for micro blocks."
     )
     .unwrap();
     pub static ref MICROBLOCK_LAG_HG: Histogram = register_histogram!(
-        "stegos_microblock_lag_hg",
-        "Histogram of stegos_microblock_lag.",
+        "stegos_ublock_lag_hg",
+        "Histogram of stegos_ublock_lag.",
          vec![0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2., 3., 4., 5., 6., 7., 8., 9., 10.]
     )
     .unwrap();
     pub static ref MICROBLOCK_INTERVAL: Gauge = register_gauge!(
-        "stegos_microblock_interval",
+        "stegos_ublock_interval",
         "Interval between two micro blocks."
     )
     .unwrap();
     pub static ref MICROBLOCK_INTERVAL_HG: Histogram = register_histogram!(
-        "stegos_microblock_interval_hg",
+        "stegos_ublock_interval_hg",
         "Histogram of micro block intervals",
          vec![1., 2., 3., 4., 5., 6., 7., 8., 9., 10., 20., 30., 40., 50., 60.]
     )

@@ -17,14 +17,14 @@ fn generate_chain(
     //
     // Initialize blockchain.
     //
-    let mut timestamp = Timestamp::now();
+    let mut ts = Timestamp::now();
     let (keychains, genesis) = test::fake_genesis(
         cfg.min_stake_amount,
         (num_nodes as i64) * cfg.min_stake_amount + 100,
         cfg.max_slot_count,
         num_nodes,
-        timestamp,
-        cfg.awards_difficulty.try_into().unwrap(),
+        ts,
+        cfg.awards_difficulty,
         None,
     );
     let mut chain = Blockchain::new(
@@ -32,7 +32,7 @@ fn generate_chain(
         chain_dir,
         ConsistencyCheck::None,
         genesis.clone(),
-        timestamp,
+        ts,
     )
     .expect("Failed to create blockchain");
 
@@ -45,27 +45,24 @@ fn generate_chain(
         assert_eq!(chain.epoch(), epoch);
         info!("Generating epoch={}", epoch);
         for _offset in 0..cfg.blocks_in_epoch {
-            timestamp += Duration::from_millis(1);
+            ts += Duration::from_millis(1);
             let (block, _input_hashes, _output_hashes) =
-                test::create_fake_microblock(&mut chain, &keychains, timestamp);
-            chain
-                .push_microblock(block, timestamp)
-                .expect("no I/O errors");
+                test::create_fake_ublock(&mut chain, &keychains, ts);
+            chain.push_ublock(block, ts).expect("no I/O errors");
         }
         assert_eq!(chain.offset(), cfg.blocks_in_epoch);
 
         // Create a macro block.
-        timestamp += Duration::from_millis(1);
-        let (block, _extra_transactions) =
-            test::create_fake_macroblock(&chain, &keychains, timestamp);
+        ts += Duration::from_millis(1);
+        let (block, _extra_transactions) = test::create_fake_mblock(&chain, &keychains, ts);
 
         // Remove all micro blocks.
         while chain.offset() > 0 {
-            chain.pop_microblock().expect("no I/O errors");
+            chain.pop_ublock().expect("no I/O errors");
         }
 
         // Push macro block.
-        chain.push_macroblock(block.clone(), timestamp).unwrap();
+        chain.push_mblock(block.clone(), ts).unwrap();
         blocks.push(block);
     }
     assert_eq!(chain.epoch(), 1 + epochs);
@@ -73,7 +70,7 @@ fn generate_chain(
     blocks
 }
 
-fn push_macroblock(b: &mut Bencher) {
+fn push_mblock(b: &mut Bencher) {
     const NUM_NODES: usize = 32;
     const EPOCHS: u64 = 10;
     let cfg = ChainConfig {
@@ -86,7 +83,7 @@ fn push_macroblock(b: &mut Bencher) {
 
     // Try to apply blocks to a new blockchain.
     info!("Starting benchmark");
-    let timestamp = Timestamp::now();
+    let ts = Timestamp::now();
     b.iter_with_setup(
         || {
             let chain_dir = TempDir::new("bench").unwrap();
@@ -95,20 +92,20 @@ fn push_macroblock(b: &mut Bencher) {
                 chain_dir.path(),
                 ConsistencyCheck::None,
                 blocks[0].clone(),
-                timestamp,
+                ts,
             )
             .unwrap();
             (chain, chain_dir, blocks.clone())
         },
         |(mut chain, _temp_dir, blocks)| {
             for block in blocks.into_iter().skip(1) {
-                chain.push_macroblock(block, timestamp).unwrap();
+                chain.push_mblock(block, ts).unwrap();
             }
         },
     );
 }
 
-fn recover_macroblock(b: &mut Bencher) {
+fn recover_mblock(b: &mut Bencher) {
     const NUM_NODES: usize = 32;
     const EPOCHS: u64 = 10;
     let cfg = ChainConfig {
@@ -121,14 +118,14 @@ fn recover_macroblock(b: &mut Bencher) {
 
     // Try to recovery from the disk.
     info!("Starting benchmark");
-    let timestamp = Timestamp::now();
+    let ts = Timestamp::now();
     b.iter(|| {
         let _chain = Blockchain::new(
             cfg.clone(),
             chain_dir.path(),
             ConsistencyCheck::None,
             blocks[0].clone(),
-            timestamp,
+            ts,
         )
         .unwrap();
     });
@@ -136,8 +133,8 @@ fn recover_macroblock(b: &mut Bencher) {
 
 fn blocks_benchmark(c: &mut Criterion) {
     simple_logger::init_with_level(log::Level::Info).unwrap_or_default();
-    c.bench_function("blockchain::push_macroblock(10)", push_macroblock);
-    c.bench_function("blockchain::recover_macroblock(10)", recover_macroblock);
+    c.bench_function("blockchain::push_mblock(10)", push_mblock);
+    c.bench_function("blockchain::recover_mblock(10)", recover_mblock);
 }
 
 criterion_group! {

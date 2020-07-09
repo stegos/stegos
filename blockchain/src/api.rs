@@ -216,8 +216,8 @@ pub struct StatusInfo {
     pub offset: u32,
     pub view_change: u32,
     pub last_block_hash: Hash,
-    pub last_macroblock_hash: Hash,
-    pub last_macroblock_timestamp: Timestamp,
+    pub last_mblock_hash: Hash,
+    pub last_mblock_timestamp: Timestamp,
     pub local_timestamp: Timestamp,
 }
 
@@ -229,8 +229,8 @@ impl Default for StatusInfo {
             offset: 0,
             view_change: 0,
             last_block_hash: Hash::zero(),
-            last_macroblock_hash: Hash::zero(),
-            last_macroblock_timestamp: Timestamp::now(),
+            last_mblock_hash: Hash::zero(),
+            last_mblock_timestamp: Timestamp::now(),
             local_timestamp: Timestamp::now(),
         }
     }

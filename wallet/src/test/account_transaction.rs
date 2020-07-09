@@ -95,7 +95,7 @@ fn create_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_microblock();
+        s.skip_ublock();
 
         accounts[0].poll();
 
@@ -169,7 +169,7 @@ fn create_tx_with_certificate() {
 
                 // TODO: Get transaction from the node using api.
                 {
-                    let timestamp = accounts[0]
+                    let ts = accounts[0]
                         .account_service
                         .database
                         .tx_entry(tx.tx_hash)
@@ -225,7 +225,7 @@ fn create_tx_with_certificate() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_microblock();
+        s.skip_ublock();
 
         accounts[0].poll();
 
@@ -289,7 +289,7 @@ fn process_tx(s: &mut Sandbox, accounts: &mut Vec<AccountSandbox>) -> Hash {
         } => assert_eq!(tx_hash, my_tx),
         _ => unreachable!(),
     }
-    s.skip_microblock();
+    s.skip_ublock();
 
     accounts[0].poll();
 
@@ -322,7 +322,7 @@ fn full_transfer_with_rollback() {
         accounts[0].poll();
         let offset = s.first().chain().offset();
         assert_eq!(notification.poll(), Ok(Async::NotReady));
-        s.rollback_microblock();
+        s.rollback_ublock();
         s.assert_synchronized();
 
         let new_offset = s.first().chain().offset();
@@ -469,7 +469,7 @@ fn wait_for_epoch_end_with_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_microblock();
+        s.skip_ublock();
 
         accounts[0].poll();
 
@@ -485,9 +485,9 @@ fn wait_for_epoch_end_with_tx() {
 
         for offset in offset..s.config.chain.blocks_in_epoch {
             s.poll();
-            s.skip_microblock()
+            s.skip_ublock()
         }
-        s.skip_macroblock();
+        s.skip_mblock();
         accounts[0].poll();
 
         // ignore multiple notification, and assert that notification not equal to our.
@@ -541,7 +541,7 @@ fn create_public_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_microblock();
+        s.skip_ublock();
 
         let epoch = s.first().chain().epoch();
         let offset = s.first().chain().offset();
@@ -617,7 +617,7 @@ fn recovery_acount_after_tx() {
             } => assert_eq!(tx_hash, my_tx),
             _ => unreachable!(),
         }
-        s.skip_microblock();
+        s.skip_ublock();
 
         accounts[0].poll();
 
@@ -784,7 +784,7 @@ fn precondition_each_account_has_tokens(
         s.poll();
         // rebroadcast transaction to each node
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
         genesis_account.poll();
     }
 
@@ -1078,7 +1078,7 @@ fn create_snowball_tx() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1295,12 +1295,12 @@ fn annihilation() {
             s.poll();
             // rebroadcast transaction to each node
             s.broadcast(stegos_node::TX_TOPIC);
-            s.skip_microblock();
+            s.skip_ublock();
             accounts[0].poll();
         }
         s.poll();
-        s.skip_microblock();
-        s.skip_macroblock();
+        s.skip_ublock();
+        s.skip_mblock();
     });
 }
 
@@ -1452,7 +1452,7 @@ fn create_snowball_simple() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1580,7 +1580,7 @@ fn create_snowball_fail_share_key() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -1715,7 +1715,7 @@ fn create_snowball_fail_commitment() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let (notification) = status;
@@ -1850,7 +1850,7 @@ fn create_snowball_fail_cloacked_vals() {
         debug!("===== BROADCAST SB TRANSACTION =====");
         s.poll();
         s.broadcast(stegos_node::TX_TOPIC);
-        s.skip_microblock();
+        s.skip_ublock();
 
         for (account, status) in accounts.iter_mut().zip(&mut notifications_new) {
             let notification = status;
@@ -2265,7 +2265,7 @@ fn perform_restart_asymetric(
     debug!("===== BROADCAST SB TRANSACTION =====");
     s.poll();
     s.broadcast(stegos_node::TX_TOPIC);
-    s.skip_microblock();
+    s.skip_ublock();
 
     for (id, (account, status)) in accounts.iter_mut().zip(&mut notifications_new).enumerate() {
         let notification = status;

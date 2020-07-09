@@ -20,7 +20,7 @@ message ConsensusMessageBody {
     oneof body {
         Prevote prevote = 1;
         Precommit precommit= 2;
-        MacroblockProposal Macroblock_proposal = 11;
+        MacroblockProposal mblock_proposal = 11;
     }
 }
 

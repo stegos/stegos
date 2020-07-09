@@ -182,5 +182,5 @@ fn clear_notification(rx: &mut mpsc::UnboundedReceiver<AccountNotification>) {
 // test::
 // Create regular transaction.
 // check that it was not committed.
-// skip_microblock().
+// skip_ublock().
 // check that tx was committed.

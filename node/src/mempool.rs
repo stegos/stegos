@@ -109,7 +109,7 @@ impl Mempool {
     ///
     /// Re-add transactions after reverting the last micro block.
     ///
-    pub fn pop_microblock(&mut self, txs: Vec<Transaction>) {
+    pub fn pop_ublock(&mut self, txs: Vec<Transaction>) {
         let mut tx_hashes: HashSet<Hash> = HashSet::new();
         for tx in &txs {
             for output in tx.txouts() {
@@ -523,7 +523,7 @@ mod test {
         assert!(!mempool.contains_tx(&tx_hash1));
         assert_eq!(mempool.len(), 1);
 
-        mempool.pop_microblock(vec![tx1.clone().into()]);
+        mempool.pop_ublock(vec![tx1.clone().into()]);
         assert!(mempool.contains_tx(&tx_hash2));
         assert!(mempool.contains_tx(&tx_hash1));
         assert_eq!(mempool.len(), 2);
@@ -556,7 +556,7 @@ mod test {
         mempool.push_tx(tx_hash3.clone(), tx3.clone().into());
 
         let previous = Hash::digest(&1u64);
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let epoch = 1;
         let offset = 5;
         let view_change = 0;
@@ -576,7 +576,7 @@ mod test {
             &network_pkey,
             max_inputs_in_block,
             max_outputs_in_block,
-            timestamp,
+            ts,
         );
 
         assert_eq!(block.transactions.len(), 3);

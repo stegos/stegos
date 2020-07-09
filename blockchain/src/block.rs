@@ -312,7 +312,7 @@ impl Hashable for LightMicroblock {
 }
 
 impl Microblock {
-    pub fn into_light_microblock(self) -> LightMicroblock {
+    pub fn into_light_ublock(self) -> LightMicroblock {
         let input_hashes: Vec<Hash> = self.inputs().cloned().collect();
         let canaries: Vec<Canary> = self.outputs().map(|o| o.canary()).collect();
         let output_hashes: Vec<Hash> = self.outputs().map(Hash::digest).collect();
@@ -328,7 +328,7 @@ impl Microblock {
 
 impl From<Microblock> for LightMicroblock {
     fn from(block: Microblock) -> LightMicroblock {
-        block.into_light_microblock()
+        block.into_light_ublock()
     }
 }
 
@@ -683,7 +683,7 @@ impl Macroblock {
         }
     }
 
-    pub fn into_light_macroblock(self, validators: Validators) -> LightMacroblock {
+    pub fn into_light_mblock(self, validators: Validators) -> LightMacroblock {
         let input_hashes: Vec<Hash> = self.inputs;
         let outputs: Vec<Output> = self.outputs;
         let canaries: Vec<Canary> = outputs.iter().map(|o| o.canary()).collect();
@@ -746,12 +746,12 @@ impl Block {
     ///
     pub fn unwrap_micro(self) -> Microblock {
         match self {
-            Block::Microblock(microblock) => microblock,
-            Block::Macroblock(macroblock) => {
+            Block::Microblock(ub) => ub,
+            Block::Macroblock(mb) => {
                 panic!(
                     "Expected a micro block: epoch={}, block={}",
-                    macroblock.header.epoch,
-                    Hash::digest(&macroblock)
+                    mb.header.epoch,
+                    Hash::digest(&mb)
                 );
             }
         }
@@ -766,12 +766,12 @@ impl Block {
     ///
     pub fn unwrap_micro_ref(&self) -> &Microblock {
         match self {
-            Block::Microblock(ref microblock) => microblock,
-            Block::Macroblock(ref macroblock) => {
+            Block::Microblock(ref ub) => ub,
+            Block::Macroblock(ref mb) => {
                 panic!(
                     "Expected a micro block: epoch={}, block={}",
-                    macroblock.header.epoch,
-                    Hash::digest(&macroblock)
+                    mb.header.epoch,
+                    Hash::digest(&mb)
                 );
             }
         }
@@ -786,13 +786,13 @@ impl Block {
     ///
     pub fn unwrap_macro(self) -> Macroblock {
         match self {
-            Block::Macroblock(macroblock) => macroblock,
-            Block::Microblock(microblock) => {
+            Block::Macroblock(mb) => mb,
+            Block::Microblock(ub) => {
                 panic!(
                     "Expected a micro block: epoch={}, offset={}, block={}",
-                    microblock.header.epoch,
-                    microblock.header.offset,
-                    Hash::digest(&microblock)
+                    ub.header.epoch,
+                    ub.header.offset,
+                    Hash::digest(&ub)
                 );
             }
         }
@@ -807,13 +807,13 @@ impl Block {
     ///
     pub fn unwrap_macro_ref(&self) -> &Macroblock {
         match self {
-            Block::Macroblock(ref macroblock) => macroblock,
-            Block::Microblock(ref microblock) => {
+            Block::Macroblock(ref mb) => mb,
+            Block::Microblock(ref ub) => {
                 panic!(
                     "Expected a micro block: epoch={}, offset={}, block={}",
-                    microblock.header.epoch,
-                    microblock.header.offset,
-                    Hash::digest(&microblock)
+                    ub.header.epoch,
+                    ub.header.offset,
+                    Hash::digest(&ub)
                 );
             }
         }
@@ -823,8 +823,8 @@ impl Block {
 impl Hashable for Block {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            Block::Macroblock(macroblock) => macroblock.hash(state),
-            Block::Microblock(microblock) => microblock.hash(state),
+            Block::Macroblock(mb) => mb.hash(state),
+            Block::Microblock(ub) => ub.hash(state),
         }
     }
 }
@@ -851,8 +851,8 @@ impl From<LightMicroblock> for LightBlock {
 impl Hashable for LightBlock {
     fn hash(&self, state: &mut Hasher) {
         match self {
-            LightBlock::LightMacroblock(macroblock) => macroblock.header.hash(state),
-            LightBlock::LightMicroblock(microblock) => microblock.header.hash(state),
+            LightBlock::LightMacroblock(mb) => mb.header.hash(state),
+            LightBlock::LightMicroblock(ub) => ub.header.hash(state),
         }
     }
 }

@@ -179,15 +179,15 @@ message LightMicroblock {
 
 message Block {
     oneof block {
-        Macroblock Macroblock = 1;
-        Microblock Microblock = 2;
+        Macroblock mblock = 1;
+        Microblock ublock = 2;
     }
 }
 
 message LightBlock {
     oneof block {
-        LightMacroblock light_macroblock = 1;
-        LightMicroblock light_microblock = 2;
+        LightMacroblock light_mblock = 1;
+        LightMicroblock light_ublock = 2;
     }
 }
 
@@ -215,8 +215,8 @@ message MicroblockOutputKey {
 
 message OutputKey {
     oneof key {
-        MacroblockOutputKey Macroblock = 1;
-        MicroblockOutputKey Microblock = 2;
+        MacroblockOutputKey mblock = 1;
+        MicroblockOutputKey ublock = 2;
     }
 }
 

@@ -108,7 +108,7 @@ impl Sandbox {
         }
 
         let num_nodes = config.num_nodes;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
 
         let mut thread_rng = thread_rng();
 
@@ -125,7 +125,7 @@ impl Sandbox {
             1000 * config.chain.min_stake_amount,
             config.chain.max_slot_count,
             num_nodes,
-            timestamp,
+            ts,
             config.chain.awards_difficulty.try_into().unwrap(),
             Some(&mut prng),
         );
@@ -329,12 +329,12 @@ impl<'p> Partition<'p> {
     }
 
     /// Skip blocks until condition not true
-    pub async fn skip_microblocks_until<'a, F>(&'a mut self, mut condition: F)
+    pub async fn skip_ubs_until<'a, F>(&'a mut self, mut condition: F)
     where
         'p: 'a,
         F: FnMut(&mut Partition) -> bool,
     {
-        trace!("Skipping Microblocks until condition is met...");
+        trace!("Skipping microblocks until condition is met...");
         let mut ready = false;
         for i in 0..self.config.chain.blocks_in_epoch {
             if condition(self) {
@@ -342,9 +342,9 @@ impl<'p> Partition<'p> {
                 trace!("Condition met at iteration {}, stopping!", i + 1);
                 break;
             }
-            self.skip_microblock().await;
+            self.skip_ublock().await;
         }
-        assert!(ready, "Not enough Microblocks to skip");
+        assert!(ready, "Not enough microblocks to skip");
     }
 
     /// Inner logic specific for cheater slashing.
@@ -361,8 +361,7 @@ impl<'p> Partition<'p> {
         filter_nodes.push(leader_pk);
         let mut r = self.split(&filter_nodes);
         let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
-        leader.handle_vdf();
-        leader.node_service.poll().await;
+        leader.advance().await;
         let b1: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -374,7 +373,7 @@ impl<'p> Partition<'p> {
                 let block_hash = Hash::digest(&*b);
                 b.sig = pbc::sign_hash(&block_hash, &leader.node_service.state().network_skey);
             }
-            Block::Macroblock(_) => unreachable!("Expected a Macroblock"),
+            Block::Macroblock(_) => unreachable!("Expected a macroblock"),
         }
 
         info!("BROADCAST BLOCK, WITH COPY.");
@@ -561,8 +560,8 @@ impl<'p> Partition<'p> {
     /// Take micro block from leader, rebroadcast to other nodes.
     /// Should be used after block timeout.
     /// This function will poll() every node.
-    pub async fn skip_microblock(&mut self) {
-        trace!("Skipping Microblock...");
+    pub async fn skip_ublock(&mut self) {
+        trace!("Skipping microblock...");
         self.assert_synchronized();
         let chain = self.chain();
         assert!(chain.offset() <= chain.cfg().blocks_in_epoch);
@@ -587,13 +586,13 @@ impl<'p> Partition<'p> {
             restakes.push(tx)
         }
 
-        trace!("Fetching Microblock from leader {}", leader_pk);
+        trace!("Fetching microblock from leader {}", leader_pk);
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
             let pk = node.node_service.state().network_pkey;
-            trace!("Delivering Microblock to {}", pk);
+            trace!("Delivering microblock to {}", pk);
             node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
             if let Some(tx) = node.fetch_restake() {
                 restakes.push(tx)
@@ -609,18 +608,18 @@ impl<'p> Partition<'p> {
             auditor.poll().await;
         }
 
-        trace!("Processed Microblock...");
+        trace!("Processed microblock...");
     }
 
     /// Emulate rollback of Microblock, for wallet tests
-    pub async fn rollback_microblock(&mut self) {
+    pub async fn rollback_ublock(&mut self) {
         let mut view_changes = Vec::new();
         let state = self.first().node_service.state();
         let chain = &state.chain;
         let epoch = chain.epoch();
         let offset = chain.offset();
         assert!(offset > 0);
-        let block = chain.microblock(epoch, offset - 1).unwrap();
+        let block = chain.ub(epoch, offset - 1).unwrap();
         let chain_info = ChainInfo {
             epoch: block.header.epoch,
             offset: block.header.offset,
@@ -669,12 +668,12 @@ impl<'p> Partition<'p> {
         }
     }
 
-    pub async fn create_macroblock(&mut self) -> (Block, Hash, Option<Transaction>) {
+    pub async fn create_mblock(&mut self) -> (Block, Hash, Option<Transaction>) {
         trace!("Creating a Macroblock...");
         let chain = self.chain();
         let epoch = chain.epoch();
         let round = chain.view_change();
-        let last_macroblock_hash = chain.last_macroblock_hash();
+        let last_mblock_hash = chain.last_mblock_hash();
         let leader_pk = self.leader();
 
         for node in self.iter_mut() {
@@ -766,25 +765,25 @@ impl<'p> Partition<'p> {
         let restake = node.fetch_restake();
 
         // Fetch completed block
-        trace!("Fetching finished Macroblock from {}", leader_pk);
+        trace!("Fetching finished macroblock from {}", leader_pk);
         let leader = self.find_mut(&leader_pk).unwrap();
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
-        let macroblock = block.clone().unwrap_macro();
-        let block_hash = Hash::digest(&macroblock);
+        let mb = block.clone().unwrap_macro();
+        let block_hash = Hash::digest(&mb);
         assert_eq!(block_hash, proposal.block_hash);
-        assert_eq!(macroblock.header.epoch, epoch);
-        assert_eq!(macroblock.header.previous, last_macroblock_hash);
+        assert_eq!(mb.header.epoch, epoch);
+        assert_eq!(mb.header.previous, last_mblock_hash);
         (block, block_hash, restake)
     }
 
-    pub async fn skip_macroblock(&mut self) {
-        trace!("Skipping Macroblock...");
+    pub async fn skip_mblock(&mut self) {
+        trace!("Skipping macroblock...");
         let chain = self.chain();
         let epoch = chain.epoch();
 
-        let (block, block_hash, leader_restake) = self.create_macroblock().await;
+        let (block, block_hash, leader_restake) = self.create_mblock().await;
         let leader_pk = self.leader();
 
         // Process re-stakes.
@@ -809,18 +808,18 @@ impl<'p> Partition<'p> {
         let leader_pk = self.leader();
 
         trace!(
-            "Checking node state after Macroblock (leader = {})...",
+            "Checking node state after macroblock (leader = {})...",
             leader_pk
         );
         for node in self.iter() {
             let chain = &node.node_service.state().chain;
             let pkey = &node.node_service.state().network_pkey;
             trace!("[{}] epoch = {}, offset = {}, last macro hash = {}, last block hash = {}, leader = {}", 
-             pkey, chain.epoch(), chain.offset(), chain.last_macroblock_hash(), chain.last_block_hash(), chain.leader(),
+             pkey, chain.epoch(), chain.offset(), chain.last_mblock_hash(), chain.last_block_hash(), chain.leader(),
             );
             assert_eq!(chain.epoch(), epoch + 1);
             assert_eq!(chain.offset(), 0);
-            assert_eq!(chain.last_macroblock_hash(), block_hash);
+            assert_eq!(chain.last_mblock_hash(), block_hash);
             assert_eq!(chain.last_block_hash(), block_hash);
         }
 
@@ -842,7 +841,7 @@ impl<'p> Partition<'p> {
         leader.poll().await;
 
         trace!(
-            "Processed Macroblock (leader: {} -> {})...",
+            "Processed macroblock (leader: {} -> {})...",
             old_leader_pk,
             leader_pk
         );
@@ -956,14 +955,14 @@ impl NodeSandbox {
         let (network_service, network, peer_id, replication_rx) = Loopback::new(&network_pkey);
 
         // Create node, with first node keychain.
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let chain_dir = TempDir::new("test").unwrap();
         let chain = Blockchain::new(
             chain_cfg,
             chain_dir.path(),
             ConsistencyCheck::Full,
             genesis,
-            timestamp,
+            ts,
         )
         .expect("Failed to create blockchain");
         let (mut node_service, node) = NodeService::new(

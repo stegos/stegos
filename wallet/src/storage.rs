@@ -76,17 +76,17 @@ pub struct LightDatabase {
     /// The hash of genesis block.
     genesis_hash: Hash,
     /// Copy of the last macro block hash.
-    last_macroblock_hash: Hash,
+    last_mblock_hash: Hash,
     /// Copy of the last macro block random.
-    last_macroblock_random: Hash,
+    last_mblock_random: Hash,
     /// Copy of the last macro block timestamp.
-    last_macroblock_timestamp: Timestamp,
+    last_mblock_timestamp: Timestamp,
     /// Validators on the start of the epoch.
     validators: Validators,
     /// Facilitator.
     facilitator_pkey: pbc::PublicKey,
     /// Micro blocks for the current epoch.
-    microblocks: Vec<MicroblockHeader>,
+    ubs: Vec<MicroblockHeader>,
 
     /// In-memory index of all UTXOs.
     utxos: OutputByHashMap,
@@ -126,12 +126,12 @@ impl LightDatabase {
             epoch: 0,
             cfg,
             genesis_hash,
-            last_macroblock_hash: Hash::digest("genesis"),
-            last_macroblock_random: Hash::digest("genesis"),
-            last_macroblock_timestamp: Timestamp::now(),
+            last_mblock_hash: Hash::digest("genesis"),
+            last_mblock_random: Hash::digest("genesis"),
+            last_mblock_timestamp: Timestamp::now(),
             validators: Validators::new(),
             facilitator_pkey: pbc::PublicKey::dum(),
-            microblocks: Vec::new(),
+            ubs: Vec::new(),
             created_txs: HashMap::new(),
             locked_inputs: HashMap::new(),
             pending_txs: HashSet::new(),
@@ -155,9 +155,9 @@ impl LightDatabase {
 
     /// Returns true if the chain is synchronized with the network.
     pub fn is_synchronized(&self) -> bool {
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let block_timestamp = self.last_block_timestamp();
-        block_timestamp + self.cfg.sync_timeout >= timestamp
+        block_timestamp + self.cfg.sync_timeout >= ts
     }
 
     /// Returns current status.
@@ -169,8 +169,8 @@ impl LightDatabase {
             offset: self.offset(),
             view_change: 0,
             last_block_hash: self.last_block_hash(),
-            last_macroblock_hash: self.last_macroblock_hash,
-            last_macroblock_timestamp: self.last_macroblock_timestamp,
+            last_mblock_hash: self.last_mblock_hash,
+            last_mblock_timestamp: self.last_mblock_timestamp,
             local_timestamp: Timestamp::now(),
         }
     }
@@ -184,7 +184,7 @@ impl LightDatabase {
     /// Returns the number of blocks in the current epoch.
     #[inline(always)]
     pub fn offset(&self) -> u32 {
-        self.microblocks.len() as u32
+        self.ubs.len() as u32
     }
 
     /// Returns a hash of genetic block.
@@ -208,28 +208,28 @@ impl LightDatabase {
 
     /// Returns the last block hash.
     pub fn last_block_hash(&self) -> Hash {
-        if let Some(header) = self.microblocks.last() {
+        if let Some(header) = self.ubs.last() {
             Hash::digest(header)
         } else {
-            self.last_macroblock_hash
+            self.last_mblock_hash
         }
     }
 
     /// Returns the last random.
     pub fn last_block_random(&self) -> Hash {
-        if let Some(header) = self.microblocks.last() {
+        if let Some(header) = self.ubs.last() {
             header.random.rand
         } else {
-            self.last_macroblock_random
+            self.last_mblock_random
         }
     }
 
     /// Returns the last block timestamp.
     pub fn last_block_timestamp(&self) -> Timestamp {
-        if let Some(header) = self.microblocks.last() {
+        if let Some(header) = self.ubs.last() {
             header.timestamp
         } else {
-            self.last_macroblock_timestamp
+            self.last_mblock_timestamp
         }
     }
 
@@ -335,10 +335,10 @@ impl LightDatabase {
         };
         let epoch_info = LightEpochInfo::from_buffer(&epoch_info).expect("LightEpochInfo is valid");
         self.epoch = epoch_info.header.epoch + 1;
-        assert!(self.microblocks.is_empty());
-        self.last_macroblock_hash = Hash::digest(&epoch_info.header);
-        self.last_macroblock_random = epoch_info.header.random.rand;
-        self.last_macroblock_timestamp = epoch_info.header.timestamp;
+        assert!(self.ubs.is_empty());
+        self.last_mblock_hash = Hash::digest(&epoch_info.header);
+        self.last_mblock_random = epoch_info.header.random.rand;
+        self.last_mblock_timestamp = epoch_info.header.timestamp;
         self.facilitator_pkey = epoch_info.facilitator;
         self.validators = epoch_info.validators;
         let lsn = LSN(epoch_info.header.epoch, MACROBLOCK_OFFSET);
@@ -392,8 +392,8 @@ impl LightDatabase {
         drop(static_db);
 
         info!(
-            "Recovered database: epoch={}, last_macroblock={}",
-            self.epoch, self.last_macroblock_hash
+            "Recovered database: epoch={}, last_mb={}",
+            self.epoch, self.last_mblock_hash
         );
     }
 
@@ -477,7 +477,7 @@ impl LightDatabase {
     }
 
     ///
-    /// Common part of push_macroblock()/push_microblock().
+    /// Common part of push_mblock()/push_ublock().
     ///
     fn register_inputs_and_outputs(
         &mut self,
@@ -611,7 +611,7 @@ impl LightDatabase {
     ///
     /// Validates the light macro block.
     ///
-    pub fn validate_macroblock(
+    pub fn validate_mblock(
         &mut self,
         header: &MacroblockHeader,
         multisig: &pbc::Signature,
@@ -647,12 +647,12 @@ impl LightDatabase {
         }
 
         // Check previous hash.
-        if self.last_macroblock_hash != header.previous {
+        if self.last_mblock_hash != header.previous {
             return Err(BlockError::InvalidMacroblockPreviousHash(
                 header.epoch,
                 block_hash,
                 header.previous,
-                self.last_macroblock_hash,
+                self.last_mblock_hash,
             )
             .into());
         }
@@ -672,7 +672,7 @@ impl LightDatabase {
         }
 
         // Check VRF.
-        let seed = mix(self.last_macroblock_random.clone(), header.view_change);
+        let seed = mix(self.last_mblock_random.clone(), header.view_change);
         if !pbc::validate_VRF_source(&header.random, &header.pkey, &seed).is_ok() {
             return Err(BlockError::IncorrectRandom(header.epoch, block_hash).into());
         }
@@ -762,7 +762,7 @@ impl LightDatabase {
     ///
     /// Validate the light micro block.
     ///
-    pub fn validate_light_microblock(
+    pub fn validate_light_ublock(
         &mut self,
         header: &MicroblockHeader,
         sig: &pbc::Signature,
@@ -904,7 +904,7 @@ impl LightDatabase {
     ///
     /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
     ///
-    pub fn apply_light_macroblock<'a, InputsIter, OutputsIter>(
+    pub fn apply_light_mblock<'a, InputsIter, OutputsIter>(
         &mut self,
         header: MacroblockHeader,
         inputs_iter: InputsIter,
@@ -924,15 +924,15 @@ impl LightDatabase {
         // Revert micro blocks.
         //
         let mut transaction_statuses: HashMap<Hash, TransactionStatus> = HashMap::new();
-        while self.microblocks.len() > 0 {
-            for (tx_hash, tx_status) in self.revert_microblock() {
+        while self.ubs.len() > 0 {
+            for (tx_hash, tx_status) in self.revert_ublock() {
                 transaction_statuses.insert(tx_hash, tx_status);
             }
         }
 
         let (my_inputs, my_outputs) =
             self.filter_inputs_and_outputs(inputs_iter, outputs_iter, account_pkey, account_skey);
-        assert!(self.microblocks.is_empty(), "micro blocks are removed");
+        assert!(self.ubs.is_empty(), "micro blocks are removed");
         let block_hash = Hash::digest(&header);
         let lsn = LSN(epoch, MACROBLOCK_OFFSET);
         let mut batch = rocksdb::WriteBatch::default();
@@ -951,10 +951,10 @@ impl LightDatabase {
         let facilitator = election::select_facilitator(&header.random.rand, &validators);
         self.facilitator_pkey = facilitator;
         self.epoch += 1;
-        self.microblocks.clear();
-        self.last_macroblock_hash = block_hash;
-        self.last_macroblock_random = header.random.rand;
-        self.last_macroblock_timestamp = header.timestamp;
+        self.ubs.clear();
+        self.last_mblock_hash = block_hash;
+        self.last_mblock_random = header.random.rand;
+        self.last_mblock_timestamp = header.timestamp;
         self.validators = validators;
         self.current_epoch_balance_changed = false;
 
@@ -974,12 +974,12 @@ impl LightDatabase {
             )
             .expect("I/O error");
         for (tx_hash, tx_status) in &transaction_statuses {
-            let timestamp = self
+            let ts = self
                 .tx_entry(tx_hash.clone())
                 .expect("Transaction should be found in tx list");
 
             let mut updated_tx = None;
-            self.update_log_entry(timestamp, |mut e| {
+            self.update_log_entry(ts, |mut e| {
                 match &mut e {
                     LogEntry::Outgoing { ref mut tx } => {
                         tx.status = tx_status.clone();
@@ -1011,7 +1011,7 @@ impl LightDatabase {
     ///
     /// Inputs && outputs are automatically filtered out by account_pkey/account_skey.
     ///
-    pub fn apply_light_microblock<'a, InputsIter, OutputsIter>(
+    pub fn apply_light_ublock<'a, InputsIter, OutputsIter>(
         &mut self,
         header: MicroblockHeader,
         inputs_iter: InputsIter,
@@ -1047,7 +1047,7 @@ impl LightDatabase {
             my_inputs,
             my_outputs,
         );
-        self.microblocks.push(header);
+        self.ubs.push(header);
 
         info!(
             "Applied a micro block: epoch={}, offset={}, block={}",
@@ -1060,13 +1060,13 @@ impl LightDatabase {
     ///
     /// Revertts the light micro block.
     ///
-    pub fn revert_microblock(&mut self) -> HashMap<Hash, TransactionStatus> {
-        let header = self.microblocks.pop().expect("have Microblocks");
+    pub fn revert_ublock(&mut self) -> HashMap<Hash, TransactionStatus> {
+        let header = self.ubs.pop().expect("have Microblocks");
         let block_hash = Hash::digest(&header);
-        let lsn = if self.microblocks.len() == 0 {
+        let lsn = if self.ubs.len() == 0 {
             LSN(self.epoch - 1, MACROBLOCK_OFFSET)
         } else {
-            LSN(self.epoch, (self.microblocks.len() - 1) as u32)
+            LSN(self.epoch, (self.ubs.len() - 1) as u32)
         };
         self.utxos.rollback_to_lsn(lsn);
         let current_offset = self.offset();
@@ -1290,11 +1290,7 @@ impl LightDatabase {
     }
 
     /// Insert log entry as last entry in log.
-    fn push_incoming(
-        &mut self,
-        timestamp: Timestamp,
-        incoming: OutputValue,
-    ) -> Result<Timestamp, Error> {
+    fn push_incoming(&mut self, ts: Timestamp, incoming: OutputValue) -> Result<Timestamp, Error> {
         let output_hash = Hash::digest(&incoming.to_output());
         trace!("Push incoming utxo = {:?}", output_hash);
         if let Some(time) = self.utxos_list.get(&output_hash) {
@@ -1303,9 +1299,9 @@ impl LightDatabase {
         }
 
         let entry = LogEntry::Incoming { output: incoming };
-        let timestamp = self.push_entry(timestamp, entry)?;
-        assert!(self.utxos_list.insert(output_hash, timestamp).is_none());
-        Ok(timestamp)
+        let ts = self.push_entry(ts, entry)?;
+        assert!(self.utxos_list.insert(output_hash, ts).is_none());
+        Ok(ts)
     }
 
     pub fn lock_input(&mut self, input: &Hash) {
@@ -1337,23 +1333,19 @@ impl LightDatabase {
     /// Insert log entry as last entry in log.
     pub fn push_outgoing(
         &mut self,
-        timestamp: Timestamp,
+        ts: Timestamp,
         tx: TransactionValue,
     ) -> Result<Timestamp, Error> {
         let tx_hash = Hash::digest(&tx.tx);
         trace!("Push outgoing tx={}", tx_hash);
         let entry = LogEntry::Outgoing { tx: tx.clone() };
-        let timestamp = self.push_entry(timestamp, entry)?;
-        assert!(self.created_txs.insert(tx_hash, timestamp).is_none());
+        let ts = self.push_entry(ts, entry)?;
+        assert!(self.created_txs.insert(tx_hash, ts).is_none());
         self.update_tx_indexes(tx);
-        Ok(timestamp)
+        Ok(ts)
     }
 
-    fn push_entry(
-        &mut self,
-        mut timestamp: Timestamp,
-        entry: LogEntry,
-    ) -> Result<Timestamp, Error> {
+    fn push_entry(&mut self, mut ts: Timestamp, entry: LogEntry) -> Result<Timestamp, Error> {
         let log_cf = self.database.cf_handle(HISTORY).expect("cf created");
 
         let data = entry.into_buffer().expect("couldn't serialize block.");
@@ -1361,16 +1353,16 @@ impl LightDatabase {
         // avoid key collisions by increasing time.
         while let Some(_) = self
             .database
-            .get_cf(log_cf, &Self::bytes_from_timestamp(timestamp))?
+            .get_cf(log_cf, &Self::bytes_from_timestamp(ts))?
         {
-            timestamp += Duration::from_millis(1);
+            ts += Duration::from_millis(1);
         }
 
         let mut batch = WriteBatch::default();
         // writebatch put fails if size exceeded u32::max, which is not our case.
-        batch.put_cf(log_cf, &Self::bytes_from_timestamp(timestamp), &data)?;
+        batch.put_cf(log_cf, &Self::bytes_from_timestamp(ts), &data)?;
         self.database.write(batch)?;
-        Ok(timestamp)
+        Ok(ts)
     }
 
     /// Edit log entry as by idx.
@@ -1871,7 +1863,7 @@ mod test {
     fn basic() {
         simple_logger::init_with_level(log::Level::Debug).unwrap_or_default();
 
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let cfg: ChainConfig = Default::default();
         let (_keychains, genesis) = fake_genesis(
             cfg.min_stake_amount,

@@ -553,7 +553,7 @@ impl UnsealedAccountService {
         Ok(AccountRecovery { recovery })
     }
 
-    fn apply_light_microblock(
+    fn apply_light_ublock(
         &mut self,
         header: MicroblockHeader,
         sig: pbc::Signature,
@@ -591,7 +591,7 @@ impl UnsealedAccountService {
         //
         assert_eq!(header.epoch, self.database.epoch());
         assert_eq!(header.offset, self.database.offset());
-        self.database.validate_light_microblock(
+        self.database.validate_light_ublock(
             &header,
             &sig,
             &input_hashes,
@@ -602,7 +602,7 @@ impl UnsealedAccountService {
         //
         // Register block.
         //
-        let transaction_statuses = self.database.apply_light_microblock(
+        let transaction_statuses = self.database.apply_light_ublock(
             header,
             input_hashes.iter(),
             outputs.iter(),
@@ -619,7 +619,7 @@ impl UnsealedAccountService {
         Ok(())
     }
 
-    fn apply_light_macroblock(
+    fn apply_light_mblock(
         &mut self,
         header: MacroblockHeader,
         multisig: pbc::Signature,
@@ -655,7 +655,7 @@ impl UnsealedAccountService {
         // Validate block.
         //
         assert_eq!(header.epoch, self.database.epoch());
-        self.database.validate_macroblock(
+        self.database.validate_mblock(
             &header,
             &multisig,
             &multisigmap,
@@ -668,7 +668,7 @@ impl UnsealedAccountService {
         //
         // Register block
         //
-        let transaction_statuses = self.database.apply_light_macroblock(
+        let transaction_statuses = self.database.apply_light_mblock(
             header,
             input_hashes.iter(),
             outputs.iter(),
@@ -1052,7 +1052,7 @@ impl UnsealedAccountService {
                             let r = match block {
                                 LightBlock::LightMacroblock(block) => {
                                     debug!("Got Macroblock: epoch={}, inputs={:?}", block.header.epoch, block.input_hashes);
-                                    self.apply_light_macroblock(
+                                    self.apply_light_mblock(
                                         block.header,
                                         block.multisig,
                                         block.multisigmap,
@@ -1068,7 +1068,7 @@ impl UnsealedAccountService {
                                         "Got Microblock: epoch={}, offset={}, inputs={:?}",
                                         block.header.epoch, block.header.offset, block.input_hashes
                                     );
-                                    self.apply_light_microblock(
+                                    self.apply_light_ublock(
                                         block.header,
                                         block.sig,
                                         block.input_hashes,

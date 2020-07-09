@@ -47,7 +47,7 @@ impl ProtoConvert for ConsensusMessageBody {
                 for transaction in &block_proposal.transactions {
                     proposal.transactions.push(transaction.into_proto());
                 }
-                proto.set_Macroblock_proposal(proposal);
+                proto.set_mblock_proposal(proposal);
             }
             ConsensusMessageBody::Prevote => {
                 proto.set_prevote(consensus::Prevote::new());
@@ -63,7 +63,7 @@ impl ProtoConvert for ConsensusMessageBody {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         let msg = match proto.body {
-            Some(consensus::ConsensusMessageBody_oneof_body::Macroblock_proposal(ref msg)) => {
+            Some(consensus::ConsensusMessageBody_oneof_body::mblock_proposal(ref msg)) => {
                 let header = MacroblockHeader::from_proto(msg.get_header())?;
                 let mut transactions = Vec::<Transaction>::with_capacity(msg.transactions.len());
                 for transaction in msg.transactions.iter() {
@@ -242,7 +242,7 @@ mod tests {
 
         let epoch: u64 = 10;
         let view_change = 0;
-        let timestamp = Timestamp::now();
+        let ts = Timestamp::now();
         let previous = Hash::digest(&"test".to_string());
         let random = pbc::make_VRF(&nskey, &Hash::digest("test"));
         let difficulty = 100500;
@@ -256,7 +256,7 @@ mod tests {
             npkey,
             random,
             difficulty,
-            timestamp,
+            ts,
             block_reward,
             activity_map,
             validators,

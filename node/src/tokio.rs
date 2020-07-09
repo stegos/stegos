@@ -212,10 +212,10 @@ pub struct NodeService {
     /// Replication
     replication: Replication,
 
-    macro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<()>>>>,
-    macro_view_change_timer: Pin<Box<Fuse<Delay>>>,
-    micro_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
-    micro_view_change_timer: Pin<Box<Fuse<Delay>>>,
+    mblock_propose_timer: Pin<Box<Fuse<oneshot::Receiver<()>>>>,
+    mblock_view_change_timer: Pin<Box<Fuse<Delay>>>,
+    ublock_propose_timer: Pin<Box<Fuse<oneshot::Receiver<Vec<u8>>>>>,
+    ublock_view_change_timer: Pin<Box<Fuse<Delay>>>,
 
     now: Instant,
 }
@@ -308,10 +308,10 @@ impl NodeService {
             replication_rx,
             replication_tx,
             status_subscribers,
-            macro_propose_timer: Box::pin(Fuse::terminated()),
-            macro_view_change_timer: Box::pin(Fuse::terminated()),
-            micro_propose_timer: Box::pin(Fuse::terminated()),
-            micro_view_change_timer: Box::pin(Fuse::terminated()),
+            mblock_propose_timer: Box::pin(Fuse::terminated()),
+            mblock_view_change_timer: Box::pin(Fuse::terminated()),
+            ublock_propose_timer: Box::pin(Fuse::terminated()),
+            ublock_view_change_timer: Box::pin(Fuse::terminated()),
             now: Instant::now(),
         };
 
@@ -543,23 +543,23 @@ impl NodeService {
                 let _ = self.replication_tx.send(ev.unwrap()).await;
             }
             // poll timers
-            _ = self.macro_propose_timer.as_mut() => {
+            _ = self.mblock_propose_timer.as_mut() => {
                 let event = NodeIncomingEvent::ProposeMacroblock;
                 self.state.handle_event(event);
             },
-            _ = self.macro_view_change_timer.as_mut() => {
+            _ = self.mblock_view_change_timer.as_mut() => {
                 let event = NodeIncomingEvent::MacroblockViewChangeTimer;
                 self.state.handle_event(event);
             },
 
-            solution = self.micro_propose_timer.as_mut() => {
+            solution = self.ublock_propose_timer.as_mut() => {
                 // Panic is possible only if thread of solver was killed, which is a bug.
                 let solution = solution.expect("Solution should always be calculated, no panics expected.");
                 let event = NodeIncomingEvent::ProposeMicroblock(solution);
                 self.state.handle_event(event);
             },
 
-            _ = self.micro_view_change_timer.as_mut() => {
+            _ = self.ublock_view_change_timer.as_mut() => {
                 let event = NodeIncomingEvent::MicroblockViewChangeTimer;
                 self.state.handle_event(event);
             },
@@ -693,16 +693,16 @@ impl NodeService {
                 NodeOutgoingEvent::ProposeMacroblock => {
                     let (tx, rx) = oneshot::channel::<()>();
                     tx.send(()).ok();
-                    self.macro_propose_timer.set(rx.fuse());
-                    self.micro_propose_timer.set(Fuse::terminated());
-                    self.micro_view_change_timer.set(Fuse::terminated());
+                    self.mblock_propose_timer.set(rx.fuse());
+                    self.ublock_propose_timer.set(Fuse::terminated());
+                    self.ublock_view_change_timer.set(Fuse::terminated());
                     Ok(())
                 }
                 NodeOutgoingEvent::MacroblockViewChangeTimer(duration) => {
-                    self.macro_view_change_timer
+                    self.mblock_view_change_timer
                         .set(time::delay_for(duration).fuse());
-                    self.micro_propose_timer.set(Fuse::terminated());
-                    self.micro_view_change_timer.set(Fuse::terminated());
+                    self.ublock_propose_timer.set(Fuse::terminated());
+                    self.ublock_view_change_timer.set(Fuse::terminated());
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroblockProposeTimer {
@@ -724,13 +724,13 @@ impl NodeService {
                         difficulty
                     );
                     thread::spawn(solver);
-                    self.micro_propose_timer.set(rx.fuse());
-                    self.macro_propose_timer.set(Fuse::terminated());
-                    self.macro_view_change_timer.set(Fuse::terminated());
+                    self.ublock_propose_timer.set(rx.fuse());
+                    self.mblock_propose_timer.set(Fuse::terminated());
+                    self.mblock_view_change_timer.set(Fuse::terminated());
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroblockProposeTimerCancel => {
-                    self.micro_propose_timer.set(Fuse::terminated());
+                    self.ublock_propose_timer.set(Fuse::terminated());
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroblockViewChangeTimer(duration) => {
@@ -739,10 +739,10 @@ impl NodeService {
                         "Setting the Microblock view change timer to {:?}",
                         duration
                     );
-                    self.micro_view_change_timer
+                    self.ublock_view_change_timer
                         .set(time::delay_for(duration).fuse());
-                    self.macro_propose_timer.set(Fuse::terminated());
-                    self.macro_view_change_timer.set(Fuse::terminated());
+                    self.mblock_propose_timer.set(Fuse::terminated());
+                    self.mblock_view_change_timer.set(Fuse::terminated());
                     // task::current().notify();
                     Ok(())
                 }

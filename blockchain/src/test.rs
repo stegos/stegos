@@ -242,9 +242,9 @@ pub fn fake_genesis(
     // Calculate initial values.
     let epoch: u64 = 0;
     let view_change: u32 = 0;
-    let last_macroblock_random = Hash::digest("genesis");
+    let last_mblock_random = Hash::digest("genesis");
     let previous = Hash::digest("genesis");
-    let seed = mix(last_macroblock_random, view_change);
+    let seed = mix(last_mblock_random, view_change);
     let random = pbc::make_VRF(&keychains[0].network_skey, &seed);
     let activity_map = BitVec::from_elem(keychains.len(), true);
 
@@ -271,7 +271,7 @@ pub fn fake_genesis(
     (keychains, genesis)
 }
 
-pub fn sign_fake_macroblock(block: &mut Macroblock, chain: &Blockchain, keychains: &[KeyChain]) {
+pub fn sign_fake_mblock(block: &mut Macroblock, chain: &Blockchain, keychains: &[KeyChain]) {
     let block_hash = Hash::digest(block);
     let validators = chain.validators();
     let mut signatures: BTreeMap<pbc::PublicKey, pbc::Signature> = BTreeMap::new();
@@ -284,7 +284,7 @@ pub fn sign_fake_macroblock(block: &mut Macroblock, chain: &Blockchain, keychain
     block.multisigmap = multisigmap;
 }
 
-pub fn create_fake_macroblock(
+pub fn create_fake_mblock(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,
@@ -292,18 +292,18 @@ pub fn create_fake_macroblock(
     let view_change = chain.view_change();
     let key = chain.select_leader(view_change);
     let keys = keychains.iter().find(|p| p.network_pkey == key).unwrap();
-    let (mut block, extra_transactions) = chain.create_macroblock(
+    let (mut block, extra_transactions) = chain.create_mblock(
         view_change,
         &keys.account_pkey,
         &keys.network_skey,
         keys.network_pkey,
         timestamp,
     );
-    sign_fake_macroblock(&mut block, chain, keychains);
+    sign_fake_mblock(&mut block, chain, keychains);
     (block, extra_transactions)
 }
 
-pub fn create_fake_microblock(
+pub fn create_fake_ublock(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,
@@ -457,7 +457,7 @@ pub fn create_fake_microblock(
     (block, input_hashes, output_hashes)
 }
 
-pub fn create_microblock_with_coinbase(
+pub fn create_ublock_with_coinbase(
     chain: &Blockchain,
     keychains: &[KeyChain],
     timestamp: Timestamp,

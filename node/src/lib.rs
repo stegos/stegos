@@ -49,6 +49,7 @@ use crate::validation::*;
 use ::tokio::time::{Duration, Instant};
 use failure::{bail, format_err, Error};
 use futures::channel::oneshot;
+#[cfg(not(test))]
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use std::collections::{HashMap, HashSet};
@@ -249,36 +250,30 @@ impl NodeState {
         network_pkey: pbc::PublicKey,
         chain_name: String,
     ) -> Result<Self, Error> {
-        let mempool = Mempool::new();
-
-        let last_block_clock = Instant::now();
         let validation = if chain.is_epoch_full() {
             MacroBlockAuditor
         } else {
             MicroBlockAuditor
         };
-        let cheating_proofs = HashMap::new();
 
-        let restaking_offset = 0; // will be updated on init().
-        let is_restaking_enabled = true;
-        let validation_status_changed = true;
-
-        let state = NodeState {
+        let mut state = NodeState {
             cfg,
             chain_name,
             chain,
             network_skey,
             network_pkey,
-            mempool,
+            mempool: Mempool::new(),
             validation,
-            last_block_clock,
-            cheating_proofs,
-            restaking_offset,
-            is_restaking_enabled,
-            validation_status_changed,
+            last_block_clock: Instant::now(),
+            cheating_proofs: HashMap::new(),
+            restaking_offset: 0,
+            is_restaking_enabled: true,
+            validation_status_changed: true,
             outgoing: Vec::new(),
         };
+
         state.update_stake_balance();
+        state.calculate_restaking_offset();
 
         Ok(state)
     }
@@ -290,6 +285,11 @@ impl NodeState {
         self.on_status_changed();
         self.restake_expiring_stakes()?;
         Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn restaking_offset(&self) -> u32 {
+        self.restaking_offset
     }
 
     /// Send transaction to node and to the network.
@@ -446,6 +446,22 @@ impl NodeState {
         metrics::NODE_SLOTS_COUNT.set(slots_count);
     }
 
+    #[cfg(not(test))]
+    pub fn calculate_restaking_offset(&mut self) {
+        // Restake in [0; blocks_in_epoch * 4/5) interval.
+        let mut rng = rand::thread_rng();
+        self.restaking_offset = rng.gen_range(0, self.chain.cfg().micro_blocks_in_epoch * 4 / 5);
+    }
+
+    #[cfg(test)]
+    pub fn calculate_restaking_offset(&mut self) {
+        self.restaking_offset = if self.chain.cfg().micro_blocks_in_epoch > 1 {
+            1
+        } else {
+            0
+        }
+    }
+
     ///
     /// Re-stake expiring stakes.
     ///
@@ -542,14 +558,7 @@ impl NodeState {
 
         self.send_transaction(tx.into())?;
 
-        self.restaking_offset = if self.chain.cfg().micro_blocks_in_epoch > 1 {
-            // Restake in [0; blocks_in_epoch * 4/5) interval.
-            let mut rng = rand::thread_rng();
-            rng.gen_range(0, self.chain.cfg().micro_blocks_in_epoch * 4 / 5)
-        } else {
-            // Used for tests.
-            0
-        };
+        self.calculate_restaking_offset();
 
         for tx_hash in pending_txs.into_iter() {
             let tx = self.mempool.get_tx(&tx_hash).expect("tx in mempool");
@@ -1142,6 +1151,13 @@ impl NodeState {
             .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
 
         // Re-stake expiring stakes
+        strace!(
+            self,
+            "Restaking offset: {}, chain offset: {}, restake? = {}",
+            self.restaking_offset,
+            self.chain.offset(),
+            self.chain.offset() == self.restaking_offset
+        );
         if self.chain.offset() == self.restaking_offset
             || !was_synchronized && self.chain.is_synchronized()
         {
@@ -1294,6 +1310,11 @@ impl NodeState {
                 .push(NodeOutgoingEvent::MicroBlockProposeTimerCancel);
         };
 
+        strace!(
+            self,
+            "Setting the microblock view change timer to {:?}",
+            self.cfg.micro_block_timeout
+        );
         self.outgoing
             .push(NodeOutgoingEvent::MicroBlockViewChangeTimer(
                 self.cfg.micro_block_timeout,

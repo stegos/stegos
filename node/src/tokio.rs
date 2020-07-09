@@ -287,7 +287,8 @@ impl NodeService {
         });
         streams.push(requests_rx.boxed());
 
-        let check_sync = time::interval(state.cfg.sync_change_timeout);
+        let sync_timeout = state.cfg.sync_change_timeout;
+        let check_sync = time::interval(sync_timeout);
         let chain_subscribers = Vec::new();
         let node = Node {
             outbox,
@@ -313,6 +314,8 @@ impl NodeService {
             micro_view_change_timer: Box::pin(Fuse::terminated()),
             now: Instant::now(),
         };
+
+        strace!(service, "Sync timeout = {:?}", sync_timeout);
 
         Ok((service, node))
     }
@@ -723,6 +726,11 @@ impl NodeService {
                     Ok(())
                 }
                 NodeOutgoingEvent::MicroBlockViewChangeTimer(duration) => {
+                    strace!(
+                        self,
+                        "Setting the microblock view change timer to {:?}",
+                        duration
+                    );
                     self.micro_view_change_timer
                         .set(time::delay_for(duration).fuse());
                     self.macro_propose_timer.set(Fuse::terminated());

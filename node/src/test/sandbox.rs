@@ -566,6 +566,7 @@ impl<'p> Partition<'p> {
         leader.poll().await;
 
         trace!("Fetching microblock from leader {}", leader_pk);
+        leader.fetch_restake();
         let block: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -573,6 +574,7 @@ impl<'p> Partition<'p> {
             let pkey = &node.node_service.state().network_pkey;
             trace!("Delivering microblock to {}", pkey);
             node.process(crate::SEALED_BLOCK_TOPIC, block.clone()).await;
+            node.fetch_restake();
             node.advance().await;
         }
 
@@ -648,7 +650,6 @@ impl<'p> Partition<'p> {
     pub async fn create_macro_block(&mut self) -> (Block, Hash, Option<Transaction>) {
         trace!("Creating a macroblock...");
         let chain = self.chain();
-        let stake_epochs = chain.cfg().stake_epochs;
         let epoch = chain.epoch();
         let round = chain.view_change();
         let last_macro_block_hash = chain.last_macro_block_hash();
@@ -700,6 +701,10 @@ impl<'p> Partition<'p> {
         // Check for pre-commits
         let mut precommits: Vec<ConsensusMessage> = Vec::with_capacity(self.len());
         for node in self.iter_mut() {
+            trace!(
+                "Fetching pre-commit from {}...",
+                node.node_service.state().network_pkey
+            );
             let precommit: ConsensusMessage =
                 node.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
             assert_eq!(precommit.epoch, epoch);
@@ -731,16 +736,8 @@ impl<'p> Partition<'p> {
         }
 
         // Fetch restake tx
-        let restake: Option<Transaction> = if ((1 + epoch) % stake_epochs) == 0 {
-            let tx = self
-                .find_mut(&leader_pk)
-                .unwrap()
-                .network_service
-                .get_broadcast(crate::TX_TOPIC);
-            Some(tx)
-        } else {
-            None
-        };
+        let node = self.find_mut(&leader_pk).unwrap();
+        let restake = node.fetch_restake();
 
         // Fetch completed block
         trace!("Fetching finished macroblock from {}", leader_pk);
@@ -802,21 +799,19 @@ impl<'p> Partition<'p> {
         }
 
         // Process re-stakes.
-        if !restakes.is_empty() {
-            trace!("Expecting restakes from non-leader nodes...");
-            for node in self.iter_except(&[old_leader_pk]) {
-                let pkey = &node.node_service.state().network_pkey;
-                let restake: Transaction = node.network_service.get_broadcast(crate::TX_TOPIC);
-                debug!("[{}] Got restake: {:?}", pkey, restake);
-                restakes.push(restake);
+        trace!("Process restakes from non-leader nodes...");
+        for node in self.iter_except(&[old_leader_pk]) {
+            if let Some(tx) = node.fetch_restake() {
+                restakes.push(tx);
             }
-            for node in self.iter_mut() {
-                let pkey = &node.node_service.state().network_pkey;
-                trace!("Delivering restake to {}", pkey);
-                for restake in restakes.iter() {
-                    node.process(crate::TX_TOPIC, restake.clone()).await;
-                    node.poll().await;
-                }
+        }
+
+        for node in self.iter_mut() {
+            let pkey = &node.node_service.state().network_pkey;
+            trace!("Delivering restake to {}", pkey);
+            for restake in restakes.iter() {
+                node.process(crate::TX_TOPIC, restake.clone()).await;
+                node.poll().await;
             }
         }
 
@@ -987,6 +982,10 @@ impl NodeSandbox {
         self.node_service.state()
     }
 
+    pub fn pkey(&self) -> &pbc::PublicKey {
+        &self.node_service.state().network_pkey
+    }
+
     pub fn keys(&self) -> (&pbc::PublicKey, &pbc::SecretKey) {
         let state = self.node_service.state();
         (&state.network_pkey, &state.network_skey)
@@ -1041,5 +1040,24 @@ impl NodeSandbox {
     pub fn handle_vdf(&mut self) {
         self.vdf_execution.try_produce();
         self.vdf_execution = VDFExecution::WaitForVDF;
+    }
+
+    pub fn fetch_restake(&mut self) -> Option<Transaction> {
+        let pk = self.pkey();
+        let chain = self.chain();
+        let epoch = chain.epoch();
+        let stake_epochs = chain.cfg().stake_epochs;
+        let is_restake_epoch = (epoch % stake_epochs) == 0;
+        let offset = chain.offset();
+        let restaking_offset = self.state().restaking_offset();
+        let should_restake = restaking_offset == offset;
+        trace!("[{}] Checking re-stake... epoch: {}, restake epoch? = {}, restaking offset = {}, should restake? = {}", 
+            pk, epoch, is_restake_epoch, restaking_offset, should_restake);
+        if is_restake_epoch && should_restake {
+            let tx = self.network_service.get_broadcast(crate::TX_TOPIC);
+            Some(tx)
+        } else {
+            None
+        }
     }
 }

@@ -21,7 +21,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::wait;
 use super::*;
 use assert_matches::assert_matches;
 use tokio;
@@ -35,7 +34,7 @@ use stegos_crypto::pbc::{make_random_keys, SecretKey, Signature};
 async fn smoke_test() {
     const NUM_RESTAKES: u64 = 3;
     let cfg = ChainConfig {
-        micro_blocks_in_epoch: 1,
+        micro_blocks_in_epoch: 3,
         stake_epochs: 2,
         awards_difficulty: 0,
         ..Default::default()

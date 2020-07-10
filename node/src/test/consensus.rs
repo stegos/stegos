@@ -338,13 +338,20 @@ async fn lock() {
     let config = SandboxConfig {
         chain: cfg,
         num_nodes: 3,
+        node: NodeConfig {
+            ublock_timeout: Duration::from_secs(500),
+            mblock_timeout: Duration::from_secs(1000),
+            sync_timeout: Duration::from_secs(10000),
+            ..Default::default()
+        },
         ..Default::default()
     };
 
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    // Create one micro block.
+    // Create one micro block.This should trigger
+    // the creation of the macroblock by the next leader.
     p.skip_ublock().await;
 
     let topic = crate::CONSENSUS_TOPIC;
@@ -362,21 +369,30 @@ async fn lock() {
         let new_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
 
         if leader_pk != new_leader_pk {
+            trace!(
+                "Leaders {} and {} are already different, breaking!",
+                leader_pk,
+                new_leader_pk
+            );
             ready = true;
             break;
         }
 
-        trace!("skipping round {}, leader = {}", i, leader_pk);
-        p.poll().await;
+        trace!("Skipping round {}, leader = {}", round, leader_pk);
+        p.advance().await;
         let leader = p.find_mut(&leader_pk).unwrap();
+        //leader.advance().await;
 
+        trace!("Looking for proposal from leader {}", leader_pk);
         leader.network_service.filter_unicast(&[CHAIN_LOADER_TOPIC]);
         let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
         let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);
         round += 1;
-        // wait for current round end
+
+        trace!("Waiting for round {} to end...", round - 1);
+        // wait for the current round to end
         let view_change = p.first_mut().state().chain.view_change();
-        let d = config.node.mblock_timeout * (round - view_change);
+        let d = config.node.mblock_timeout * (round - view_change) + Duration::from_secs(5);
         wait(d).await;
     }
 
@@ -385,26 +401,34 @@ async fn lock() {
     info!("Starting test...");
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
+    // Let everyone catch on to the leader timing out.
+    p.poll().await;
+
     let leader_pk = p.first_mut().state().chain.select_leader(round);
     let leader = p.find_mut(&leader_pk).unwrap();
-    leader.poll().await;
+    leader.advance().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
+    // Skip proposal and prevote of last leader.
+    trace!("Fetching proposal from leader {}...", leader_pk);
     let leader = p.find_mut(&leader_pk).unwrap();
-    // skip proposal and prevote of last leader.
     let leader_proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
-
     assert_matches!(leader_proposal.body, ConsensusMessageBody::Proposal { .. });
+
     // Send this proposal to other nodes.
+    trace!("Sending proposal to other nodes...");
     for node in p.iter_except(&[leader_pk]) {
         node.network_service
             .receive_broadcast(topic, leader_proposal.clone());
+        node.advance().await;
     }
-    p.poll().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+
     // for now, every node is locked at leader_propose
+    trace!("Collecting and delivering pre-votes...");
     for i in 0..p.len() {
         let prevote: ConsensusMessage = p[i].network_service.get_broadcast(topic);
         assert_matches!(prevote.body, ConsensusMessageBody::Prevote { .. });
@@ -414,12 +438,15 @@ async fn lock() {
         for j in 0..p.len() {
             p[j].network_service
                 .receive_broadcast(topic, prevote.clone());
+            p[j].poll().await;
         }
     }
-    p.poll().await;
+
+    trace!("Collecting pre-commits...");
     for i in 0..p.len() {
         let _precommit: ConsensusMessage = p[i].network_service.get_broadcast(topic);
     }
+
     p.poll().await;
 
     let view_change = p.first_mut().state().chain.view_change();
@@ -430,9 +457,9 @@ async fn lock() {
         round,
         view_change
     );
+
     wait(d).await;
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
-
     p.poll().await;
 
     // filter messages from chain loader.

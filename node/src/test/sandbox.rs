@@ -476,13 +476,23 @@ impl<'p> Partition<'p> {
         }
     }
 
-    /// Poll each node for updates. I know you will be tempted to add
-    /// a version of this function that advances consensus across the board.
-    /// Do not! Try to advance consensus for individual nodes intead!!!
+    /// Poll each node for updates.
     pub async fn poll(&mut self) {
         trace!(">>> Sandbox polling...");
         for node in self.nodes.iter_mut() {
             node.poll().await;
+        }
+
+        if let Some(auditor) = &mut self.auditor {
+            auditor.poll().await;
+        }
+    }
+
+    /// Poll each node for updates and update consensus.
+    pub async fn advance(&mut self) {
+        trace!(">>> Sandbox polling & updating consensus...");
+        for node in self.nodes.iter_mut() {
+            node.advance().await;
         }
 
         if let Some(auditor) = &mut self.auditor {
@@ -569,9 +579,7 @@ impl<'p> Partition<'p> {
         trace!("According to partition info, next leader = {}", leader_pk);
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
-        for node in self.iter_mut() {
-            node.advance().await;
-        }
+        self.advance().await;
 
         let leader = self.find_mut(&leader_pk).unwrap();
         // ensure the Microblock propose timer
@@ -676,9 +684,7 @@ impl<'p> Partition<'p> {
         let last_mblock_hash = chain.last_mblock_hash();
         let leader_pk = self.leader();
 
-        for node in self.iter_mut() {
-            node.advance().await;
-        }
+        self.advance().await;
 
         let leader = self.find_mut(&leader_pk).unwrap();
 

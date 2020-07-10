@@ -275,6 +275,7 @@ async fn multiple_rounds() {
 
     // Create one micro block.
     p.skip_ublock().await;
+    p.advance().await;
 
     let view_change = p.first_mut().state().chain.view_change();
     trace!("View change = {}", view_change);

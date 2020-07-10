@@ -417,7 +417,7 @@ impl Consensus {
     pub fn feed_message(&mut self, msg: ConsensusMessage) -> Result<(), ConsensusError> {
         strace!(
             self,
-            "{}({}:{}): process message: msg = {}",
+            "{}({}:{}): process message: {}",
             self.state.name(),
             self.epoch,
             self.round,
@@ -430,7 +430,7 @@ impl Consensus {
         if !self.validators.contains_key(&msg.pkey) {
             sdebug!(
                 self,
-                "{}({}:{}): peer is not a validator: msg = {}",
+                "{}({}:{}): peer is not a validator: {}",
                 self.state.name(),
                 self.epoch,
                 self.round,
@@ -442,7 +442,7 @@ impl Consensus {
         if msg.epoch != self.epoch {
             sdebug!(
                 self,
-                "{}({}:{}): message from different epoch: msg = {}",
+                "{}({}:{}): message from a different epoch: {}",
                 self.state.name(),
                 self.epoch,
                 self.round,
@@ -456,7 +456,7 @@ impl Consensus {
         if msg.round < self.round {
             sdebug!(
                 self,
-                "{}({}:{}): message from the past: msg = {}",
+                "{}({}:{}): message from the past: {}",
                 self.state.name(),
                 self.epoch,
                 self.round,
@@ -485,7 +485,7 @@ impl Consensus {
             if expected_block_hash != &msg.block_hash {
                 swarn!(
                     self,
-                    "{}({}:{}): invalid block_hash: expected_block_hash = {}, got_block_hash = {}, msg = {}",
+                    "{}({}:{}): invalid block hash: expected {} but got {}, msg = {}",
                     self.state.name(),
                     self.epoch, self.round,
                     &expected_block_hash,
@@ -503,7 +503,7 @@ impl Consensus {
         if self.state == ConsensusState::Commit {
             sdebug!(
                 self,
-                "{}({}:{}): a late message: msg = {}",
+                "{}({}:{}): a late message: {}",
                 self.state.name(),
                 self.epoch,
                 self.round,
@@ -533,7 +533,7 @@ impl Consensus {
             (_, ConsensusState::Propose) => {
                 sdebug!(
                     self,
-                    "{}({}:{}): an early message: msg = {}",
+                    "{}({}:{}): an early message: {}",
                     self.state.name(),
                     self.epoch,
                     self.round,
@@ -547,7 +547,7 @@ impl Consensus {
             (_, _) => {
                 serror!(
                     self,
-                    "{}({}:{}): unexpected message: msg = {}",
+                    "{}({}:{}): unexpected message: {}",
                     self.state.name(),
                     self.epoch,
                     self.round,
@@ -569,7 +569,7 @@ impl Consensus {
                 if msg.pkey != self.leader() {
                     serror!(
                         self,
-                        "{}({}:{}): a proposal from a non-leader: leader = {}, from = {}",
+                        "{}({}:{}): proposal from a non-leader: expected {} but got {}",
                         self.state.name(),
                         self.epoch,
                         self.round,
@@ -590,7 +590,7 @@ impl Consensus {
                 assert!(self.block_proposal.is_none());
                 sdebug!(
                     self,
-                    "{}({}:{}) => {}({}:{}): received a new proposal hash = {}, from = {}",
+                    "{}({}:{}) => {}({}:{}): new proposal, hash = {}, from = {}",
                     self.state.name(),
                     self.epoch,
                     self.round,
@@ -625,7 +625,7 @@ impl Consensus {
                 // Collect the vote.
                 sdebug!(
                     self,
-                    "{}({}:{}): collected a pre-vote: from = {}",
+                    "{}({}:{}): collected pre-vote from {}",
                     self.state.name(),
                     self.epoch,
                     self.round,
@@ -641,7 +641,7 @@ impl Consensus {
                 if let Err(_e) = pbc::check_hash(&block_hash, &block_hash_sig, &msg.pkey) {
                     serror!(
                         self,
-                        "{}({}:{}): a pre-commit signature is not valid: from = {}",
+                        "{}({}:{}): invalid pre-commit signature from {}",
                         self.state.name(),
                         self.epoch,
                         self.round,
@@ -653,7 +653,7 @@ impl Consensus {
                 // Collect the vote.
                 sdebug!(
                     self,
-                    "{}({}:{}): collected a pre-commit: from = {}",
+                    "{}({}:{}): collected pre-commit from {}",
                     self.state.name(),
                     self.epoch,
                     self.round,
@@ -692,7 +692,7 @@ impl Consensus {
                 // Don't vote in this case and stay silent.
                 swarn!(
                     self,
-                    "{}({}:{}): request accepted by supermajority, but rejected this node",
+                    "{}({}:{}): request accepted by supermajority but rejected by this node",
                     self.state.name(),
                     self.epoch,
                     self.round

@@ -159,25 +159,31 @@ async fn round() {
     // Create one micro block.
     p.skip_ublock().await;
 
+    trace!("Updating nodes...");
+    p.advance().await;
+
     let topic = CONSENSUS_TOPIC;
 
     let leader_pk = p.first_mut().state().chain.leader();
     let leader = p.find_mut(&leader_pk).unwrap();
+
     // skip proposal and prevote of last leader.
+    trace!("Skipping proposal from last leader {}", leader_pk);
     let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
     let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);
 
+    trace!("Waiting for a macroblock timeout");
     let epoch = p.first().state().chain.epoch();
     let round = p.first().state().chain.view_change() + 1;
-    wait(config.node.mblock_timeout).await;
+    wait(config.node.mblock_timeout * 2 - Duration::from_secs(5)).await;
 
-    trace!("Waiting for a Macroblock timeout");
     p.poll().await;
 
     // filter messages from chain loader.
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
     let leader_pk = p.first_mut().state().chain.select_leader(round);
+    trace!("Expecting macroblock proposal from leader {}", leader_pk);
     let leader = p.find_mut(&leader_pk).unwrap();
     let proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
     trace!("Proposal: {:?}", proposal);

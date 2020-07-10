@@ -53,64 +53,60 @@ async fn dead_leader() {
     let mut s = Sandbox::new(config.clone());
     let mut p = s.partition();
 
-    async {
-        p.poll().await;
+    p.poll().await;
 
-        let leader_pk = p.first().state().chain.leader();
+    let leader_pk = p.first().state().chain.leader();
 
-        info!("before first poll");
-        // let leader shoot his block
-        p.poll().await;
-        // emulate timeout on other nodes, and wait for request
-        wait(config.node.ublock_timeout).await;
+    info!("before first poll");
+    // let leader shoot his block
+    p.poll().await;
+    // emulate timeout on other nodes, and wait for request
+    wait(config.node.ublock_timeout + Duration::from_secs(5)).await;
 
-        info!("PARTITION BEGIN");
-        p.poll().await;
-        let mut r = p.split(&[leader_pk]);
-        // emulate dead leader for other nodes
-        r.parts.1.filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    info!("PARTITION BEGIN");
+    p.advance().await;
+    let mut r = p.split(&[leader_pk]);
+    // emulate dead leader for other nodes
+    r.parts.1.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
-        let mut msgs = Vec::new();
-        for node in &mut r.parts.1.nodes {
-            let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
-            msgs.push(msg);
-        }
-        assert_eq!(msgs.len(), 3);
-
-        info!("BROADCAST VIEW_CHANGES");
-        for node in r.parts.1.iter_mut() {
-            for msg in &msgs {
-                node.network_service
-                    .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
-            }
-        }
-
-        let next_leader = r.parts.1.future_view_change_leader(1);
-        r.parts.1.poll().await;
-        for node in r.parts.1.iter_mut() {
-            info!("processing validator = {:?}", node.validator_id());
-            if next_leader == node.state().network_pkey {
-                node.handle_vdf();
-                node.poll().await;
-                let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
-                // If node was leader, they have produced micro block,
-                assert_eq!(node.state().chain.view_change(), 0);
-            } else {
-                assert_eq!(node.state().chain.view_change(), 1);
-            }
-        }
-
-        let first_leader = r.parts.0.first_mut();
-
-        assert_eq!(leader_pk, first_leader.state().network_pkey);
-        first_leader
-            .network_service
-            .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
-        first_leader
-            .network_service
-            .filter_unicast(&[CHAIN_LOADER_TOPIC]);
+    let mut msgs = Vec::new();
+    for node in &mut r.parts.1.nodes {
+        let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
+        msgs.push(msg);
     }
-    .await;
+    assert_eq!(msgs.len(), 3);
+
+    info!("BROADCAST VIEW_CHANGES");
+    for node in r.parts.1.iter_mut() {
+        for msg in &msgs {
+            node.network_service
+                .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
+        }
+    }
+
+    let next_leader = r.parts.1.future_view_change_leader(1);
+    r.parts.1.poll().await;
+    for node in r.parts.1.iter_mut() {
+        info!("processing validator = {:?}", node.validator_id());
+        if next_leader == node.state().network_pkey {
+            node.poll().await;
+            let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);
+            // If node was leader, they have produced micro block,
+            assert_eq!(node.state().chain.view_change(), 0);
+        } else {
+            assert_eq!(node.state().chain.view_change(), 1);
+        }
+    }
+
+    let first_leader = r.parts.0.first_mut();
+
+    assert_eq!(leader_pk, first_leader.state().network_pkey);
+    first_leader
+        .network_service
+        .filter_broadcast(&[crate::VIEW_CHANGE_TOPIC, crate::SEALED_BLOCK_TOPIC]);
+    first_leader
+        .network_service
+        .filter_unicast(&[CHAIN_LOADER_TOPIC]);
 }
 
 // // CASE partition:

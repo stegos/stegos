@@ -891,6 +891,7 @@ impl NodeState {
 
         assert_eq!(block.header.epoch, epoch);
         assert_eq!(block.header.offset, self.chain.offset());
+
         let view_change = block.header.view_change;
         if let Err(e) = self.apply_microblock(block) {
             serror!(
@@ -943,6 +944,17 @@ impl NodeState {
                 _ => {}
             }
         }
+
+        strace!(
+            self,
+            "Setting the microblock view change timer to {:?}",
+            self.cfg.ublock_timeout
+        );
+        self.outgoing
+            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
+                self.cfg.ublock_timeout,
+            ));
+
         Ok(())
     }
 

@@ -520,7 +520,7 @@ async fn second_propose_lock() {
         }
 
         info!("skipping round {}, leader = {}", i, leader_pk);
-        p.poll().await;
+        p.advance().await;
         let leader_node = p.find_mut(&leader_pk).unwrap();
 
         leader_node
@@ -540,7 +540,7 @@ async fn second_propose_lock() {
 
     let second_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
     let leader_node = p.find_mut(&leader_pk).unwrap();
-    leader_node.poll().await;
+    leader_node.advance().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
@@ -553,6 +553,7 @@ async fn second_propose_lock() {
     for node in p.iter_except(&[leader_pk, second_leader_pk]) {
         node.network_service
             .receive_broadcast(topic, leader_proposal.clone());
+        node.advance().await;
     }
     p.poll().await;
 
@@ -579,8 +580,8 @@ async fn second_propose_lock() {
     for node in p.iter_except(&[second_leader_pk]) {
         let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
     }
-    p.poll().await;
-    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
+    p.advance().await;
+    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1) + Duration::from_secs(5))
         .await;
 
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);

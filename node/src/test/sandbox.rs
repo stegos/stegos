@@ -1027,12 +1027,12 @@ impl NodeSandbox {
         }
     }
 
-    pub fn update_validation_status(&mut self) {
-        self.node_service.state_mut().update_validation_status();
+    pub fn update_validation_status(&mut self) -> Result<(), Error>{
+        self.node_service.state_mut().update_validation_status()
     }
 
     pub async fn advance(&mut self) {
-        self.update_validation_status();
+        assert_matches!(self.update_validation_status(), Ok(()));
         self.poll().await;
     }
 

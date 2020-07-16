@@ -236,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn Macroblocks() {
+    fn macroblocks() {
         let (skey, pkey) = scc::make_random_keys();
         let (nskey, npkey) = pbc::make_random_keys();
 

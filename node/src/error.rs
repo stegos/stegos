@@ -24,6 +24,8 @@
 // SOFTWARE.
 
 use failure::Fail;
+use crate::NodeOutgoingEvent;
+use futures::channel::mpsc::TrySendError;
 use stegos_blockchain::{BlockError, BlockchainError, StorageError};
 use stegos_crypto::hash::Hash;
 
@@ -85,6 +87,12 @@ impl From<BlockchainError> for ForkError {
 
 impl From<StorageError> for ForkError {
     fn from(err: StorageError) -> ForkError {
+        ForkError::Error(err.into())
+    }
+}
+
+impl From<TrySendError<NodeOutgoingEvent>> for ForkError {
+    fn from(err: TrySendError<NodeOutgoingEvent>) -> ForkError {
         ForkError::Error(err.into())
     }
 }

@@ -48,7 +48,7 @@ use crate::mempool::Mempool;
 use crate::validation::*;
 use ::tokio::time::{Duration, Instant};
 use failure::{bail, format_err, Error};
-use futures::channel::oneshot;
+use futures::channel::{mpsc, oneshot};
 #[cfg(not(test))]
 use rand::{self, Rng};
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -238,7 +238,7 @@ pub struct NodeState {
     ///
     validation_status_changed: bool,
 
-    pub(crate) outgoing: Vec<NodeOutgoingEvent>,
+    outgoing: mpsc::UnboundedSender<NodeOutgoingEvent>,
 }
 
 impl NodeState {
@@ -249,6 +249,7 @@ impl NodeState {
         network_skey: pbc::SecretKey,
         network_pkey: pbc::PublicKey,
         chain_name: String,
+        tx: mpsc::UnboundedSender<NodeOutgoingEvent>,
     ) -> Result<Self, Error> {
         let validation = if chain.is_epoch_full() {
             MacroblockAuditor
@@ -269,7 +270,7 @@ impl NodeState {
             restaking_offset: 0,
             is_restaking_enabled: true,
             validation_status_changed: true,
-            outgoing: Vec::new(),
+            outgoing: tx,
         };
 
         state.update_stake_balance();
@@ -280,9 +281,9 @@ impl NodeState {
 
     /// Invoked when network is ready.
     pub fn init(&mut self) -> Result<(), Error> {
-        self.update_validation_status();
-        self.on_facilitator_changed();
-        self.on_status_changed();
+        self.update_validation_status()?;
+        self.on_facilitator_changed()?;
+        self.on_status_changed()?;
         self.restake_expiring_stakes()?;
         Ok(())
     }
@@ -296,10 +297,10 @@ impl NodeState {
     fn send_transaction(&mut self, tx: Transaction) -> Result<(), Error> {
         let data = tx.into_buffer()?;
         let tx_hash = Hash::digest(&tx);
-        self.outgoing.push(NodeOutgoingEvent::Publish {
+        self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
             topic: TX_TOPIC.to_string(),
             data: data.clone(),
-        });
+        })?;
         sinfo!(
             self,
             "Sent transaction to the network: tx={}, inputs={:?}, outputs={:?}, fee={}",
@@ -574,10 +575,10 @@ impl NodeState {
 
         for tx_hash in pending_txs.into_iter() {
             let tx = self.mempool.get_tx(&tx_hash).expect("tx in mempool");
-            self.outgoing.push(NodeOutgoingEvent::Publish {
+            self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
                 topic: TX_TOPIC.to_string(),
                 data: tx.into_buffer()?,
-            });
+            })?;
         }
 
         if some {
@@ -654,11 +655,11 @@ impl NodeState {
                 "Found a fork with lower view_change, sending blocks: pkey={}",
                 remote.header.pkey
             );
-            self.outgoing.push(NodeOutgoingEvent::SendBlocksTo {
+            self.outgoing.unbounded_send(NodeOutgoingEvent::SendBlocksTo {
                 to: remote.header.pkey,
                 epoch,
                 offset,
-            });
+            })?;
             return Err(ForkError::Canceled);
         }
 
@@ -746,7 +747,7 @@ impl NodeState {
                   remote_view_change);
             // Request history from that node.
             self.outgoing
-                .push(NodeOutgoingEvent::RequestBlocksFrom { from: pkey });
+                .unbounded_send(NodeOutgoingEvent::RequestBlocksFrom { from: pkey })?;
             return Err(ForkError::Canceled);
         }
 
@@ -905,7 +906,7 @@ impl NodeState {
                     // A potential fork - request history from that node.
                     let from = self.chain.select_leader(view_change);
                     self.outgoing
-                        .push(NodeOutgoingEvent::RequestBlocksFrom { from });
+                        .unbounded_send(NodeOutgoingEvent::RequestBlocksFrom { from })?;
                 }
                 Ok(BlockchainError::BlockError(BlockError::InvalidViewChange(..))) => {
                     assert!(self.chain.view_change() > 0);
@@ -935,11 +936,11 @@ impl NodeState {
                         chain: chain_info,
                         proof: proof.clone(),
                     };
-                    self.outgoing.push(NodeOutgoingEvent::Send {
+                    self.outgoing.unbounded_send(NodeOutgoingEvent::Send {
                         dest: leader,
                         topic: VIEW_CHANGE_DIRECT.to_string(),
                         data: proof.into_buffer()?,
-                    });
+                    })?;
                 }
                 _ => {}
             }
@@ -951,9 +952,9 @@ impl NodeState {
             self.cfg.ublock_timeout
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
+            .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
                 self.cfg.ublock_timeout,
-            ));
+            ))?;
 
         Ok(())
     }
@@ -1017,8 +1018,8 @@ impl NodeState {
             old_epoch_info,
         };
         self.cheating_proofs.clear();
-        self.on_facilitator_changed();
-        self.on_block_added(block_timestamp, notification.into(), was_synchronized);
+        self.on_facilitator_changed()?;
+        self.on_block_added(block_timestamp, notification.into(), was_synchronized)?;
 
         let apply_time = Timestamp::now().duration_since(ts).as_secs_f64();
         metrics::MACROBLOCK_APPLY_TIME.set(apply_time);
@@ -1105,7 +1106,7 @@ impl NodeState {
         self.mempool.prune(inputs.iter(), outputs.keys());
 
         // Update metrics.
-        self.on_block_added(block_timestamp, block.into(), was_synchronized);
+        self.on_block_added(block_timestamp, block.into(), was_synchronized)?;
         Ok(())
     }
 
@@ -1117,7 +1118,7 @@ impl NodeState {
         block_timestamp: Timestamp,
         notification: ChainNotification,
         was_synchronized: bool,
-    ) {
+    ) -> Result<(), Error> {
         // Update block metrics.
         metrics::MEMPOOL_TRANSACTIONS.set(self.mempool.len() as i64);
         metrics::MEMPOOL_INPUTS.set(self.mempool.inputs_len() as i64);
@@ -1160,11 +1161,11 @@ impl NodeState {
         }
 
         // Send StatusChanged.
-        self.on_status_changed();
+        self.on_status_changed()?;
 
         // Send ChainNotification.
         self.outgoing
-            .push(NodeOutgoingEvent::ChainNotification(notification));
+            .unbounded_send(NodeOutgoingEvent::ChainNotification(notification))?;
 
         // Send block to replication.
         let light_block: LightBlock = match &block {
@@ -1175,7 +1176,7 @@ impl NodeState {
             Block::Microblock(block) => block.clone().into_light_ublock().into(),
         };
         self.outgoing
-            .push(NodeOutgoingEvent::ReplicationBlock { block, light_block });
+            .unbounded_send(NodeOutgoingEvent::ReplicationBlock { block, light_block })?;
 
         // Re-stake expiring stakes
         strace!(
@@ -1191,14 +1192,16 @@ impl NodeState {
             if let Err(e) = self.restake_expiring_stakes() {
                 serror!(self, "Restake failed: {}", e);
             }
-        }
+        };
+        Ok(())
     }
 
-    fn on_status_changed(&mut self) {
+    fn on_status_changed(&mut self) -> Result<(), Error> {
         let msg = self.chain.status();
         metrics::SYNCHRONIZED.set(if msg.is_synchronized { 1 } else { 0 });
         self.outgoing
-            .push(NodeOutgoingEvent::StatusNotification(msg.into()));
+            .unbounded_send(NodeOutgoingEvent::StatusNotification(msg.into()))?;
+        Ok(())
     }
 
     /// Handler for NodeRequest::BroadcastTransaction
@@ -1241,7 +1244,7 @@ impl NodeState {
         self.validation_status_changed = true;
 
         // Send StatusChanged.
-        self.on_status_changed();
+        self.on_status_changed()?;
 
         // Send ChainNotification.
         let notification = RevertedMicroblock {
@@ -1250,7 +1253,7 @@ impl NodeState {
             recovered_inputs,
         };
         self.outgoing
-            .push(NodeOutgoingEvent::ChainNotification(notification.into()));
+            .unbounded_send(NodeOutgoingEvent::ChainNotification(notification.into()))?;
 
         Ok(())
     }
@@ -1272,10 +1275,10 @@ impl NodeState {
     fn send_block(&mut self, block: Block) -> Result<(), Error> {
         let block_hash = Hash::digest(&block);
         let data = block.into_buffer()?;
-        self.outgoing.push(NodeOutgoingEvent::Publish {
+        self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
             topic: SEALED_BLOCK_TOPIC.to_string(),
             data: data.clone(),
-        });
+        })?;
         match block {
             Block::Macroblock(ref block) => {
                 sinfo!(
@@ -1305,7 +1308,7 @@ impl NodeState {
     //----------------------------------------------------------------------------------------------
 
     /// Called when a leader for the next micro block has changed.
-    fn on_ublock_leader_changed(&mut self) {
+    fn on_ublock_leader_changed(&mut self) -> Result<(), Error> {
         let leader = self.chain.leader();
         if leader == self.network_pkey {
             sinfo!(self,
@@ -1318,16 +1321,12 @@ impl NodeState {
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             self.outgoing
-                .push(NodeOutgoingEvent::MicroblockProposeTimer {
+                .unbounded_send(NodeOutgoingEvent::MicroblockProposeTimer {
                     random: self.chain.last_random(),
                     vdf: self.chain.vdf(),
                     difficulty: self.chain.difficulty(),
-                });
-            strace!(
-                self,
-                "Will propose microblock, {} items in outgoing queue",
-                self.outgoing.len()
-            );
+                })?;
+            strace!(self, "Will propose microblock!");
         } else {
             sinfo!(self, "I'm a validator. Waiting for the next microblock: epoch={}, offset={}, view_change={}, last_block={}, leader={}",
                   self.chain.epoch(),
@@ -1339,7 +1338,7 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
 
             self.outgoing
-                .push(NodeOutgoingEvent::MicroblockProposeTimerCancel);
+                .unbounded_send(NodeOutgoingEvent::MicroblockProposeTimerCancel)?;
         };
 
         strace!(
@@ -1348,13 +1347,14 @@ impl NodeState {
             self.cfg.ublock_timeout
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
+            .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
                 self.cfg.ublock_timeout,
-            ));
+            ))?;
+        Ok(())
     }
 
     /// Called when a leader for the next macro block has changed.
-    fn on_mblock_leader_changed(&mut self) {
+    fn on_mblock_leader_changed(&mut self) -> Result<(), Error> {
         let (consensus, autocommit_counter) = match &mut self.validation {
             MacroblockValidator {
                 consensus,
@@ -1379,7 +1379,7 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             // Consensus may have locked proposal.
             if consensus.should_propose() {
-                self.outgoing.push(NodeOutgoingEvent::ProposeMacroblock);
+                self.outgoing.unbounded_send(NodeOutgoingEvent::ProposeMacroblock)?;
             }
         } else {
             sinfo!(self,
@@ -1402,23 +1402,25 @@ impl NodeState {
             round
         );
         self.outgoing
-            .push(NodeOutgoingEvent::MacroblockViewChangeTimer(d));
+            .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(d))?;
+        Ok(())
     }
 
     /// Called when facilitator is changed.
-    fn on_facilitator_changed(&mut self) {
+    fn on_facilitator_changed(&mut self) -> Result<(), Error> {
         let facilitator = self.chain.facilitator().clone();
         self.outgoing
-            .push(NodeOutgoingEvent::FacilitatorChanged { facilitator });
+            .unbounded_send(NodeOutgoingEvent::FacilitatorChanged { facilitator })?;
+        Ok(())
     }
 
     ///
     /// Change validation status after applying a new block or performing a view change.
     ///
-    pub fn update_validation_status(&mut self) {
+    pub fn update_validation_status(&mut self) -> Result<(), Error> {
         if !self.validation_status_changed {
             strace!(self, "No change, skipping consensus role update...");
-            return;
+            return Ok(());
         }
 
         strace!(self, "Updating consensus role...");
@@ -1436,7 +1438,7 @@ impl NodeState {
                 );
                 consensus::metrics::CONSENSUS_ROLE
                     .set(consensus::metrics::ConsensusRole::Regular as i64);
-                return;
+                return Ok(());
             }
 
             let view_change_collector =
@@ -1446,7 +1448,7 @@ impl NodeState {
                 view_change_collector,
                 future_consensus_messages: Vec::new(),
             };
-            self.on_ublock_leader_changed();
+            self.on_ublock_leader_changed()?;
         } else {
             // Expected Macro Block.
             let prev = std::mem::replace(&mut self.validation, MacroblockAuditor);
@@ -1459,7 +1461,7 @@ impl NodeState {
                 );
                 consensus::metrics::CONSENSUS_ROLE
                     .set(consensus::metrics::ConsensusRole::Regular as i64);
-                return;
+                return Ok(());
             }
 
             let validators = self.chain.validators_at_epoch_start();
@@ -1492,9 +1494,11 @@ impl NodeState {
                 autocommit_counter: 0,
             };
 
-            self.on_mblock_leader_changed();
-            self.handle_consensus_events();
+            self.on_mblock_leader_changed()?;
+            self.handle_consensus_events()?;
         }
+
+        Ok(())
     }
 
     ///
@@ -1529,11 +1533,11 @@ impl NodeState {
 
         // Feed message into consensus module.
         consensus.feed_message(msg)?;
-        self.handle_consensus_events();
+        self.handle_consensus_events()?;
         Ok(())
     }
 
-    fn handle_consensus_events(&mut self) {
+    fn handle_consensus_events(&mut self) -> Result<(), Error> {
         strace!(self, "Handling consensus events...");
         let epoch = self.chain.epoch();
         let consensus = match &mut self.validation {
@@ -1592,18 +1596,20 @@ impl NodeState {
         // Check if we can commit a block.
         if consensus.is_leader() && consensus.should_commit() {
             strace!(self, "I'm the leader! Committing proposed block.");
-            return self.commit_proposed_block();
+            self.commit_proposed_block();
+            return Ok(())
         }
 
         // Flush pending messages.
         let outbox = std::mem::replace(&mut consensus.outbox, Vec::new());
         for msg in outbox {
             let data = msg.into_buffer().expect("Failed to serialize");
-            self.outgoing.push(NodeOutgoingEvent::Publish {
+            self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
                 topic: CONSENSUS_TOPIC.to_string(),
                 data,
-            });
-        }
+            })?;
+        };
+        Ok(())
     }
 
     /// Get a timestamp for the next block.
@@ -1631,7 +1637,7 @@ impl NodeState {
         let relevant_round = 1 + consensus.round();
         let duration = relevant_round * self.cfg.mblock_timeout;
         self.outgoing
-            .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
+            .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(duration))?;
         sdebug!(
             self,
             "Creating a new macroblock proposal: epoch={}, view_change={}",
@@ -1677,7 +1683,7 @@ impl NodeState {
         consensus.propose(block_hash, block_proposal);
         consensus.prevote(block);
         strace!(self, ">>> Handling consensus events...");
-        self.handle_consensus_events();
+        self.handle_consensus_events()?;
         Ok(())
     }
 
@@ -1722,7 +1728,7 @@ impl NodeState {
                 let relevant_round = 1 + consensus.round();
                 let duration = relevant_round * self.cfg.mblock_timeout;
                 self.outgoing
-                    .push(NodeOutgoingEvent::MacroblockViewChangeTimer(duration));
+                    .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(duration))?;
                 return Ok(());
             }
 
@@ -1740,10 +1746,10 @@ impl NodeState {
         // Go to the next round.
         metrics::MACROBLOCK_VIEW_CHANGES.inc();
         consensus.next_round();
-        self.on_mblock_leader_changed();
-        self.handle_consensus_events();
+        self.on_mblock_leader_changed()?;
+        self.handle_consensus_events()?;
 
-        self.on_status_changed();
+        self.on_status_changed()?;
 
         Ok(())
     }
@@ -1792,7 +1798,7 @@ impl NodeState {
                     .set_view_change(self.chain.view_change() + 1, proof);
 
                 // Change leader.
-                self.on_ublock_leader_changed();
+                self.on_ublock_leader_changed()?;
             }
             Ok(None) => {}
             Err(ref e) if e.is_future_viewchange() => {
@@ -1804,9 +1810,9 @@ impl NodeState {
                     "Received an invalid view_change message: view_change={}, validator={}, error={}",
                     msg.chain.view_change, validator_pkey, e
                 );
-                self.outgoing.push(NodeOutgoingEvent::RequestBlocksFrom {
+                self.outgoing.unbounded_send(NodeOutgoingEvent::RequestBlocksFrom {
                     from: validator_pkey,
-                });
+                })?;
             }
             Err(e) => return Err(e.into()),
         }
@@ -1848,14 +1854,14 @@ impl NodeState {
         // Update timer.
         let duration = self.cfg.ublock_timeout;
         self.outgoing
-            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(duration));
+            .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(duration))?;
         // Send a view_change message.
         let chain_info = ChainInfo::from_blockchain(&self.chain);
         let msg = view_change_collector.handle_timeout(chain_info);
-        self.outgoing.push(NodeOutgoingEvent::Publish {
+        self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
             topic: VIEW_CHANGE_TOPIC.to_string(),
             data: msg.into_buffer()?,
-        });
+        })?;
         metrics::MICROBLOCK_VIEW_CHANGES.inc();
         sdebug!(
             self,
@@ -1887,12 +1893,12 @@ impl NodeState {
                 pkey: self.network_pkey,
             };
 
-            self.outgoing.push(NodeOutgoingEvent::Publish {
+            self.outgoing.unbounded_send(NodeOutgoingEvent::Publish {
                 topic: VIEW_CHANGE_PROOFS_TOPIC.to_string(),
                 data: proof.into_buffer()?,
-            });
+            })?;
         }
-        self.on_status_changed();
+        self.on_status_changed()?;
 
         Ok(())
     }
@@ -1982,9 +1988,9 @@ impl NodeState {
         self.send_block(Block::Microblock(block2))
             .expect("failed to send sealed micro block");
         self.outgoing
-            .push(NodeOutgoingEvent::MicroblockViewChangeTimer(
+            .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
                 self.cfg.ublock_timeout,
-            ));
+            ))?;
         Ok(())
     }
 
@@ -2095,9 +2101,9 @@ impl NodeState {
     // Event Handling
     /////////////////////////////////////////////////////////////////////////////////////////////////
 
-    fn handle_event(&mut self, event: NodeIncomingEvent) {
+    fn handle_event(&mut self, event: NodeIncomingEvent) -> Result<(), Error> {
         strace!(self, "Handle event = {}", event);
-        let result: Result<(), Error> = match event {
+        match event {
             NodeIncomingEvent::Request { request, tx } => {
                 strace!(self, "=> {:?}", request);
                 let response = match request {
@@ -2317,13 +2323,13 @@ impl NodeState {
                         "Failed to process block from replication, changing upstream: error = {}",
                         error
                     );
-                    self.outgoing.push(NodeOutgoingEvent::ChangeUpstream {});
+                    self.outgoing.unbounded_send(NodeOutgoingEvent::ChangeUpstream {})?;
                 }
                 result
             }
             NodeIncomingEvent::CheckSyncTimer => {
                 if !self.chain.is_synchronized() {
-                    self.on_status_changed();
+                    self.on_status_changed()?;
                 }
                 Ok(())
             }
@@ -2346,9 +2352,6 @@ impl NodeState {
             NodeIncomingEvent::ChainLoaderMessage { from: _, data: _ } => {
                 unreachable!("Must be handled by NodeService");
             }
-        };
-        if let Err(e) = result {
-            serror!(self, "Error: {}", e);
         }
     }
 }

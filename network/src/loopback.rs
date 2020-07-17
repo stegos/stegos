@@ -102,7 +102,7 @@ impl NetworkProvider for LoopbackNetwork {
     }
 
     fn send(&self, to: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error> {
-        let msg = MessageFromNode::SendUnicast {
+        let msg = Message::Unicast {
             to,
             protocol_id: protocol_id.to_string(),
             data,
@@ -114,7 +114,7 @@ impl NetworkProvider for LoopbackNetwork {
     fn publish(&self, topic: &str, data: Vec<u8>) -> Result<(), Error> {
         strace!(self, "Broadcasting message for topic = {}", topic);
         let topic: String = topic.to_string();
-        let msg = MessageFromNode::Publish { topic, data };
+        let msg = Message::Broadcast { topic, data };
         self.state.lock().unwrap().queue.push_back(msg);
         Ok(())
     }
@@ -154,7 +154,7 @@ impl NetworkProvider for LoopbackNetwork {
 struct LoopbackState {
     consumers: HashMap<String, Vec<mpsc::UnboundedSender<Vec<u8>>>>,
     unicast_consumers: HashMap<String, Vec<mpsc::UnboundedSender<UnicastMessage>>>,
-    queue: VecDeque<MessageFromNode>,
+    queue: VecDeque<Message>,
     replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
     pkey: pbc::PublicKey,
 }
@@ -201,10 +201,10 @@ impl Loopback {
         let mut result = Vec::new();
         for data in &state.queue {
             match data {
-                MessageFromNode::SendUnicast {
+                Message::Unicast {
                     protocol_id: topic, ..
                 }
-                | MessageFromNode::Publish { topic, .. } => result.push(topic),
+                | Message::Broadcast { topic, .. } => result.push(topic),
             }
         }
 
@@ -215,7 +215,7 @@ impl Loopback {
 
     pub fn assert_broadcast<M: ProtoConvert + Debug + PartialEq>(&mut self, topic: &str, data: M) {
         let ref mut state = self.state.lock().unwrap();
-        if let MessageFromNode::Publish {
+        if let Message::Broadcast {
             topic: msg_topic,
             data: msg_data,
         } = state.queue.pop_front().expect("contains messages")
@@ -249,7 +249,7 @@ impl Loopback {
     pub fn try_get_broadcast_raw(&mut self, topic: &str) -> Option<Vec<u8>> {
         let msg = self.state.lock().unwrap().queue.pop_front();
         match msg {
-            Some(MessageFromNode::Publish {
+            Some(Message::Broadcast {
                 topic: msg_topic,
                 data: msg_data,
             }) => {
@@ -271,7 +271,7 @@ impl Loopback {
         let ref mut state = self.state.lock().unwrap();
         loop {
             match state.queue.pop_front() {
-                Some(MessageFromNode::SendUnicast {
+                Some(Message::Unicast {
                     protocol_id: msg_protocol_id,
                     to: msg_peer,
                     data: msg_data,
@@ -294,7 +294,7 @@ impl Loopback {
         state.queue = queue
             .into_iter()
             .filter(move |msg| match msg {
-                MessageFromNode::SendUnicast {
+                Message::Unicast {
                     protocol_id: topic, ..
                 } => protocols.iter().find(|i| *i == &topic).is_none(),
                 _ => true,
@@ -309,7 +309,7 @@ impl Loopback {
         state.queue = queue
             .into_iter()
             .filter(|msg| match msg {
-                MessageFromNode::Publish { topic, .. } => {
+                Message::Broadcast { topic, .. } => {
                     topic_list.iter().find(|i| *i == &topic).is_none()
                 }
 
@@ -325,7 +325,7 @@ impl Loopback {
         data: M,
     ) {
         let ref mut state = self.state.lock().unwrap();
-        if let MessageFromNode::SendUnicast {
+        if let Message::Unicast {
             to: msg_to,
             protocol_id: msg_protocol_id,
             data: msg_data,
@@ -368,13 +368,13 @@ impl Loopback {
 }
 
 #[derive(Debug, Clone)]
-pub enum MessageFromNode {
-    SendUnicast {
+pub enum Message {
+    Unicast {
         to: pbc::PublicKey,
         protocol_id: String,
         data: Vec<u8>,
     },
-    Publish {
+    Broadcast {
         topic: String,
         data: Vec<u8>,
     },

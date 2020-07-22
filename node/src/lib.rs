@@ -655,11 +655,12 @@ impl NodeState {
                 "Found a fork with lower view_change, sending blocks: pkey={}",
                 remote.header.pkey
             );
-            self.outgoing.unbounded_send(NodeOutgoingEvent::SendBlocksTo {
-                to: remote.header.pkey,
-                epoch,
-                offset,
-            })?;
+            self.outgoing
+                .unbounded_send(NodeOutgoingEvent::SendBlocksTo {
+                    to: remote.header.pkey,
+                    epoch,
+                    offset,
+                })?;
             return Err(ForkError::Canceled);
         }
 
@@ -1379,7 +1380,8 @@ impl NodeState {
                 .set(consensus::metrics::ConsensusRole::Leader as i64);
             // Consensus may have locked proposal.
             if consensus.should_propose() {
-                self.outgoing.unbounded_send(NodeOutgoingEvent::ProposeMacroblock)?;
+                self.outgoing
+                    .unbounded_send(NodeOutgoingEvent::ProposeMacroblock)?;
             }
         } else {
             sinfo!(self,
@@ -1597,7 +1599,7 @@ impl NodeState {
         if consensus.is_leader() && consensus.should_commit() {
             strace!(self, "I'm the leader! Committing proposed block.");
             self.commit_proposed_block();
-            return Ok(())
+            return Ok(());
         }
 
         // Flush pending messages.
@@ -1608,7 +1610,7 @@ impl NodeState {
                 topic: CONSENSUS_TOPIC.to_string(),
                 data,
             })?;
-        };
+        }
         Ok(())
     }
 
@@ -1810,9 +1812,10 @@ impl NodeState {
                     "Received an invalid view_change message: view_change={}, validator={}, error={}",
                     msg.chain.view_change, validator_pkey, e
                 );
-                self.outgoing.unbounded_send(NodeOutgoingEvent::RequestBlocksFrom {
-                    from: validator_pkey,
-                })?;
+                self.outgoing
+                    .unbounded_send(NodeOutgoingEvent::RequestBlocksFrom {
+                        from: validator_pkey,
+                    })?;
             }
             Err(e) => return Err(e.into()),
         }
@@ -2323,7 +2326,8 @@ impl NodeState {
                         "Failed to process block from replication, changing upstream: error = {}",
                         error
                     );
-                    self.outgoing.unbounded_send(NodeOutgoingEvent::ChangeUpstream {})?;
+                    self.outgoing
+                        .unbounded_send(NodeOutgoingEvent::ChangeUpstream {})?;
                 }
                 result
             }

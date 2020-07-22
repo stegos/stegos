@@ -23,8 +23,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use failure::Fail;
 use crate::NodeOutgoingEvent;
+use failure::Fail;
 use futures::channel::mpsc::TrySendError;
 use stegos_blockchain::{BlockError, BlockchainError, StorageError};
 use stegos_crypto::hash::Hash;

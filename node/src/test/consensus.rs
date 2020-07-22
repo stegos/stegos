@@ -581,8 +581,11 @@ async fn second_propose_lock() {
         let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
     }
     p.poll().await;
-    wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1) + Duration::from_secs(5))
-        .await;
+    wait(
+        config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1)
+            + Duration::from_secs(5),
+    )
+    .await;
 
     p.filter_broadcast(&[crate::CONSENSUS_TOPIC]);
     info!("====== Waiting for Macroblock timeout. =====");

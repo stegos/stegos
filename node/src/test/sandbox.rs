@@ -19,9 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use futures::{pin_mut, select, FutureExt};
-use futures::task::Poll;
 use futures::future::Fuse;
+use futures::task::Poll;
+use futures::{pin_mut, select, FutureExt};
 
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
@@ -1047,11 +1047,11 @@ impl NodeSandbox {
                 }
             }
         }
-        return 
+        return
     }
     */
 
-    pub fn update_validation_status(&mut self) -> Result<(), Error>{
+    pub fn update_validation_status(&mut self) -> Result<(), Error> {
         self.node_service.state_mut().update_validation_status()
     }
 

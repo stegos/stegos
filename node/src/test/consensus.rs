@@ -86,7 +86,7 @@ async fn autocommit() {
     let (_block, block_hash, _) = p.create_mblock().await;
     let leader_pk = p.leader();
     let leader = p.find_mut(&leader_pk).unwrap();
-    leader.advance().await;
+    leader.poll().await;
 
     trace!("Checking for autocommit...");
     // dont send this block to any node, wait for autocommits.
@@ -118,7 +118,7 @@ async fn autocommit() {
         );
 
         // poll to update node after Macroblock_timeout waits
-        node.advance().await;
+        node.poll().await;
         // Check that the last node has auto-committed the block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
         assert_eq!(
@@ -160,7 +160,7 @@ async fn round() {
     p.skip_ublock().await;
 
     trace!("Updating nodes...");
-    p.advance().await;
+    p.poll().await;
 
     let topic = CONSENSUS_TOPIC;
 
@@ -275,7 +275,7 @@ async fn multiple_rounds() {
 
     // Create one micro block.
     p.skip_ublock().await;
-    p.advance().await;
+    p.poll().await;
 
     let view_change = p.first_mut().state().chain.view_change();
     trace!("View change = {}", view_change);
@@ -386,9 +386,9 @@ async fn lock() {
         }
 
         trace!("Skipping round {}, leader = {}", round, leader_pk);
-        p.advance().await;
+        p.poll().await;
         let leader = p.find_mut(&leader_pk).unwrap();
-        //leader.advance().await;
+        //leader.poll().await;
 
         trace!("Looking for proposal from leader {}", leader_pk);
         leader.network_service.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -414,7 +414,7 @@ async fn lock() {
 
     let leader_pk = p.first_mut().state().chain.select_leader(round);
     let leader = p.find_mut(&leader_pk).unwrap();
-    leader.advance().await;
+    leader.poll().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
@@ -429,7 +429,7 @@ async fn lock() {
     for node in p.iter_except(&[leader_pk]) {
         node.network_service
             .receive_broadcast(topic, leader_proposal.clone());
-        node.advance().await;
+        node.poll().await;
     }
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
@@ -520,7 +520,7 @@ async fn second_propose_lock() {
         }
 
         info!("skipping round {}, leader = {}", i, leader_pk);
-        p.advance().await;
+        p.poll().await;
         let leader_node = p.find_mut(&leader_pk).unwrap();
 
         leader_node
@@ -540,7 +540,7 @@ async fn second_propose_lock() {
 
     let second_leader_pk = p.first_mut().state().chain.select_leader(round + 1);
     let leader_node = p.find_mut(&leader_pk).unwrap();
-    leader_node.advance().await;
+    leader_node.poll().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 
@@ -553,7 +553,7 @@ async fn second_propose_lock() {
     for node in p.iter_except(&[leader_pk, second_leader_pk]) {
         node.network_service
             .receive_broadcast(topic, leader_proposal.clone());
-        node.advance().await;
+        node.poll().await;
     }
     p.poll().await;
 
@@ -580,7 +580,7 @@ async fn second_propose_lock() {
     for node in p.iter_except(&[second_leader_pk]) {
         let _precommit: ConsensusMessage = node.network_service.get_broadcast(topic);
     }
-    p.advance().await;
+    p.poll().await;
     wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1) + Duration::from_secs(5))
         .await;
 
@@ -854,7 +854,7 @@ async fn second_proposal_lock() {
 
     trace!("Waiting for Macroblock timeout...");
     let leader = p.find_mut(&second_leader_pk).unwrap();
-    leader.advance().await;
+    leader.poll().await;
 
     wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 1))
         .await;
@@ -929,7 +929,7 @@ async fn second_proposal_lock() {
         second_leader_pk
     );
     let leader = p.find_mut(&second_leader_pk).unwrap();
-    leader.advance().await;
+    leader.poll().await;
 
     wait(config.node.mblock_timeout * (round - p.first_mut().state().chain.view_change() + 2))
         .await;
@@ -1296,6 +1296,7 @@ async fn invalid_proposes_inner<'a>(p: &mut Partition<'a>, round: u32) {
     let leader_pk = p.first_mut().state().chain.select_leader(round);
     trace!("SELECTING LEADER of round {} = {}", round, leader_pk);
     let leader = p.find_mut(&leader_pk).unwrap();
+    leader.poll().await;
 
     let skey = leader.state().network_skey.clone();
 
@@ -1379,6 +1380,7 @@ async fn second_round_invalid_proposes() {
         num_nodes: 3,
         node: NodeConfig {
             mblock_timeout: Duration::from_secs(300),
+            sync_timeout: Duration::from_secs(10000),
             ..Default::default()
         },
         ..Default::default()
@@ -1394,13 +1396,15 @@ async fn second_round_invalid_proposes() {
     let topic = crate::CONSENSUS_TOPIC;
 
     let leader_pk = p.first_mut().state().chain.leader();
-    let leader_node = p.find_mut(&leader_pk).unwrap();
-    // skip proposal and prevote of last leader.
-    let _proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-    let _prevote: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
-    wait(config.node.mblock_timeout).await;
+    let leader = p.find_mut(&leader_pk).unwrap();
+    leader.poll().await; // a must!
 
-    info!("====== Waiting for keyblock timeout. =====");
+    // skip proposal and prevote of last leader.
+    let _proposal: ConsensusMessage = leader.network_service.get_broadcast(topic);
+    let _prevote: ConsensusMessage = leader.network_service.get_broadcast(topic);
+
+    info!("====== Waiting for macroblock timeout. =====");
+    wait(config.node.mblock_timeout * 2 + Duration::from_secs(5)).await;
     p.poll().await;
 
     let round = p.first_mut().state().chain.view_change() + 1;

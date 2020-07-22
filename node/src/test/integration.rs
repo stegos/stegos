@@ -130,7 +130,7 @@ async fn slash_and_roll() {
             .network_service
             .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
     }
-    new_leader_node.advance().await;
+    new_leader_node.poll().await;
 
     let cheater = first_leader;
     let mut r = p
@@ -167,7 +167,7 @@ async fn slash_and_roll() {
 
     let new_leader_node = p.find_mut(&second_leader).unwrap();
     trace!("Create block from view change. Leader = {}", second_leader);
-    new_leader_node.advance().await;
+    new_leader_node.poll().await;
     let block: Block = new_leader_node
         .network_service
         .get_broadcast(SEALED_BLOCK_TOPIC);
@@ -175,7 +175,7 @@ async fn slash_and_roll() {
     for node in &mut p.nodes {
         node.network_service
             .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
-        node.advance().await;
+        node.poll().await;
     }
 
     if let Some(auditor) = p.auditor_mut() {

@@ -19,8 +19,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use futures::pin_mut;
+use futures::{pin_mut, select, FutureExt};
 use futures::task::Poll;
+use futures::future::Fuse;
 
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryInto;
@@ -361,7 +362,7 @@ impl<'p> Partition<'p> {
         filter_nodes.push(leader_pk);
         let mut r = self.split(&filter_nodes);
         let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
-        leader.advance().await;
+        leader.poll().await;
         let b1: Block = leader
             .network_service
             .get_broadcast(crate::SEALED_BLOCK_TOPIC);
@@ -488,16 +489,17 @@ impl<'p> Partition<'p> {
         }
     }
 
-    /// Poll each node for updates and update consensus.
-    pub async fn advance(&mut self) {
-        trace!(">>> Sandbox polling & updating consensus...");
+    /// Advance consensus
+    pub fn advance(&mut self) {
+        trace!(">>> Sandbox advancing consensus...");
         for node in self.nodes.iter_mut() {
-            node.advance().await;
+            node.advance();
         }
+    }
 
-        if let Some(auditor) = &mut self.auditor {
-            auditor.poll().await;
-        }
+    pub async fn step(&mut self) {
+        self.poll().await;
+        self.advance();
     }
 
     pub fn len(&self) -> usize {
@@ -579,7 +581,7 @@ impl<'p> Partition<'p> {
         trace!("According to partition info, next leader = {}", leader_pk);
         self.filter_unicast(&[crate::CHAIN_LOADER_TOPIC]);
 
-        self.advance().await;
+        self.poll().await;
 
         let leader = self.find_mut(&leader_pk).unwrap();
         // ensure the Microblock propose timer
@@ -615,6 +617,8 @@ impl<'p> Partition<'p> {
                 .await;
             auditor.poll().await;
         }
+
+        self.advance();
 
         trace!("Processed microblock...");
     }
@@ -684,7 +688,8 @@ impl<'p> Partition<'p> {
         let last_mblock_hash = chain.last_mblock_hash();
         let leader_pk = self.leader();
 
-        self.advance().await;
+        self.step().await;
+        self.poll().await;
 
         let leader = self.find_mut(&leader_pk).unwrap();
 
@@ -839,12 +844,7 @@ impl<'p> Partition<'p> {
 
         self.deliver_restakes(restakes).await;
 
-        for node in self.iter_except(&[leader_pk]) {
-            node.advance().await;
-        }
-
-        let leader = self.find_mut(&leader_pk).unwrap();
-        leader.poll().await;
+        self.step().await;
 
         trace!(
             "Processed macroblock (leader: {} -> {})...",
@@ -1016,7 +1016,6 @@ impl NodeSandbox {
     }
 
     pub async fn poll(&mut self) {
-        // drain the queue
         loop {
             let future = self.node_service.poll();
             pin_mut!(future);
@@ -1027,13 +1026,33 @@ impl NodeSandbox {
         }
     }
 
-    pub fn update_validation_status(&mut self) -> Result<(), Error>{
-        self.node_service.state_mut().update_validation_status()
+    pub fn advance(&mut self) {
+        assert_matches!(self.update_validation_status(), Ok(()));
     }
 
-    pub async fn advance(&mut self) {
-        assert_matches!(self.update_validation_status(), Ok(()));
-        self.poll().await;
+    /*
+    pub async fn expect_restake(&mut self) -> Result<tokio::io::Error, Option<Transaction>> {
+        let d = Duration::from_millis(100);
+        let mut timer = tokio::time::delay_for(d).fuse();
+        let f = self.node_service.poll().fuse();
+        pin_mut!(f);
+
+        loop {
+            select! {
+                _ = timer => break,
+                _ = f => {
+                    if let Some(tx) = self.fetch_restake() {
+                        return Some(tx)
+                    }
+                }
+            }
+        }
+        return 
+    }
+    */
+
+    pub fn update_validation_status(&mut self) -> Result<(), Error>{
+        self.node_service.state_mut().update_validation_status()
     }
 
     pub async fn process<M: ProtoConvert>(&mut self, topic: &str, msg: M) {

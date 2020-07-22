@@ -64,7 +64,7 @@ async fn dead_leader() {
     wait(config.node.ublock_timeout + Duration::from_secs(5)).await;
 
     info!("PARTITION BEGIN");
-    p.advance().await;
+    p.poll().await;
     let mut r = p.split(&[leader_pk]);
     // emulate dead leader for other nodes
     r.parts.1.filter_unicast(&[CHAIN_LOADER_TOPIC]);

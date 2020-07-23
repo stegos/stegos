@@ -1340,17 +1340,12 @@ impl NodeState {
 
             self.outgoing
                 .unbounded_send(NodeOutgoingEvent::MicroblockProposeTimerCancel)?;
-        };
+            self.outgoing
+                .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
+                    self.cfg.ublock_timeout,
+                ))?;
+        }
 
-        strace!(
-            self,
-            "Setting the microblock view change timer to {:?}",
-            self.cfg.ublock_timeout
-        );
-        self.outgoing
-            .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
-                self.cfg.ublock_timeout,
-            ))?;
         Ok(())
     }
 
@@ -1393,18 +1388,18 @@ impl NodeState {
             );
             consensus::metrics::CONSENSUS_ROLE
                 .set(consensus::metrics::ConsensusRole::Validator as i64);
+            let round = 1 + consensus.round();
+            let d = self.cfg.mblock_timeout * round;
+            strace!(
+                self,
+                ">>> Setting the macroblock view change timer to {:?} for round = {}",
+                d,
+                round
+            );
+            self.outgoing
+                .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(d))?;
         }
 
-        let round = 1 + consensus.round();
-        let d = self.cfg.mblock_timeout * round;
-        strace!(
-            self,
-            ">>> Setting the macroblock view change timer to {:?} for round = {}",
-            d,
-            round
-        );
-        self.outgoing
-            .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(d))?;
         Ok(())
     }
 
@@ -1599,6 +1594,11 @@ impl NodeState {
         if consensus.is_leader() && consensus.should_commit() {
             strace!(self, "I'm the leader! Committing proposed block.");
             self.commit_proposed_block();
+            // Expect a microblock after a macroblock.
+            self.outgoing
+                .unbounded_send(NodeOutgoingEvent::MicroblockViewChangeTimer(
+                    self.cfg.ublock_timeout,
+                ))?;
             return Ok(());
         }
 

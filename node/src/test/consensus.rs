@@ -1514,7 +1514,10 @@ async fn multiple_proposes() {
 // Test [multiple message on prevote]
 #[tokio::test]
 async fn invalid_prevotes() {
-    let mut cfg: ChainConfig = Default::default();
+    let mut cfg: ChainConfig = ChainConfig {
+        awards_difficulty: 0,
+        ..Default::default()
+    };
     cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
@@ -1528,12 +1531,13 @@ async fn invalid_prevotes() {
 
     // Create one micro block.
     p.skip_ublock().await;
+    p.step().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
     let round = p.first_mut().state().chain.view_change();
 
-    let leader_pk = p.first_mut().state().chain.leader();
+    let leader_pk = p.leader();
     let leader_node = p.find_mut(&leader_pk).unwrap();
     // Check for a proposal from the leader.
     let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);
@@ -1589,8 +1593,11 @@ async fn invalid_prevotes() {
 
 // Test [multiple message on prevote (from leader)]
 #[tokio::test]
-async fn leader_invalid_prevotes() {
-    let mut cfg: ChainConfig = Default::default();
+async fn invalid_leader_prevotes() {
+    let mut cfg: ChainConfig = ChainConfig {
+        awards_difficulty: 0,
+        ..Default::default()
+    };
     cfg.blocks_in_epoch = 1;
     let config = SandboxConfig {
         chain: cfg,
@@ -1604,12 +1611,13 @@ async fn leader_invalid_prevotes() {
 
     // Create one micro block.
     p.skip_ublock().await;
+    p.step().await;
 
     let topic = crate::CONSENSUS_TOPIC;
     let epoch = p.first_mut().state().chain.epoch();
     let round = p.first_mut().state().chain.view_change();
 
-    let leader_pk = p.first_mut().state().chain.leader();
+    let leader_pk = p.leader();
     let leader_node = p.find_mut(&leader_pk).unwrap();
     // Check for a proposal from the leader.
     let proposal: ConsensusMessage = leader_node.network_service.get_broadcast(topic);

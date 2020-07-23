@@ -42,7 +42,10 @@ use crate::CHAIN_LOADER_TOPIC;
 // Asserts that Nodes [B, D, E] go to the next view_change.
 #[tokio::test]
 async fn dead_leader() {
-    let mut cfg: ChainConfig = Default::default();
+    let mut cfg: ChainConfig = ChainConfig {
+        awards_difficulty: 0,
+        ..Default::default()
+    };
     cfg.blocks_in_epoch = 2000;
     let config = SandboxConfig {
         num_nodes: 4,
@@ -55,15 +58,21 @@ async fn dead_leader() {
 
     p.poll().await;
 
-    let leader_pk = p.first().state().chain.leader();
+    //let leader_pk = p.first().state().chain.leader();
+    let leader_pk = p.leader();
 
-    info!("before first poll");
+    trace!("before first poll");
     // let leader shoot his block
     p.poll().await;
     // emulate timeout on other nodes, and wait for request
     wait(config.node.ublock_timeout + Duration::from_secs(5)).await;
 
-    info!("PARTITION BEGIN");
+    let leader = p.find_mut(&leader_pk).unwrap();
+    leader
+        .network_service
+        .filter_broadcast(&[SEALED_BLOCK_TOPIC]);
+
+    trace!("PARTITION BEGIN");
     p.poll().await;
     let mut r = p.split(&[leader_pk]);
     // emulate dead leader for other nodes
@@ -71,12 +80,13 @@ async fn dead_leader() {
 
     let mut msgs = Vec::new();
     for node in &mut r.parts.1.nodes {
+        trace!("[{}] Fetching view change...", node.pkey());
         let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
         msgs.push(msg);
     }
     assert_eq!(msgs.len(), 3);
 
-    info!("BROADCAST VIEW_CHANGES");
+    trace!("BROADCAST VIEW_CHANGES");
     for node in r.parts.1.iter_mut() {
         for msg in &msgs {
             node.network_service
@@ -87,7 +97,11 @@ async fn dead_leader() {
     let next_leader = r.parts.1.future_view_change_leader(1);
     r.parts.1.poll().await;
     for node in r.parts.1.iter_mut() {
-        info!("processing validator = {:?}", node.validator_id());
+        trace!(
+            "[{}] processing validator = {:?}",
+            node.pkey(),
+            node.validator_id()
+        );
         if next_leader == node.state().network_pkey {
             node.poll().await;
             let _: Block = node.network_service.get_broadcast(SEALED_BLOCK_TOPIC);

@@ -713,6 +713,7 @@ impl NodeService {
                 let (tx, rx) = oneshot::channel::<()>();
                 tx.send(()).ok();
                 self.mblock_propose_timer.set(rx.fuse());
+                self.mblock_view_change_timer.set(Fuse::terminated());
                 self.ublock_propose_timer.set(Fuse::terminated());
                 self.ublock_view_change_timer.set(Fuse::terminated());
                 Ok(())
@@ -720,6 +721,7 @@ impl NodeService {
             NodeOutgoingEvent::MacroblockViewChangeTimer(duration) => {
                 self.mblock_view_change_timer
                     .set(time::delay_for(duration).fuse());
+                self.mblock_propose_timer.set(Fuse::terminated());
                 self.ublock_propose_timer.set(Fuse::terminated());
                 self.ublock_view_change_timer.set(Fuse::terminated());
                 Ok(())
@@ -744,6 +746,7 @@ impl NodeService {
                 );
                 thread::spawn(solver);
                 self.ublock_propose_timer.set(rx.fuse());
+                self.ublock_view_change_timer.set(Fuse::terminated());
                 self.mblock_propose_timer.set(Fuse::terminated());
                 self.mblock_view_change_timer.set(Fuse::terminated());
                 Ok(())
@@ -760,6 +763,7 @@ impl NodeService {
                 );
                 self.ublock_view_change_timer
                     .set(time::delay_for(duration).fuse());
+                self.ublock_propose_timer.set(Fuse::terminated());
                 self.mblock_propose_timer.set(Fuse::terminated());
                 self.mblock_view_change_timer.set(Fuse::terminated());
                 // task::current().notify();

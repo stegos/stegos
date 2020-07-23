@@ -1704,7 +1704,7 @@ impl NodeState {
         };
 
         if consensus.should_commit() {
-            assert!(!consensus.is_leader(), "never happens on leader");
+            assert!(!consensus.is_leader(), "never happens to a leader");
             // a more simpler round robin across nodes.
             let leader = self
                 .chain
@@ -1712,23 +1712,23 @@ impl NodeState {
                 .validators
                 .0
                 .get(*autocommit)
-                .expect("to find our node in consensus group before overflow counter.");
+                .expect("to find our node in consensus group before overflow counter");
 
-            let is_relay = leader.0 == self.network_pkey;
+            let is_leader = leader.0 == self.network_pkey;
 
-            swarn!(self, "Timed out while waiting for the committed block from leader, trying to apply automatically: epoch={}, is_leader={}",
-                  self.chain.epoch(), is_relay
+            swarn!(self, "Timed out while waiting for the committed block from leader, trying to apply automatically: epoch={}, leader?={}",
+                  self.chain.epoch(), is_leader
             );
 
             metrics::MACROBLOCK_AUTOCOMMITS.inc();
-            if !is_relay {
+            if !is_leader {
                 *autocommit += 1;
                 strace!(self,
-                    "It's not time to send macroblock, waiting for next autocommit timer, current_leader={}",
-                    leader.0
+                    "It's not time to send macroblock, waiting for next autocommit timer, leader={}, counter={}",
+                    leader.0, *autocommit
                 );
-                let relevant_round = 1 + consensus.round();
-                let duration = relevant_round * self.cfg.mblock_timeout;
+                let round = 1 + consensus.round();
+                let duration = round * self.cfg.mblock_timeout;
                 self.outgoing
                     .unbounded_send(NodeOutgoingEvent::MacroblockViewChangeTimer(duration))?;
                 return Ok(());

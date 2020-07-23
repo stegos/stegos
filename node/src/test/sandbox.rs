@@ -1030,6 +1030,11 @@ impl NodeSandbox {
         assert_matches!(self.update_validation_status(), Ok(()));
     }
 
+    pub async fn step(&mut self) {
+        self.poll().await;
+        self.advance();
+    }
+
     /*
     pub async fn expect_restake(&mut self) -> Result<tokio::io::Error, Option<Transaction>> {
         let d = Duration::from_millis(100);

@@ -86,12 +86,15 @@ async fn autocommit() {
     let (_block, block_hash, _) = p.create_mblock().await;
     let leader_pk = p.leader();
     let leader = p.find_mut(&leader_pk).unwrap();
-    leader.poll().await;
+    leader.step().await;
+
+    // We want everyone here since autocommit will use a simple
+    // round-robin scheme to determine the next leader!
+    let mut keys: Vec<_> = p.iter().map(|n| n.state().network_pkey).collect();
+    keys.sort();
 
     trace!("Checking for autocommit...");
     // dont send this block to any node, wait for autocommits.
-    let mut keys: Vec<_> = p.iter().map(|n| n.state().network_pkey).collect();
-    keys.sort();
 
     for pk in keys {
         trace!("[{}] Polling all nodes...", pk);
@@ -117,8 +120,9 @@ async fn autocommit() {
             last_block_hash
         );
 
-        // poll to update node after Macroblock_timeout waits
+        // Poll to update node after macroblock timeout.
         node.poll().await;
+
         // Check that the last node has auto-committed the block.
         assert_eq!(node.node_service.state().chain.epoch(), epoch + 1);
         assert_eq!(

@@ -347,7 +347,7 @@ impl Consensus {
 
         // PREVOTE SHOULD ALWAYS SAVE BLOCK, EVEN IF WE LOCKED ON OTHER
         self.block = Some(block);
-        // If propose was different from our locked, don't send it
+        // If proposal was different from the one we are locked on then don't send it.
         if let Some(locked_round) = &self.locked_round {
             let locked_block_hash = Hash::digest(&locked_round.block);
             if block_hash != locked_block_hash
@@ -356,7 +356,7 @@ impl Consensus {
             {
                 sinfo!(
                     self,
-                    "{}({}:{}): Found valid propose, but we already locked at other propose, locked_block = {}, current_block = {}",
+                    "{}({}:{}): Found a valid proposal, but we are already locked on another, locked_block = {}, current_block = {}",
                     self.state.name(),
                     self.epoch,
                     self.round,

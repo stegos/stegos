@@ -330,7 +330,7 @@ impl<'p> Partition<'p> {
     }
 
     /// Skip blocks until condition not true
-    pub async fn skip_ubs_until<'a, F>(&'a mut self, mut condition: F)
+    pub async fn skip_ublocks_until<'a, F>(&'a mut self, mut condition: F)
     where
         'p: 'a,
         F: FnMut(&mut Partition) -> bool,
@@ -584,22 +584,14 @@ impl<'p> Partition<'p> {
         self.poll().await;
 
         let leader = self.find_mut(&leader_pk).unwrap();
-        // ensure the Microblock propose timer
-        // fires and we process it!
-        wait(Duration::from_secs(0)).await;
-        leader.poll().await;
+        let (block, restake) = leader.expect_ublock().await.expect("Expected microblock");
 
         // Process re-stakes.
         let mut restakes: Vec<Transaction> = Vec::new();
-
-        if let Some(tx) = leader.fetch_restake() {
+        if let Some(tx) = restake {
             restakes.push(tx)
         }
 
-        trace!("Fetching microblock from leader {}", leader_pk);
-        let block: Block = leader
-            .network_service
-            .get_broadcast(crate::SEALED_BLOCK_TOPIC);
         for node in self.iter_except(&[leader_pk]) {
             let pk = node.node_service.state().network_pkey;
             trace!("Delivering microblock to {}", pk);
@@ -619,7 +611,6 @@ impl<'p> Partition<'p> {
         }
 
         self.advance();
-
         trace!("Processed microblock...");
     }
 
@@ -1035,26 +1026,33 @@ impl NodeSandbox {
         self.advance();
     }
 
-    /*
-    pub async fn expect_restake(&mut self) -> Result<tokio::io::Error, Option<Transaction>> {
-        let d = Duration::from_millis(100);
-        let mut timer = tokio::time::delay_for(d).fuse();
-        let f = self.node_service.poll().fuse();
-        pin_mut!(f);
+    pub async fn expect_ublock(&mut self) -> Option<(Block, Option<Transaction>)> {
+        // Trigger the microblock proposal timer.
+        self.poll().await;
+        // Make sure we get to process it
+        wait(Duration::from_secs(0)).await;
+        self.poll().await;
+
+        let restake = self.fetch_restake();
+        let target = Instant::now() + Duration::from_secs(5);
+
+        trace!("Fetching microblock from {}", self.pkey());
 
         loop {
-            select! {
-                _ = timer => break,
-                _ = f => {
-                    if let Some(tx) = self.fetch_restake() {
-                        return Some(tx)
-                    }
-                }
+            if let Some(msg) = self.network_service.try_get_broadcast_raw(SEALED_BLOCK_TOPIC) {
+                let block = Block::from_buffer(&msg).unwrap();
+                return Some((block, restake))
             }
+            if Instant::now() > target {
+                break
+            }
+            //wait(Duration::from_secs(0)).await;
+            tokio::task::yield_now().await;
+            self.poll().await;
         }
-        return
+
+        return None
     }
-    */
 
     pub fn update_validation_status(&mut self) -> Result<(), Error> {
         self.node_service.state_mut().update_validation_status()

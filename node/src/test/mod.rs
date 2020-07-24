@@ -90,7 +90,7 @@ pub async fn precondition_n_different_block_leaders<'a>(
     p: &mut Partition<'a>,
     different_leaders: u32,
 ) {
-    p.skip_ubs_until(|p| {
+    p.skip_ublocks_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| p.future_block_leader(id).unwrap())
             .collect();
@@ -99,7 +99,7 @@ pub async fn precondition_n_different_block_leaders<'a>(
             "Checking that all leaders are different: leaders={:?}.",
             leaders
         );
-        check_unique(leaders)
+        ensure_distinct(leaders)
     })
     .await;
 }
@@ -108,7 +108,7 @@ pub async fn precondition_n_different_viewchange_leaders<'a>(
     p: &mut Partition<'a>,
     different_leaders: u32,
 ) {
-    p.skip_ubs_until(|p| {
+    p.skip_ublocks_until(|p| {
         let leaders: Vec<_> = (0..different_leaders)
             .map(|id| p.future_view_change_leader(id))
             .collect();
@@ -117,12 +117,12 @@ pub async fn precondition_n_different_viewchange_leaders<'a>(
             "Checking that all leaders are different: leaders={:?}.",
             leaders
         );
-        check_unique(leaders)
+        ensure_distinct(leaders)
     })
     .await;
 }
 
-pub fn check_unique<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
+pub fn ensure_distinct<T: Ord + Clone + PartialEq>(original: Vec<T>) -> bool {
     let original_len = original.len();
     let mut array = original;
     array.sort_unstable();

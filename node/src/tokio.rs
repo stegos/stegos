@@ -758,7 +758,7 @@ impl NodeService {
             NodeOutgoingEvent::MicroblockViewChangeTimer(duration) => {
                 strace!(
                     self,
-                    "Setting the Microblock view change timer to {:?}",
+                    "Setting the microblock view change timer to {:?}",
                     duration
                 );
                 self.ublock_view_change_timer

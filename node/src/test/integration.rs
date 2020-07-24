@@ -62,9 +62,9 @@ async fn slash_and_roll() {
     let mut sb = Sandbox::new(config.clone());
     let mut p = sb.partition();
 
-    trace!("Ensuring different leaders...");
+    trace!("Ensuring three distinct leaders...");
 
-    p.skip_ubs_until(|p| {
+    p.skip_ublocks_until(|p| {
         let mut leaders = Vec::new();
         // first regular winner
         let first = p.future_view_change_leader(0);
@@ -93,65 +93,70 @@ async fn slash_and_roll() {
         leaders.push(third);
 
         trace!("Checking leaders: {}, {}, {}", first, second, third);
-        check_unique(leaders)
+        ensure_distinct(leaders)
     })
     .await;
 
     let start_offset = p.first().node_service.state().chain.offset();
-    let first_leader = p.first().node_service.state().chain.leader();
-    let second_leader = p.future_view_change_leader(1);
+    //let first_leader = p.first().node_service.state().chain.leader();
+    let first_leader_pk = p.leader();
+    let second_leader_pk = p.future_view_change_leader(1);
 
     trace!("Polling everyone...");
-    p.poll().await;
+    p.step().await;
 
     trace!(
-        "Initiating a Microblock view change, leader = {}...",
-        first_leader
+        "Initiating a microblock view change, leader = {}...",
+        first_leader_pk
     );
 
-    // init view_change
+    // Initiate a microblock view change.
     let d = config.node.ublock_timeout + Duration::from_secs(5);
     wait(d).await;
-    p.poll().await;
+    p.step().await;
 
     p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
     let mut msgs = Vec::new();
-    for node in &mut p.iter_except(&[first_leader]) {
+    for node in &mut p.iter_except(&[first_leader_pk]) {
         let msg: ViewChangeMessage = node.network_service.get_broadcast(VIEW_CHANGE_TOPIC);
         msgs.push(msg);
     }
     assert_eq!(msgs.len(), 3);
 
-    let new_leader_node = p.find_mut(&second_leader).unwrap();
+    let second_leader = p.find_mut(&second_leader_pk).unwrap();
 
-    trace!("Broadcasting view changes to {} ", second_leader);
+    trace!("Broadcasting view changes to new leader {} ", second_leader_pk);
     for msg in &msgs {
-        new_leader_node
+        second_leader
             .network_service
             .receive_broadcast(crate::VIEW_CHANGE_TOPIC, msg.clone())
     }
-    new_leader_node.poll().await;
+    second_leader.step().await;
 
-    let cheater = first_leader;
+    trace!("Making old leader {} cheat...", first_leader_pk);
+    let cheater = first_leader_pk;
     let mut r = p
-        .slash_cheater_inner(first_leader, vec![second_leader])
+        .slash_cheater_inner(first_leader_pk, vec![second_leader_pk])
         .await;
     assert_eq!(r.parts.1.nodes.len(), 2);
     assert_eq!(r.parts.0.nodes.len(), 2);
 
+    let pk = r.parts.1.first().node_service.state().chain.leader();
     trace!(
-        "Check if cheating was detected. Leader = {}",
-        r.parts.1.first().node_service.state().chain.leader()
+        "Check if cheating by {} was detected. Partition leader = {}",
+        first_leader_pk, pk,
     );
-    // each node should add proof of slashing into state.
+    // Each node should have stored proof of slashing.
     r.parts
         .1
         .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 1));
 
-    // wait for block;
+    // Skip one microblock.
+    let node = r.parts.1.find_mut(&pk).unwrap();
+    node.step().await;
     r.parts.1.skip_ublock().await;
 
-    // assert that nodes in partition 1 exclude node from partition 0.
+    // Make sure nodes in partition 1 exclude nodes from partition 0.
     for node in r.parts.1.iter() {
         let validators: HashSet<_> = node
             .node_service
@@ -165,13 +170,13 @@ async fn slash_and_roll() {
         assert!(!validators.contains(&cheater))
     }
 
-    let new_leader_node = p.find_mut(&second_leader).unwrap();
-    trace!("Create block from view change. Leader = {}", second_leader);
-    new_leader_node.poll().await;
-    let block: Block = new_leader_node
-        .network_service
-        .get_broadcast(SEALED_BLOCK_TOPIC);
-    // try to rollback cheater affect, but proof should be saved
+    trace!("Create block from view change using new leader = {}", second_leader_pk);
+    let second_leader = p.find_mut(&second_leader_pk).unwrap();
+    second_leader.step().await;
+    let (block, _) = second_leader.expect_ublock().await.expect("Expected microblock");
+
+    // Try to rollback cheater effect but ensure proof is saved.
+    trace!("Deliver the new block...");
     for node in &mut p.nodes {
         node.network_service
             .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
@@ -185,8 +190,9 @@ async fn slash_and_roll() {
         auditor.poll().await;
     }
 
-    // nodes C D should rollback fork
-    let mut r = p.split(&[first_leader, second_leader]);
+    // Nodes C D should rollback fork.
+    trace!("Expect rollback...");
+    let mut r = p.split(&[first_leader_pk, second_leader_pk]);
     r.parts.1.poll().await;
     r.parts.1.assert_synchronized();
     // assert that nodes recover valdators list. And has same height
@@ -195,6 +201,7 @@ async fn slash_and_roll() {
         assert_eq!(node.node_service.state().chain.validators().0.len(), 4);
     }
     // assert that each node except first one that was in partition still has a proof.
+    trace!("Expect proof...");
     for node in r.parts.1.iter() {
         assert_eq!(node.node_service.state().cheating_proofs.len(), 1)
     }

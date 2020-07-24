@@ -1792,7 +1792,7 @@ impl NodeState {
         match view_change_collector.handle_message(&self.chain, msg) {
             Ok(Some(proof)) => {
                 sdebug!(self,
-                    "Received enough messages for change leader: epoch={}, view_change={}, last_block={}",
+                    "Received enough messages to change leader: epoch={}, view_change={}, last_block={}",
                     self.chain.epoch(), self.chain.view_change(), self.chain.last_block_hash()
                 );
                 // Perform view change.
@@ -1914,7 +1914,10 @@ impl NodeState {
             MicroblockValidator { .. } => {}
             _ => panic!("Expected MicroblockValidator State"),
         };
-        assert_eq!(self.chain.leader(), self.network_pkey);
+        if self.chain.leader() != self.network_pkey {
+            swarn!(self, "We are not the leader so not creating microblock!");
+            return Ok(())
+        }
         assert!(!self.chain.is_epoch_full());
 
         let epoch = self.chain.epoch();
@@ -1987,7 +1990,7 @@ impl NodeState {
         );
 
         let block2 = block.clone();
-        self.apply_ublock(block).expect("created a valid block");
+        self.apply_ublock(block)?;
         self.send_block(Block::Microblock(block2))
             .expect("failed to send sealed micro block");
         self.outgoing

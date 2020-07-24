@@ -1916,7 +1916,7 @@ impl NodeState {
         };
         if self.chain.leader() != self.network_pkey {
             swarn!(self, "We are not the leader so not creating microblock!");
-            return Ok(())
+            return Ok(());
         }
         assert!(!self.chain.is_epoch_full());
 

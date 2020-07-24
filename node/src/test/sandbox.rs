@@ -1039,19 +1039,22 @@ impl NodeSandbox {
         trace!("Fetching microblock from {}", self.pkey());
 
         loop {
-            if let Some(msg) = self.network_service.try_get_broadcast_raw(SEALED_BLOCK_TOPIC) {
+            if let Some(msg) = self
+                .network_service
+                .try_get_broadcast_raw(SEALED_BLOCK_TOPIC)
+            {
                 let block = Block::from_buffer(&msg).unwrap();
-                return Some((block, restake))
+                return Some((block, restake));
             }
             if Instant::now() > target {
-                break
+                break;
             }
             //wait(Duration::from_secs(0)).await;
             tokio::task::yield_now().await;
             self.poll().await;
         }
 
-        return None
+        return None;
     }
 
     pub fn update_validation_status(&mut self) -> Result<(), Error> {

@@ -125,7 +125,10 @@ async fn slash_and_roll() {
 
     let second_leader = p.find_mut(&second_leader_pk).unwrap();
 
-    trace!("Broadcasting view changes to new leader {} ", second_leader_pk);
+    trace!(
+        "Broadcasting view changes to new leader {} ",
+        second_leader_pk
+    );
     for msg in &msgs {
         second_leader
             .network_service
@@ -144,7 +147,8 @@ async fn slash_and_roll() {
     let pk = r.parts.1.first().node_service.state().chain.leader();
     trace!(
         "Check if cheating by {} was detected. Partition leader = {}",
-        first_leader_pk, pk,
+        first_leader_pk,
+        pk,
     );
     // Each node should have stored proof of slashing.
     r.parts
@@ -170,10 +174,16 @@ async fn slash_and_roll() {
         assert!(!validators.contains(&cheater))
     }
 
-    trace!("Create block from view change using new leader = {}", second_leader_pk);
+    trace!(
+        "Create block from view change using new leader = {}",
+        second_leader_pk
+    );
     let second_leader = p.find_mut(&second_leader_pk).unwrap();
     second_leader.step().await;
-    let (block, _) = second_leader.expect_ublock().await.expect("Expected microblock");
+    let (block, _) = second_leader
+        .expect_ublock()
+        .await
+        .expect("Expected microblock");
 
     // Try to rollback cheater effect but ensure proof is saved.
     trace!("Deliver the new block...");

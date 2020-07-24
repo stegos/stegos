@@ -1776,7 +1776,7 @@ impl NodeState {
 
     /// Handle incoming view_change message from the network.
     fn handle_view_change_message(&mut self, msg: ViewChangeMessage) -> Result<(), Error> {
-        self.validation_status_changed = true;
+        //self.validation_status_changed = true;
 
         let view_change_collector = match &mut self.validation {
             MicroblockValidator {

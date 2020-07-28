@@ -222,67 +222,95 @@ async fn slash_and_roll() {
 
 // CASE finalized slashing:
 //
-// Asserts that after Macroblock slashing is finalized, and proofs are cleared.
-/*
-#[test]
-fn finalized_slashing() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 20;
+// Asserts that proofs are cleared after macroblock slashing is finalized.
+#[tokio::test]
+async fn finalized_slashing() {
+    let cfg = ChainConfig {
+        awards_difficulty: 0,
+        blocks_in_epoch: 20,
+        ..Default::default()
+    };
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
-        p.poll().await;
+    let mut sb = Sandbox::new(config.clone());
+    let mut p = sb.partition();
 
-        precondition_n_different_block_leaders(&mut s, 2);
-        // next leader should be from different partition.
+    precondition_n_different_block_leaders(&mut p, 2).await;
+    // next leader should be from different partition.
 
-        let cheater = p.nodes[0].node_service.state().chain.leader();
-        info!("CREATE BLOCK. LEADER = {}", cheater);
-        p.poll().await;
+    let cheater = p.nodes[0].node_service.state().chain.leader();
+    info!("CREATE BLOCK. LEADER = {}", cheater);
+    p.poll().await;
 
-        let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
+    let mut r = p.slash_cheater_inner( cheater, vec![]).await;
 
-        info!(
-            "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.state().chain.leader()
-        );
-        // each node should add proof of slashing into state.
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
+    info!(
+        "CHECK IF CHEATER WAS DETECTED. LEADER={}",
+        r.parts.1.first().node_service.state().chain.leader()
+    );
+    // each node should add proof of slashing into state.
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 1));
 
-        // wait for block;
-        r.parts.1.skip_ublock();
+    // wait for block;
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+    let (block, _) = leader
+        .expect_ublock()
+        .await
+        .expect("Expected microblock");
 
-        // assert that nodes in partition 1 exclude node from partition 0.
-        for node in r.parts.1.iter() {
-            let validators: HashSet<_> = node
-                .node_service
-                .chain
-                .validators()
-                .iter()
-                .map(|(p, _)| *p)
-                .collect();
-            assert!(!validatorp.contains(&cheater))
-        }
+    // assert that nodes in partition 1 exclude node from partition 0.
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
+        node.poll().await;
+        let validators: HashSet<_> = node
+            .node_service
+            .state()
+            .chain
+            .validators()
+            .0
+            .iter()
+            .map(|(p, _)| *p)
+            .collect();
+        trace!("[{}] Checking for cheater in the list of validators...", node.pkey());
+        assert!(!validators.contains(&cheater))
+    }
 
-        let offset = r.parts.1.first().node_service.state().chain.offset();
+    info!("Checking proofs of cheating...");
 
-        for _offset in offset..r.config.chain.blocks_in_epoch {
-            r.parts.1.poll();
-            r.parts.1.skip_ublock();
-        }
-        r.parts.1.skip_mblock();
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
-    });
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+
+    let offset = r.parts.1.first().node_service.state().chain.offset();
+
+    trace!("Current offset = {}, blocks in epoch = {}", offset, r.parts.1.config.chain.blocks_in_epoch);
+    for offset in offset..r.parts.0.config.chain.blocks_in_epoch {
+        trace!("Skipping microblock for offset {}", offset);
+        //r.parts.1.step().await;
+        r.parts.1.skip_ublock().await;
+    }
+
+    info!("SKipping one more macroblock...");
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+
+    r.parts.1.skip_mblock().await;
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 0));
 }
 
+/*
 // CASE finalized slashing with service award (with auditor node):
 //
 // Asserts that after service award was executed.

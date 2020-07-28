@@ -624,7 +624,7 @@ impl<'p> Partition<'p> {
         let epoch = chain.epoch();
         let offset = chain.offset();
         assert!(offset > 0);
-        let block = chain.ub(epoch, offset - 1).unwrap();
+        let block = chain.ublock(epoch, offset - 1).unwrap();
         let chain_info = ChainInfo {
             epoch: block.header.epoch,
             offset: block.header.offset,

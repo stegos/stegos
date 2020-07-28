@@ -724,7 +724,7 @@ impl Blockchain {
                 tx_id,
                 txout_id,
             }) => {
-                let block = self.ub(*epoch, *offset)?;
+                let block = self.ublock(*epoch, *offset)?;
                 let tx = block
                     .transactions
                     .get(*tx_id as usize)
@@ -837,7 +837,7 @@ impl Blockchain {
     }
 
     /// Get a micro block by offset.
-    pub fn ub(&self, epoch: u64, offset: u32) -> Result<Cow<Microblock>, StorageError> {
+    pub fn ublock(&self, epoch: u64, offset: u32) -> Result<Cow<Microblock>, StorageError> {
         let block = self.block(LSN(epoch, offset))?;
 
         let res = match block {
@@ -2105,7 +2105,7 @@ impl Blockchain {
         //
         // Remove from the disk.
         //
-        let block = self.ub(self.epoch, offset)?.into_owned();
+        let block = self.ublock(self.epoch, offset)?.into_owned();
         let (previous, lsn, last_block_timestamp) = if offset == 0 {
             // Previous block is Macro Block.
             let block = self.mblock(self.epoch - 1)?;
@@ -2113,7 +2113,7 @@ impl Blockchain {
             (Hash::digest(block.as_ref()), lsn, block.header.timestamp)
         } else {
             // Previous block is Micro Block.
-            let block = self.ub(self.epoch, offset - 1)?;
+            let block = self.ublock(self.epoch, offset - 1)?;
             let lsn = LSN(self.epoch, offset - 1);
             (Hash::digest(block.as_ref()), lsn, block.header.timestamp)
         };

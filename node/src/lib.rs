@@ -605,7 +605,7 @@ impl NodeState {
         let offset = remote.header.offset;
         let remote_hash = Hash::digest(&remote);
         let remote_view_change = remote.header.view_change;
-        let local = self.chain.ub(epoch, offset)?;
+        let local = self.chain.ublock(epoch, offset)?;
         let local_hash = Hash::digest(local.as_ref());
 
         // check multiple blocks with same view_change
@@ -698,7 +698,7 @@ impl NodeState {
         let offset = proof.chain.offset;
         let local = if offset < self.chain.offset() {
             // Get local block.
-            let local = self.chain.ub(epoch, offset)?;
+            let local = self.chain.ublock(epoch, offset)?;
             ChainInfo {
                 epoch,
                 offset: local.header.offset,
@@ -2046,7 +2046,7 @@ impl NodeState {
                 offset
             ));
         }
-        let block = self.chain.ub(epoch, offset)?.into_owned();
+        let block = self.chain.ublock(epoch, offset)?.into_owned();
         Ok(block)
     }
 

@@ -246,7 +246,7 @@ async fn finalized_slashing() {
     info!("CREATE BLOCK. LEADER = {}", cheater);
     p.poll().await;
 
-    let mut r = p.slash_cheater_inner( cheater, vec![]).await;
+    let mut r = p.slash_cheater_inner(cheater, vec![]).await;
 
     info!(
         "CHECK IF CHEATER WAS DETECTED. LEADER={}",
@@ -261,10 +261,7 @@ async fn finalized_slashing() {
     let pk = r.parts.1.first().node_service.state().chain.leader();
     let leader = r.parts.1.find_mut(&pk).unwrap();
     leader.step().await;
-    let (block, _) = leader
-        .expect_ublock()
-        .await
-        .expect("Expected microblock");
+    let (block, _) = leader.expect_ublock().await.expect("Expected microblock");
 
     // assert that nodes in partition 1 exclude node from partition 0.
     for node in r.parts.1.iter_mut() {
@@ -280,7 +277,10 @@ async fn finalized_slashing() {
             .iter()
             .map(|(p, _)| *p)
             .collect();
-        trace!("[{}] Checking for cheater in the list of validators...", node.pkey());
+        trace!(
+            "[{}] Checking for cheater in the list of validators...",
+            node.pkey()
+        );
         assert!(!validators.contains(&cheater))
     }
 
@@ -292,7 +292,11 @@ async fn finalized_slashing() {
 
     let offset = r.parts.1.first().node_service.state().chain.offset();
 
-    trace!("Current offset = {}, blocks in epoch = {}", offset, r.parts.1.config.chain.blocks_in_epoch);
+    trace!(
+        "Current offset = {}, blocks in epoch = {}",
+        offset,
+        r.parts.1.config.chain.blocks_in_epoch
+    );
     for offset in offset..r.parts.0.config.chain.blocks_in_epoch {
         trace!("Skipping microblock for offset {}", offset);
         //r.parts.1.step().await;

@@ -366,11 +366,8 @@ impl<'p> Partition<'p> {
         let mut r = self.split(&filter_nodes);
         let leader = &mut r.parts.0.find_mut(&leader_pk).unwrap();
         leader.poll().await;
-        let (b1, _) = leader
-            .expect_ublock()
-            .await
-            .expect("Expected microblock");
-        
+        let (b1, _) = leader.expect_ublock().await.expect("Expected microblock");
+
         let mut b2 = b1.clone();
         // modify timestamp for block
         match &mut b2 {

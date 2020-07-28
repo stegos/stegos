@@ -299,7 +299,6 @@ async fn finalized_slashing() {
     );
     for offset in offset..r.parts.0.config.chain.blocks_in_epoch {
         trace!("Skipping microblock for offset {}", offset);
-        //r.parts.1.step().await;
         r.parts.1.skip_ublock().await;
     }
 
@@ -312,130 +311,154 @@ async fn finalized_slashing() {
     r.parts
         .1
         .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 0));
+
+    p.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 }
 
-/*
 // CASE finalized slashing with service award (with auditor node):
 //
 // Asserts that after service award was executed.
 
-#[test]
-fn finalized_slashing_with_service_award() {
-    let mut cfg: ChainConfig = Default::default();
-    cfg.blocks_in_epoch = 20;
-    // execute award alays
-    cfg.awards_difficulty = 0;
+#[tokio::test]
+async fn finalized_slashing_with_service_award() {
+    let cfg = ChainConfig {
+        awards_difficulty: 0,
+        blocks_in_epoch: 20,
+        ..Default::default()
+    };
     let config = SandboxConfig {
         num_nodes: 4,
         chain: cfg,
         ..Default::default()
     };
 
-    Sandbox::start(config, |mut s| {
-        p.poll().await;
+    let mut sb = Sandbox::new(config.clone());
+    let mut p = sb.partition();
 
-        let budget = p.config.chain.service_award_per_epoch;
-        precondition_n_different_block_leaders(&mut s, 2);
-        // next leader should be from different partition.
+    let budget = p.config.chain.service_award_per_epoch;
+    precondition_n_different_block_leaders(&mut p, 2).await;
+    // next leader should be from different partition.
 
-        let cheater = p.nodes[0].node_service.state().chain.leader();
-        info!("CREATE BLOCK. LEADER = {}", cheater);
-        p.poll().await;
+    let cheater = p.nodes[0].node_service.state().chain.leader();
+    info!("CREATE BLOCK. LEADER = {}", cheater);
+    p.poll().await;
 
-        let mut r = slash_cheater_inner(&mut s, cheater, vec![]);
+    let mut r = p.slash_cheater_inner(cheater, vec![]).await;
 
-        info!(
-            "CHECK IF CHEATER WAS DETECTED. LEADER={}",
-            r.parts.1.first().node_service.state().chain.leader()
+    info!(
+        "CHECK IF CHEATER WAS DETECTED. LEADER={}",
+        r.parts.1.first().node_service.state().chain.leader()
+    );
+    // each node should add proof of slashing into state.
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 1));
+
+    // wait for block;
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+    let (block, _) = leader.expect_ublock().await.expect("Expected microblock");
+
+    // assert that nodes in partition 1 exclude node from partition 0.
+    for node in r.parts.1.iter_mut() {
+        node.network_service
+            .receive_broadcast(SEALED_BLOCK_TOPIC, block.clone());
+        node.poll().await;
+        let validators: HashSet<_> = node
+            .node_service
+            .state()
+            .chain
+            .validators()
+            .0
+            .iter()
+            .map(|(p, _)| *p)
+            .collect();
+        assert!(!validators.contains(&cheater))
+    }
+
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+
+    let offset = r.parts.1.first().node_service.state().chain.offset();
+    let epoch = r.parts.1.first().node_service.state().chain.epoch();
+
+    // ignore Microblocks for auditor
+    for _offset in offset..r.parts.1.config.chain.blocks_in_epoch {
+        r.parts.1.skip_ublock().await;
+    }
+
+    info!("SKipping one more macroblock...");
+    let pk = r.parts.1.first().node_service.state().chain.leader();
+    let leader = r.parts.1.find_mut(&pk).unwrap();
+    leader.step().await;
+
+    r.parts.1.skip_mblock().await;
+    r.parts
+        .1
+        .for_each(|node| assert_eq!(node.state().cheating_proofs.len(), 0));
+
+    let mut output = None;
+    for node in r.parts.1.iter_mut() {
+        //award was executed
+        assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
+        assert_eq!(
+            node.node_service.state().chain.last_block_hash(),
+            node.node_service.state().chain.last_mblock_hash()
         );
-        // each node should add proof of slashing into state.
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 1));
-
-        // wait for block;
-        r.parts.1.skip_ublock();
-
-        // assert that nodes in partition 1 exclude node from partition 0.
-        for node in r.parts.1.iter() {
-            let validators: HashSet<_> = node
-                .node_service
-                .chain
-                .validators()
-                .iter()
-                .map(|(p, _)| *p)
-                .collect();
-            assert!(!validatorp.contains(&cheater))
-        }
-
-        let offset = r.parts.1.first().node_service.state().chain.offset();
-        let epoch = r.parts.1.first().node_service.state().chain.epoch();
-
-        // ignore Microblocks for auditor
-        for _offset in offset..r.config.chain.blocks_in_epoch {
-            r.parts.1.poll();
-            r.parts.1.skip_ublock();
-        }
-
-        r.parts.1.skip_mblock();
-        r.parts
-            .1
-            .for_each(|node| assert_eq!(node.cheating_proofs.len(), 0));
-        let mut output = None;
-        for node in r.parts.1.iter_mut() {
-            //award was executed
-            assert_eq!(node.node_service.state().chain.service_awards().budget(), 0);
-            assert_eq!(
-                node.node_service.state().chain.last_block_hash(),
-                node.node_service.state().chain.last_mblock_hash()
-            );
-            let block_hash = node.node_service.state().chain.last_block_hash();
-            let block = node
-                .node_service
-                .chain
-                .Macroblock(epoch)
-                .unwrap()
-                .into_owned();
-            assert_eq!(Hash::digest(&block), block_hash);
-            let mut outputs = Vec::new();
-            for output in block.outputs {
-                match output {
-                    Output::PublicPaymentOutput(p) => outputp.push(p),
-                    _ => {}
-                }
-            }
-            assert_eq!(outputp.len(), 4); // 3 slashing + award
-            outputp.sort_by_key(|p| p.amount);
-            trace!("outputs = {:?}", outputs);
-            assert_eq!(outputs[0].amount, budget);
-            if let Some(ref output) = output {
-                assert_eq!(output, &outputs[0])
-            } else {
-                output = Some(outputs[0].clone());
+        let block_hash = node.node_service.state().chain.last_block_hash();
+        let block = node
+            .node_service
+            .state()
+            .chain
+            .mblock(epoch)
+            .unwrap()
+            .into_owned();
+        assert_eq!(Hash::digest(&block), block_hash);
+        let mut outputs = Vec::new();
+        for output in block.outputs {
+            match output {
+                Output::PublicPaymentOutput(p) => outputs.push(p),
+                _ => {}
             }
         }
-        r.parts.1.assert_synchronized();
+        assert_eq!(outputs.len(), 4); // 3 slashing + award
+        outputs.sort_by_key(|p| p.amount);
+        trace!("outputs = {:?}", outputs);
+        assert_eq!(outputs[0].amount, budget);
+        if let Some(ref output) = output {
+            assert_eq!(output, &outputs[0])
+        } else {
+            output = Some(outputs[0].clone());
+        }
+    }
+    r.parts.1.assert_synchronized();
 
-        let output = output.unwrap();
-        let node = r.parts.1.first_mut();
-        let mut receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
-        node.poll();
-        let notification = receive.poll().unwrap();
-        let i = match notification {
-            Async::Ready(NodeResponse::MacroblockInfo(i)) => i,
-            e => panic!("Expected Macroblock info, got ={:?}", e),
-        };
-        let p = i.epoch_info.awardp.payout.unwrap();
-        assert_eq!(output.recipient, p.recipient);
-        assert_eq!(output.amount, p.amount);
-    });
+    let output = output.unwrap();
+    let node = r.parts.1.first_mut();
+    let receive = node.node.request(NodeRequest::MacroblockInfo { epoch });
+    node.poll().await;
+    let notification = receive.await.unwrap();
+    let i = match notification {
+        NodeResponse::MacroblockInfo(i) => i,
+        e => panic!("Expected Macroblock info, got ={:?}", e),
+    };
+    let pay = i.epoch_info.awards.payout.unwrap();
+    assert_eq!(output.recipient, pay.recipient);
+    assert_eq!(output.amount, pay.amount);
+
+    p.filter_broadcast(&[VIEW_CHANGE_TOPIC, SEALED_BLOCK_TOPIC]);
+    p.filter_unicast(&[CHAIN_LOADER_TOPIC]);
 }
 
+/*
 // CASE finalized slashing with service award:
 //
 // Asserts that after service award was executed.
 
-#[test]
+#[tokio::test]
 fn finalized_slashing_with_service_award_for_auditor() {
     let mut cfg: ChainConfig = Default::default();
     cfg.blocks_in_epoch = 20;

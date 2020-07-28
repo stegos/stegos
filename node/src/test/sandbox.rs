@@ -170,7 +170,7 @@ impl Sandbox {
     pub fn partition(&mut self) -> Partition {
         Partition {
             nodes: self.nodes.iter_mut().collect(),
-            auditor: None,
+            auditor: Some(&mut self.auditor),
             config: self.config.clone(),
         }
     }

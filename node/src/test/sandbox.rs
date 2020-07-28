@@ -320,6 +320,9 @@ impl<'p> Partition<'p> {
             }
         }
 
+        part1.config = self.config.clone();
+        part2.config = self.config.clone();
+
         use std::ops::DerefMut;
         //TODO: add support of multiple auditors, and allow to choose on which side should be auditors.
         part2.auditor = self.auditor.as_mut().map(|x| x.deref_mut());

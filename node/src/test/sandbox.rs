@@ -142,6 +142,7 @@ impl Sandbox {
             nodes.push(node)
         }
         let auditor_keychain = KeyChain::new(&mut prng);
+        info!("Auditor = {}", auditor_keychain.network_pkey);
         let auditor = NodeSandbox::new(
             config.node.clone(),
             config.chain.clone(),
@@ -573,6 +574,14 @@ impl<'p> Partition<'p> {
                 node.process(crate::TX_TOPIC, tx.clone()).await;
             }
         }
+
+        if let Some(auditor) = self.auditor_mut() {
+            let pk = &auditor.node_service.state().network_pkey;
+            trace!("Delivering restakes to auditor {}", pk);
+            for tx in txs.iter() {
+                auditor.process(crate::TX_TOPIC, tx.clone()).await;
+            }
+        }
     }
 
     /// Take micro block from leader, rebroadcast to other nodes.
@@ -607,14 +616,13 @@ impl<'p> Partition<'p> {
             }
         }
 
-        self.deliver_restakes(restakes).await;
-
         if let Some(auditor) = self.auditor_mut() {
             auditor
                 .process(crate::SEALED_BLOCK_TOPIC, block.clone())
                 .await;
-            auditor.poll().await;
         }
+
+        self.deliver_restakes(restakes).await;
 
         self.advance();
         trace!("Processed microblock...");

@@ -1843,16 +1843,16 @@ impl NodeState {
             elapsed
         );
 
-        self.validation_status_changed = true;
-
         // Check state.
         let view_change_collector = match &mut self.validation {
             MicroblockValidator {
                 view_change_collector,
                 ..
             } => view_change_collector,
-            s => panic!("Invalid state = {:?}", s),
+            _ => return Ok(()),
         };
+
+        self.validation_status_changed = true;
 
         // Update timer.
         let duration = self.cfg.ublock_timeout;

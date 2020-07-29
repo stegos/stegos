@@ -497,6 +497,10 @@ impl<'p> Partition<'p> {
         for node in self.nodes.iter_mut() {
             node.advance();
         }
+
+        if let Some(auditor) = &mut self.auditor {
+            auditor.advance();
+        }
     }
 
     pub async fn step(&mut self) {
@@ -674,7 +678,7 @@ impl<'p> Partition<'p> {
     }
 
     pub async fn create_mblock(&mut self) -> (Block, Hash, Option<Transaction>) {
-        trace!("Creating a Macroblock...");
+        trace!("Creating a macroblock...");
         let chain = self.chain();
         let epoch = chain.epoch();
         let round = chain.view_change();
@@ -687,7 +691,7 @@ impl<'p> Partition<'p> {
         let leader = self.find_mut(&leader_pk).unwrap();
 
         // Check for a proposal from the leader.
-        trace!("Fetching Macroblock proposal from {}", leader_pk);
+        trace!("Fetching macroblock proposal from {}", leader_pk);
         let proposal: ConsensusMessage =
             leader.network_service.get_broadcast(crate::CONSENSUS_TOPIC);
         debug!("Proposal: {:?}", proposal);

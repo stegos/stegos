@@ -21,7 +21,7 @@ core
 /.vscode
 /.idea
 /idea
-
+lldb_commands
 
 # Release files
 /release

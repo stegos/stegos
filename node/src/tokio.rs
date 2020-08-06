@@ -769,8 +769,6 @@ impl NodeService {
                 // task::current().notify();
                 Ok(())
             }
-            NodeOutgoingEvent::ReplicationBlock { .. } => Ok(()),
-            /*
             NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
                 // TODO: refator on_block to be async fn.
                 let block = block;
@@ -789,7 +787,6 @@ impl NodeService {
                 .await;
                 Ok(())
             }
-            */
             NodeOutgoingEvent::StatusNotification(notification) => {
                 Self::notify_subscribers(&mut self.status_subscribers, notification);
                 Ok(())

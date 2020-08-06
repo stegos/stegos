@@ -120,11 +120,7 @@ impl Default for GeneralConfig {
         GeneralConfig {
             chain: "testnet".to_string(),
             data_dir,
-            consistency_check: if cfg!(debug_assertions) {
-                ConsistencyCheck::Full
-            } else {
-                ConsistencyCheck::None
-            },
+            consistency_check: ConsistencyCheck::None,
             log_config: PathBuf::new(),
             prometheus_endpoint: "".to_string(),
             api_endpoint: "127.0.0.1:4145".to_string(),

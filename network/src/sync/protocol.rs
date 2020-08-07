@@ -36,68 +36,68 @@ use unsigned_varint::codec;
 use libp2p_core::ProtocolName;
 
 // Protocol label for metrics
-const PROTOCOL_LABEL: &str = "replication";
+const PROTOCOL_LABEL: &str = "sync";
 
 #[derive(Debug, Clone, Copy)]
-pub enum ReplicationVersion {
+pub enum SyncVersion {
     V0_13, // old version that was implemented in stegos 0.13
     V1_3,  // new version that was implemented during 1.3
 }
-impl ReplicationVersion {
+impl SyncVersion {
     pub fn latest() -> Self {
-        ReplicationVersion::V1_3
+        SyncVersion::V1_3
     }
 }
 
-impl fmt::Display for ReplicationVersion {
+impl fmt::Display for SyncVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ReplicationVersion::V0_13 => write!(f, "v0.13.0"),
-            ReplicationVersion::V1_3 => write!(f, "v1.3.0"),
+            SyncVersion::V0_13 => write!(f, "v0.13.0"),
+            SyncVersion::V1_3 => write!(f, "v1.3.0"),
         }
     }
 }
 
-impl ProtocolName for ReplicationVersion {
+impl ProtocolName for SyncVersion {
     fn protocol_name(&self) -> &[u8] {
         match *self {
-            ReplicationVersion::V0_13 => b"/replication/0.13.0",
-            ReplicationVersion::V1_3 => b"/replication/1.3.0",
+            SyncVersion::V0_13 => b"/sync/0.13.0",
+            SyncVersion::V1_3 => b"/sync/1.3.0",
         }
     }
 }
 
-/// Implementation of `ConnectionUpgrade` for the replication protocol.
+/// Implementation of `ConnectionUpgrade` for the sync protocol.
 #[derive(Default, Debug, Clone)]
-pub struct ReplicationConfig {}
+pub struct SyncConfig {}
 
-impl ReplicationConfig {
-    /// Builds a new `ReplicationConfig`.
+impl SyncConfig {
+    /// Builds a new `SyncConfig`.
     #[inline]
-    pub fn new() -> ReplicationConfig {
-        ReplicationConfig {}
+    pub fn new() -> SyncConfig {
+        SyncConfig {}
     }
 }
 
-impl UpgradeInfo for ReplicationConfig {
-    type Info = ReplicationVersion;
+impl UpgradeInfo for SyncConfig {
+    type Info = SyncVersion;
     type InfoIter = Vec<Self::Info>;
 
     #[inline]
     fn protocol_info(&self) -> Self::InfoIter {
-        let mut protos = vec![ReplicationVersion::V1_3];
+        let mut protos = vec![SyncVersion::V1_3];
         if cfg!(feature = "old_protos") {
-            protos.push(ReplicationVersion::V0_13)
+            protos.push(SyncVersion::V0_13)
         };
         protos
     }
 }
 
-impl<TSocket> InboundUpgrade<TSocket> for ReplicationConfig
+impl<TSocket> InboundUpgrade<TSocket> for SyncConfig
 where
     TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<TSocket, ReplicationCodec>;
+    type Output = Framed<TSocket, SyncCodec>;
     type Error = io::Error;
     type Future = FutureResult<Self::Output, Self::Error>;
 
@@ -106,7 +106,7 @@ where
         trace!("Upgraded inbound {}", version);
         future::ok(Framed::new(
             socket,
-            ReplicationCodec {
+            SyncCodec {
                 version,
                 length_prefix: Default::default(),
             },
@@ -114,11 +114,11 @@ where
     }
 }
 
-impl<TSocket> OutboundUpgrade<TSocket> for ReplicationConfig
+impl<TSocket> OutboundUpgrade<TSocket> for SyncConfig
 where
     TSocket: AsyncRead + AsyncWrite + Unpin,
 {
-    type Output = Framed<TSocket, ReplicationCodec>;
+    type Output = Framed<TSocket, SyncCodec>;
     type Error = io::Error;
     type Future = FutureResult<Self::Output, Self::Error>;
 
@@ -127,7 +127,7 @@ where
         trace!("Upgraded outbound {}", version);
         future::ok(Framed::new(
             socket,
-            ReplicationCodec {
+            SyncCodec {
                 version,
                 length_prefix: Default::default(),
             },
@@ -138,14 +138,14 @@ where
 /// Implementation of `tokio_codec::Codec`.
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct ReplicationCodec {
+pub struct SyncCodec {
     /// The codec for encoding/decoding the length prefix of messages.
     #[derivative(Debug = "ignore")]
     length_prefix: codec::UviBytes,
-    pub version: ReplicationVersion,
+    pub version: SyncVersion,
 }
 
-impl Encoder for ReplicationCodec {
+impl Encoder for SyncCodec {
     type Item = Vec<u8>;
     type Error = io::Error;
 
@@ -162,7 +162,7 @@ impl Encoder for ReplicationCodec {
     }
 }
 
-impl Decoder for ReplicationCodec {
+impl Decoder for SyncCodec {
     type Item = Vec<u8>;
     type Error = io::Error;
 

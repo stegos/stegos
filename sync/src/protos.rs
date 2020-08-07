@@ -1,4 +1,4 @@
-//! Replication - Protocol Messages.
+//! Sync - Protocol Messages.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -31,7 +31,7 @@ use stegos_blockchain::protos::*;
 include!(concat!(env!("OUT_DIR"), "/protos/mod.rs"));
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) enum ReplicationRequest {
+pub(super) enum SyncRequest {
     Subscribe {
         epoch: u64,
         offset: u32,
@@ -41,7 +41,7 @@ pub(super) enum ReplicationRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) enum ReplicationResponse {
+pub(super) enum SyncReply {
     Subscribed {
         current_epoch: u64,
         current_offset: u32,
@@ -59,13 +59,13 @@ pub(super) enum ReplicationResponse {
     OutputsInfo(OutputsInfo),
 }
 
-impl ReplicationResponse {
+impl SyncReply {
     pub fn name(&self) -> &'static str {
         match self {
-            ReplicationResponse::Subscribed { .. } => "Subscribed",
-            ReplicationResponse::Block { .. } => "Block",
-            ReplicationResponse::LightBlock { .. } => "LightBlock",
-            ReplicationResponse::OutputsInfo { .. } => "OutputsInfo",
+            SyncReply::Subscribed { .. } => "Subscribed",
+            SyncReply::Block { .. } => "Block",
+            SyncReply::LightBlock { .. } => "LightBlock",
+            SyncReply::OutputsInfo { .. } => "OutputsInfo",
         }
     }
 }
@@ -79,9 +79,9 @@ pub struct RequestOutputs {
 
 // TODO: Limit vector sizes;
 impl ProtoConvert for RequestOutputs {
-    type Proto = replication::RequestOutputs;
+    type Proto = sync::RequestOutputs;
     fn into_proto(&self) -> Self::Proto {
-        let mut request = replication::RequestOutputs::new();
+        let mut request = sync::RequestOutputs::new();
         request.set_block_epoch(self.block_epoch);
         request.set_block_offset(self.block_offset);
 
@@ -114,9 +114,9 @@ pub struct OutputsInfo {
 }
 
 impl ProtoConvert for OutputsInfo {
-    type Proto = replication::OutputsInfo;
+    type Proto = sync::OutputsInfo;
     fn into_proto(&self) -> Self::Proto {
-        let mut info = replication::OutputsInfo::new();
+        let mut info = sync::OutputsInfo::new();
         info.set_block_epoch(self.block_epoch);
         info.set_block_offset(self.block_offset);
         for output in &self.found_outputs {
@@ -139,17 +139,17 @@ impl ProtoConvert for OutputsInfo {
     }
 }
 
-impl ProtoConvert for ReplicationRequest {
-    type Proto = replication::ReplicationRequest;
+impl ProtoConvert for SyncRequest {
+    type Proto = sync::SyncRequest;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = replication::ReplicationRequest::new();
+        let mut proto = sync::SyncRequest::new();
         match self {
-            ReplicationRequest::Subscribe {
+            SyncRequest::Subscribe {
                 epoch,
                 offset,
                 light,
             } => {
-                let mut request = replication::Subscribe::new();
+                let mut request = sync::Subscribe::new();
                 request.set_epoch(*epoch);
                 request.set_offset(*offset);
                 if !*light {
@@ -158,7 +158,7 @@ impl ProtoConvert for ReplicationRequest {
                     proto.set_subscribe_light(request);
                 }
             }
-            ReplicationRequest::RequestOutputs(request_outputs) => {
+            SyncRequest::RequestOutputs(request_outputs) => {
                 let request_outputs = request_outputs.into_proto();
                 proto.set_request_outputs(request_outputs);
             }
@@ -167,34 +167,31 @@ impl ProtoConvert for ReplicationRequest {
     }
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         match proto.request {
-            Some(replication::ReplicationRequest_oneof_request::subscribe_full(ref subscribe)) => {
+            Some(sync::SyncRequest_oneof_request::subscribe_full(ref subscribe)) => {
                 let epoch = subscribe.get_epoch();
                 let offset = subscribe.get_offset();
                 let light = false;
-                let request = ReplicationRequest::Subscribe {
+                let request = SyncRequest::Subscribe {
                     epoch,
                     offset,
                     light,
                 };
                 Ok(request)
             }
-            Some(replication::ReplicationRequest_oneof_request::subscribe_light(ref subscribe)) => {
+            Some(sync::SyncRequest_oneof_request::subscribe_light(ref subscribe)) => {
                 let epoch = subscribe.get_epoch();
                 let offset = subscribe.get_offset();
                 let light = true;
-                let request = ReplicationRequest::Subscribe {
+                let request = SyncRequest::Subscribe {
                     epoch,
                     offset,
                     light,
                 };
                 Ok(request)
             }
-            Some(replication::ReplicationRequest_oneof_request::request_outputs(
-                ref request_outputs,
-            )) => {
-                let request = ReplicationRequest::RequestOutputs(RequestOutputs::from_proto(
-                    request_outputs,
-                )?);
+            Some(sync::SyncRequest_oneof_request::request_outputs(ref request_outputs)) => {
+                let request =
+                    SyncRequest::RequestOutputs(RequestOutputs::from_proto(request_outputs)?);
                 Ok(request)
             }
             None => {
@@ -206,43 +203,43 @@ impl ProtoConvert for ReplicationRequest {
     }
 }
 
-impl ProtoConvert for ReplicationResponse {
-    type Proto = replication::ReplicationResponse;
+impl ProtoConvert for SyncReply {
+    type Proto = sync::SyncReply;
     fn into_proto(&self) -> Self::Proto {
-        let mut proto = replication::ReplicationResponse::new();
+        let mut proto = sync::SyncReply::new();
         match self {
-            ReplicationResponse::Subscribed {
+            SyncReply::Subscribed {
                 current_epoch,
                 current_offset,
             } => {
-                let mut response = replication::Subscribed::new();
+                let mut response = sync::Subscribed::new();
                 response.set_current_epoch(*current_epoch);
                 response.set_current_offset(*current_offset);
                 proto.set_subscribed(response);
             }
-            ReplicationResponse::Block {
+            SyncReply::Block {
                 current_epoch,
                 current_offset,
                 block,
             } => {
-                let mut response = replication::Block::new();
+                let mut response = sync::Block::new();
                 response.set_current_epoch(*current_epoch);
                 response.set_current_offset(*current_offset);
                 response.set_block(block.into_proto());
                 proto.set_block(response);
             }
-            ReplicationResponse::LightBlock {
+            SyncReply::LightBlock {
                 current_epoch,
                 current_offset,
                 block,
             } => {
-                let mut response = replication::LightBlock::new();
+                let mut response = sync::LightBlock::new();
                 response.set_current_epoch(*current_epoch);
                 response.set_current_offset(*current_offset);
                 response.set_block(block.into_proto());
                 proto.set_light_block(response);
             }
-            ReplicationResponse::OutputsInfo(outputs_info) => {
+            SyncReply::OutputsInfo(outputs_info) => {
                 let response = outputs_info.into_proto();
                 proto.set_outputs_info(response);
             }
@@ -252,42 +249,39 @@ impl ProtoConvert for ReplicationResponse {
 
     fn from_proto(proto: &Self::Proto) -> Result<Self, Error> {
         match proto.response {
-            Some(replication::ReplicationResponse_oneof_response::subscribed(ref subscribed)) => {
+            Some(sync::SyncReply_oneof_response::subscribed(ref subscribed)) => {
                 let current_epoch = subscribed.get_current_epoch();
                 let current_offset = subscribed.get_current_offset();
-                let response = ReplicationResponse::Subscribed {
+                let response = SyncReply::Subscribed {
                     current_epoch,
                     current_offset,
                 };
                 Ok(response)
             }
-            Some(replication::ReplicationResponse_oneof_response::block(ref block)) => {
+            Some(sync::SyncReply_oneof_response::block(ref block)) => {
                 let current_epoch = block.get_current_epoch();
                 let current_offset = block.get_current_offset();
                 let block = Block::from_proto(block.get_block())?;
-                let response = ReplicationResponse::Block {
+                let response = SyncReply::Block {
                     current_epoch,
                     current_offset,
                     block,
                 };
                 Ok(response)
             }
-            Some(replication::ReplicationResponse_oneof_response::light_block(ref block)) => {
+            Some(sync::SyncReply_oneof_response::light_block(ref block)) => {
                 let current_epoch = block.get_current_epoch();
                 let current_offset = block.get_current_offset();
                 let block = LightBlock::from_proto(block.get_block())?;
-                let response = ReplicationResponse::LightBlock {
+                let response = SyncReply::LightBlock {
                     current_epoch,
                     current_offset,
                     block,
                 };
                 Ok(response)
             }
-            Some(replication::ReplicationResponse_oneof_response::outputs_info(
-                ref outputs_info,
-            )) => {
-                let response =
-                    ReplicationResponse::OutputsInfo(OutputsInfo::from_proto(&outputs_info)?);
+            Some(sync::SyncReply_oneof_response::outputs_info(ref outputs_info)) => {
+                let response = SyncReply::OutputsInfo(OutputsInfo::from_proto(&outputs_info)?);
                 Ok(response)
             }
             None => {
@@ -304,20 +298,20 @@ mod tests {
     use super::*;
     use stegos_crypto::hash::{Hash, Hashable, Hasher};
 
-    impl Hashable for ReplicationRequest {
+    impl Hashable for SyncRequest {
         fn hash(&self, state: &mut Hasher) {
             match self {
-                ReplicationRequest::Subscribe {
+                SyncRequest::Subscribe {
                     epoch,
                     offset,
                     light,
                 } => {
-                    "ReplicationRequest::Subscribe".hash(state);
+                    "SyncRequest::Subscribe".hash(state);
                     epoch.hash(state);
                     offset.hash(state);
                     light.hash(state);
                 }
-                ReplicationRequest::RequestOutputs(request_outputs) => request_outputs.hash(state),
+                SyncRequest::RequestOutputs(request_outputs) => request_outputs.hash(state),
             }
         }
     }
@@ -342,39 +336,39 @@ mod tests {
         }
     }
 
-    impl Hashable for ReplicationResponse {
+    impl Hashable for SyncReply {
         fn hash(&self, state: &mut Hasher) {
             match self {
-                ReplicationResponse::Subscribed {
+                SyncReply::Subscribed {
                     current_epoch,
                     current_offset,
                 } => {
-                    "ReplicationResponse::Subscribed".hash(state);
+                    "SyncReply::Subscribed".hash(state);
                     current_epoch.hash(state);
                     current_offset.hash(state);
                 }
-                ReplicationResponse::Block {
-                    current_epoch,
-                    current_offset,
-                    block,
-                } => {
-                    "ReplicationResponse::Block".hash(state);
-                    current_epoch.hash(state);
-                    current_offset.hash(state);
-                    block.hash(state);
-                }
-                ReplicationResponse::LightBlock {
+                SyncReply::Block {
                     current_epoch,
                     current_offset,
                     block,
                 } => {
-                    "ReplicationResponse::LightBlock".hash(state);
+                    "SyncReply::Block".hash(state);
                     current_epoch.hash(state);
                     current_offset.hash(state);
                     block.hash(state);
                 }
-                ReplicationResponse::OutputsInfo(outputs_info) => {
-                    "ReplicationResponse::OutputsInfo".hash(state);
+                SyncReply::LightBlock {
+                    current_epoch,
+                    current_offset,
+                    block,
+                } => {
+                    "SyncReply::LightBlock".hash(state);
+                    current_epoch.hash(state);
+                    current_offset.hash(state);
+                    block.hash(state);
+                }
+                SyncReply::OutputsInfo(outputs_info) => {
+                    "SyncReply::OutputsInfo".hash(state);
                     outputs_info.hash(state);
                 }
             }
@@ -392,7 +386,7 @@ mod tests {
 
     #[test]
     fn requests() {
-        let request = ReplicationRequest::Subscribe {
+        let request = SyncRequest::Subscribe {
             epoch: 100500,
             offset: 12345,
             light: true,
@@ -402,7 +396,7 @@ mod tests {
 
     #[test]
     fn responses() {
-        let response = ReplicationResponse::Subscribed {
+        let response = SyncReply::Subscribed {
             current_epoch: 100500,
             current_offset: 12345,
         };

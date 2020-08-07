@@ -36,7 +36,7 @@ use stegos_crypto::pbc;
 use stegos_crypto::scc;
 use stegos_crypto::utils::deserialize_protobuf_from_hex;
 use stegos_crypto::utils::serialize_protobuf_to_hex;
-pub use stegos_replication::api::*;
+pub use stegos_sync::api::*;
 
 pub type AccountId = String;
 
@@ -261,7 +261,7 @@ pub enum WalletControlRequest {
     DeleteAccount {
         account_id: AccountId,
     },
-    LightReplicationInfo {},
+    LightSyncStatus {},
     SubscribeWalletUpdates {},
 }
 
@@ -347,7 +347,7 @@ pub enum WalletControlResponse {
     AccountDeleted {
         account_id: AccountId,
     },
-    LightReplicationInfo(ReplicationInfo),
+    LightSyncStatus(SyncStatus),
     SubscribedWalletUpdates {
         #[serde(skip)]
         rx: Option<mpsc::UnboundedReceiver<WalletNotification>>, // Option is needed for serde.

@@ -3267,8 +3267,8 @@ dependencies = [
  "stegos_keychain",
  "stegos_network",
  "stegos_node",
- "stegos_replication",
  "stegos_serialization",
+ "stegos_sync",
  "stegos_txpool",
  "stegos_wallet",
  "tempdir",
@@ -3486,15 +3486,25 @@ dependencies = [
  "stegos_consensus",
  "stegos_crypto",
  "stegos_network",
- "stegos_replication",
  "stegos_serialization",
+ "stegos_sync",
  "stegos_txpool",
  "tempdir",
  "tokio",
 ]
 
 [[package]]
-name = "stegos_replication"
+name = "stegos_serialization"
+version = "1.0.0"
+dependencies = [
+ "failure",
+ "protobuf",
+ "protobuf-codegen-pure",
+ "walkdir",
+]
+
+[[package]]
+name = "stegos_sync"
 version = "1.0.0"
 dependencies = [
  "failure",
@@ -3513,16 +3523,6 @@ dependencies = [
  "stegos_network",
  "stegos_serialization",
  "tokio",
-]
-
-[[package]]
-name = "stegos_serialization"
-version = "1.0.0"
-dependencies = [
- "failure",
- "protobuf",
- "protobuf-codegen-pure",
- "walkdir",
 ]
 
 [[package]]
@@ -3571,8 +3571,8 @@ dependencies = [
  "stegos_crypto",
  "stegos_keychain",
  "stegos_network",
- "stegos_replication",
  "stegos_serialization",
+ "stegos_sync",
  "stegos_txpool",
  "tempdir",
  "tokio",

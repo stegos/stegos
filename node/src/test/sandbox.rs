@@ -963,7 +963,7 @@ impl NodeSandbox {
         genesis: Macroblock,
     ) -> Self {
         // init network
-        let (network_service, network, peer_id, replication_rx) = Loopback::new(&network_pkey);
+        let (network_service, network, peer_id, sync_rx) = Loopback::new(&network_pkey);
 
         // Create node, with first node keychain.
         let ts = Timestamp::now();
@@ -984,7 +984,7 @@ impl NodeSandbox {
             network,
             "dev".to_string(),
             peer_id,
-            replication_rx,
+            sync_rx,
         )
         .unwrap();
         node_service.init().unwrap();

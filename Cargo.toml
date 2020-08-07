@@ -25,7 +25,7 @@ members = [
     "network",
     "node",
     "txpool",
-    "replication",
+    "sync",
     "serialization",
     "wallet",
     "stegos_lib_test",
@@ -40,7 +40,7 @@ stegos_consensus = { version = "1.0.0", path = "./consensus" }
 stegos_crypto = { version = "1.0.0", path = "./crypto" }
 stegos_keychain = { version = "1.0.0", path = "./keychain" }
 stegos_network = { version = "1.0.0", path = "./network"}
-stegos_replication = { version = "1.0.0", path = "./replication" }
+stegos_sync = { version = "1.0.0", path = "./sync" }
 stegos_node = { version = "1.0.0", path = "./node" }
 stegos_serialization = { version = "1.0.0", path = "./serialization" }
 stegos_wallet = { version = "1.0.0", path = "./wallet" }

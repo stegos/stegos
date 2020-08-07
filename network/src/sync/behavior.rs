@@ -19,8 +19,8 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-use super::handler::{HandlerInEvent, HandlerOutEvent, ReplicationHandler};
-use super::protocol::ReplicationVersion;
+use super::handler::{HandlerInEvent, HandlerOutEvent, SyncHandler};
+use super::protocol::SyncVersion;
 use futures::channel::mpsc;
 use futures::task::{Context, Poll};
 use libp2p_core::connection::ConnectionId;
@@ -32,12 +32,12 @@ use libp2p_swarm::{
 use log::*;
 use std::collections::VecDeque;
 
-/// Replication event.
+/// Sync event.
 #[derive(Debug)]
-pub enum ReplicationEvent {
+pub enum SyncEvent {
     ResolvedVersion {
         peer_id: PeerId,
-        version: ReplicationVersion,
+        version: SyncVersion,
     },
     Registered {
         peer_id: PeerId,
@@ -66,24 +66,24 @@ pub enum ReplicationEvent {
     },
 }
 
-/// Replication protocol.
+/// Sync protocol.
 #[derive(Default)]
-pub struct Replication {
+pub struct SyncQueue {
     /// Events that need to be yielded to the outside when polling.
-    events: VecDeque<NetworkBehaviourAction<HandlerInEvent, ReplicationEvent>>,
+    events: VecDeque<NetworkBehaviourAction<HandlerInEvent, SyncEvent>>,
 }
 
-impl Replication {
-    /// Creates a `Replication`.
+impl SyncQueue {
+    /// Creates a `SyncQueue`.
     pub fn new() -> Self {
-        Replication {
+        SyncQueue {
             events: VecDeque::new(),
         }
     }
 
     pub fn connect(&mut self, peer_id: PeerId) {
         debug!("[{}] Connecting", peer_id);
-        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::NotifyHandler {
+        let event = NetworkBehaviourAction::<HandlerInEvent, SyncEvent>::NotifyHandler {
             peer_id,
             handler: NotifyHandler::Any,
             event: HandlerInEvent::Connect,
@@ -93,7 +93,7 @@ impl Replication {
 
     pub fn disconnect(&mut self, peer_id: PeerId) {
         debug!("[{}] Disconnecting", peer_id);
-        let event = NetworkBehaviourAction::<HandlerInEvent, ReplicationEvent>::NotifyHandler {
+        let event = NetworkBehaviourAction::<HandlerInEvent, SyncEvent>::NotifyHandler {
             peer_id,
             handler: NotifyHandler::Any,
             event: HandlerInEvent::Disconnect,
@@ -102,12 +102,12 @@ impl Replication {
     }
 }
 
-impl NetworkBehaviour for Replication {
-    type ProtocolsHandler = ReplicationHandler;
-    type OutEvent = ReplicationEvent;
+impl NetworkBehaviour for SyncQueue {
+    type ProtocolsHandler = SyncHandler;
+    type OutEvent = SyncEvent;
 
     fn new_handler(&mut self) -> Self::ProtocolsHandler {
-        ReplicationHandler::new()
+        SyncHandler::new()
     }
 
     fn addresses_of_peer(&mut self, _peer_id: &PeerId) -> Vec<Multiaddr> {
@@ -128,7 +128,7 @@ impl NetworkBehaviour for Replication {
         }
         .clone();
         debug!("[{}] Connected: multiaddr={}", peer_id, multiaddr);
-        let event = ReplicationEvent::Registered {
+        let event = SyncEvent::Registered {
             peer_id: peer_id.clone(),
             multiaddr,
         };
@@ -148,7 +148,7 @@ impl NetworkBehaviour for Replication {
         }
         .clone();
         debug!("[{}] Disconnected: multiaddr={}", peer_id, multiaddr);
-        let event = ReplicationEvent::Unregistered {
+        let event = SyncEvent::Unregistered {
             peer_id: peer_id.clone(),
             multiaddr,
         };
@@ -157,7 +157,7 @@ impl NetworkBehaviour for Replication {
     }
 
     fn inject_disconnected(&mut self, peer_id: &PeerId) {
-        let event = ReplicationEvent::Disconnected {
+        let event = SyncEvent::Disconnected {
             peer_id: peer_id.clone(),
         };
         let event = NetworkBehaviourAction::GenerateEvent(event);
@@ -168,15 +168,13 @@ impl NetworkBehaviour for Replication {
     fn inject_event(&mut self, peer_id: PeerId, _: ConnectionId, event: HandlerOutEvent) {
         let event = match event {
             HandlerOutEvent::ResolvedVersion { version } => {
-                ReplicationEvent::ResolvedVersion { version, peer_id }
+                SyncEvent::ResolvedVersion { version, peer_id }
             }
-            HandlerOutEvent::Connected { tx, rx } => {
-                ReplicationEvent::Connected { peer_id, tx, rx }
-            }
+            HandlerOutEvent::Connected { tx, rx } => SyncEvent::Connected { peer_id, tx, rx },
             HandlerOutEvent::ConnectionFailed { error } => {
-                ReplicationEvent::ConnectionFailed { peer_id, error }
+                SyncEvent::ConnectionFailed { peer_id, error }
             }
-            HandlerOutEvent::Accepted { tx, rx } => ReplicationEvent::Accepted { peer_id, tx, rx },
+            HandlerOutEvent::Accepted { tx, rx } => SyncEvent::Accepted { peer_id, tx, rx },
         };
         let event = NetworkBehaviourAction::GenerateEvent(event);
         self.events.push_back(event);

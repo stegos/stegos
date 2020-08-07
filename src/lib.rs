@@ -69,7 +69,7 @@ fn load_logger_configuration() -> LogHandle {
         .logger(Logger::builder().build("stegos_consensus", log::LevelFilter::Info))
         .logger(Logger::builder().build("stegos_keychain", log::LevelFilter::Info))
         .logger(Logger::builder().build("stegos_node", log::LevelFilter::Info))
-        .logger(Logger::builder().build("stegos_node::replication", log::LevelFilter::Debug))
+        .logger(Logger::builder().build("stegos_node::sync", log::LevelFilter::Debug))
         .logger(Logger::builder().build("stegos_network", log::LevelFilter::Info))
         .logger(Logger::builder().build("stegos_wallet", log::LevelFilter::Debug))
         .logger(Logger::builder().build("trust-dns-resolver", log::LevelFilter::Trace))
@@ -176,7 +176,7 @@ async fn init(
             network_config.seed_pool =
                 format!("_stegos._tcp.{}.stegos.com", &chain_name).to_string();
         }
-        let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
+        let (network, network_service, peer_id, sync_rx) = Libp2pNetwork::new(
             network_config,
             NetworkName::from_str(&chain_name).unwrap(),
             network_skey.clone(),
@@ -198,7 +198,7 @@ async fn init(
             network_pkey,
             network.clone(),
             peer_id,
-            replication_rx,
+            sync_rx,
             Hash::digest(&genesis),
             chain_cfg,
             node_cfg.max_inputs_in_tx,

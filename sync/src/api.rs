@@ -1,4 +1,4 @@
-//! Replication - Public API.
+//! Sync - Public API.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -101,6 +101,6 @@ pub enum PeerInfo {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub struct ReplicationInfo {
+pub struct SyncStatus {
     pub peers: Vec<PeerInfo>,
 }

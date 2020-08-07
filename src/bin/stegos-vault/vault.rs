@@ -143,7 +143,7 @@ struct AccountHandle {
     secret_key: scc::SecretKey,
     account: Account,
     status: StatusInfo,
-    chain_tx: mpsc::Sender<stegos_wallet::ReplicationOutEvent>,
+    chain_tx: mpsc::Sender<stegos_wallet::SyncOutEvent>,
 }
 
 struct VaultService {
@@ -465,7 +465,7 @@ impl VaultService {
                     }
                     let outputs = block.block.outputs.clone();
                     let light_block = block.block.into_light_mblock(validators);
-                    let event = stegos_wallet::ReplicationOutEvent::FullBlock {
+                    let event = stegos_wallet::SyncOutEvent::FullBlock {
                         block: light_block.into(),
                         outputs,
                     };
@@ -897,14 +897,13 @@ impl VaultService {
         network_config.max_connections = 0;
         network_config.readiness_threshold = 0;
 
-        let (network, network_service, _peer_id, _replication_rx) =
-            stegos_network::Libp2pNetwork::new(
-                network_config,
-                stegos_network::NetworkName::from_str("dev").unwrap(),
-                network_skey.clone(),
-                network_pkey.clone(),
-            )
-            .await?;
+        let (network, network_service, _peer_id, _sync_rx) = stegos_network::Libp2pNetwork::new(
+            network_config,
+            stegos_network::NetworkName::from_str("dev").unwrap(),
+            network_skey.clone(),
+            network_pkey.clone(),
+        )
+        .await?;
 
         tokio::spawn(network_service);
 

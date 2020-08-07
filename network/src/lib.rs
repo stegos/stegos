@@ -36,8 +36,8 @@ mod old_protos;
 mod proto;
 pub use old_protos::*;
 
-pub use self::replication::{ReplicationEvent, ReplicationVersion};
-pub mod replication;
+pub use self::sync::{SyncEvent, SyncVersion};
+pub mod sync;
 
 pub mod utils;
 pub use self::gatekeeper::NetworkName;
@@ -74,11 +74,11 @@ where
     /// Send unicast message to peer identified by network public key
     fn send(&self, dest: pbc::PublicKey, protocol_id: &str, data: Vec<u8>) -> Result<(), Error>;
 
-    /// Connect to a replication upstream.
-    fn replication_connect(&self, peer_id: PeerId) -> Result<(), Error>;
+    /// Connect to a sync upstream.
+    fn sync_connect(&self, peer_id: PeerId) -> Result<(), Error>;
 
-    /// Disconnect from a replication upstream.
-    fn replication_disconnect(&self, peer_id: PeerId) -> Result<(), Error>;
+    /// Disconnect from a sync upstream.
+    fn sync_disconnect(&self, peer_id: PeerId) -> Result<(), Error>;
     /// Request list of connected nodes
     fn list_connected_nodes(&self) -> Result<oneshot::Receiver<NetworkResponse>, Error>;
 

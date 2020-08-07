@@ -35,7 +35,7 @@ use stegos_crypto::utils::{
     deserialize_protobuf_array_from_hex, deserialize_protobuf_from_hex,
     serialize_protobuf_array_to_hex, serialize_protobuf_to_hex,
 };
-use stegos_replication::api::*;
+use stegos_sync::api::*;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "output_type")]
@@ -61,7 +61,7 @@ pub struct NewOutputInfo {
 pub enum NodeRequest {
     ElectionInfo {},
     EscrowInfo {},
-    ReplicationInfo {},
+    SyncStatus {},
     PopMicroblock {},
     ChainName {},
     PublicPaymentInfo {
@@ -123,7 +123,7 @@ pub enum NodeRequest {
 pub enum NodeResponse {
     ElectionInfo(ElectionInfo),
     EscrowInfo(EscrowInfo),
-    ReplicationInfo(ReplicationInfo),
+    SyncStatus(SyncStatus),
     MicroblockPopped,
     PublicPaymentInfo {
         #[serde(flatten)]

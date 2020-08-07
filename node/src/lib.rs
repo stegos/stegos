@@ -162,7 +162,7 @@ pub enum NodeOutgoingEvent {
     FacilitatorChanged {
         facilitator: pbc::PublicKey,
     },
-    ReplicationBlock {
+    SyncBlock {
         block: Block,
         light_block: LightBlock,
     },
@@ -1168,7 +1168,7 @@ impl NodeState {
         self.outgoing
             .unbounded_send(NodeOutgoingEvent::ChainNotification(notification))?;
 
-        // Send block to replication.
+        // Send block to sync.
         let light_block: LightBlock = match &block {
             Block::Macroblock(block) => block
                 .clone()
@@ -1177,7 +1177,7 @@ impl NodeState {
             Block::Microblock(block) => block.clone().into_light_ublock().into(),
         };
         self.outgoing
-            .unbounded_send(NodeOutgoingEvent::ReplicationBlock { block, light_block })?;
+            .unbounded_send(NodeOutgoingEvent::SyncBlock { block, light_block })?;
 
         // Re-stake expiring stakes
         strace!(
@@ -2284,7 +2284,7 @@ impl NodeState {
                             },
                         }
                     }
-                    NodeRequest::ReplicationInfo {} => {
+                    NodeRequest::SyncStatus {} => {
                         unreachable!("Must be handled by NodeService");
                     }
                     NodeRequest::ChangeUpstream {} => {
@@ -2330,7 +2330,7 @@ impl NodeState {
                 if let Err(error) = &result {
                     sinfo!(
                         self,
-                        "Failed to process block from replication, changing upstream: error = {}",
+                        "Failed to process block from sync, changing upstream: error = {}",
                         error
                     );
                     self.outgoing
@@ -2403,7 +2403,7 @@ impl fmt::Display for NodeOutgoingEvent {
             e::FacilitatorChanged { facilitator } => {
                 write!(f, "FacilitatorChanged({})", facilitator)
             }
-            e::ReplicationBlock { .. } => f.write_str("ReplicationBlock"),
+            e::SyncBlock { .. } => f.write_str("SyncBlock"),
             e::ChainNotification(..) => f.write_str("ChainNotification"),
             e::StatusNotification(..) => f.write_str("StatusNotification"),
             e::ProposeMacroblock => write!(f, "ProposeMacroblock"),

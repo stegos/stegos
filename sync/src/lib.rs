@@ -1,4 +1,4 @@
-//! Replication.
+//! Sync.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -42,23 +42,23 @@ use rand::thread_rng;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
-use stegos_network::{Network, PeerId, ReplicationEvent, ReplicationVersion};
+use stegos_network::{Network, PeerId, SyncEvent, SyncVersion};
 use tokio::time::{self, Delay, Instant};
 
-pub enum ReplicationRow {
+pub enum SyncEntry {
     Block(Block),
     LightBlock(LightBlock),
     OutputsInfo(OutputsInfo),
 }
 
-pub struct ReplicationConfig {
+pub struct SyncConfig {
     /// How many connections should we maximum have.
     max_background_connections: usize,
     /// How many connections should we keep.
     background_connections_factor: f32,
 }
 
-impl Default for ReplicationConfig {
+impl Default for SyncConfig {
     fn default() -> Self {
         Self {
             max_background_connections: 4,
@@ -67,7 +67,7 @@ impl Default for ReplicationConfig {
     }
 }
 
-impl ReplicationConfig {
+impl SyncConfig {
     fn background_connections(&self, peers_count: usize) -> usize {
         let connections_count = if peers_count != 0 {
             (peers_count - 1) as f32 * self.background_connections_factor
@@ -78,7 +78,7 @@ impl ReplicationConfig {
     }
 }
 
-pub struct Replication {
+pub struct Sync {
     /// My Peer ID.
     peer_id: PeerId,
 
@@ -97,27 +97,27 @@ pub struct Replication {
     /// True if the light node protocol is used.
     light: bool,
 
-    /// A channel with incoming replication events.
-    events: mpsc::UnboundedReceiver<ReplicationEvent>,
+    /// A channel with incoming sync events.
+    events: mpsc::UnboundedReceiver<SyncEvent>,
 
     /// Network API.
     network: Network,
 
-    /// Replication connection config
-    config: ReplicationConfig,
+    /// Sync connection config
+    config: SyncConfig,
 }
 
 const UPSTREAM_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
 
-impl Replication {
+impl Sync {
     ///
-    /// Initialize replication subsystem.
+    /// Initialize the sync subsystem.
     ///
     pub fn new(
         peer_id: PeerId,
         network: Network,
         light: bool,
-        events: mpsc::UnboundedReceiver<ReplicationEvent>,
+        events: mpsc::UnboundedReceiver<SyncEvent>,
     ) -> Self {
         let peers = HashMap::new();
         let downstreams = HashMap::new();
@@ -218,9 +218,9 @@ impl Replication {
     }
 
     ///
-    /// Returns replication status.
+    /// Returns sync status.
     ///
-    pub fn info(&self) -> ReplicationInfo {
+    pub fn status(&self) -> SyncStatus {
         let mut peers = Vec::with_capacity(self.peers.len());
         for (peer_id, peer) in self.peers.iter() {
             peers.push(peer.info(self.banned_peers.contains(peer_id)));
@@ -230,11 +230,11 @@ impl Replication {
         }
         let my_info = PeerInfo::Localhost {
             peer_id: self.peer_id.to_base58(),
-            version: ReplicationVersion::latest().to_string(),
+            version: SyncVersion::latest().to_string(),
         };
         peers.push(my_info);
 
-        ReplicationInfo { peers }
+        SyncStatus { peers }
     }
 
     ///
@@ -247,14 +247,14 @@ impl Replication {
         current_offset: u32,
         blocks_in_epoch: u32,
         block_reader: &dyn BlockReader,
-    ) -> Poll<Option<ReplicationRow>> {
+    ) -> Poll<Option<SyncEntry>> {
         trace!("Poll");
 
-        // Process replication events.
+        // Process sync events.
         loop {
             match self.events.poll_next_unpin(cx) {
                 Poll::Ready(Some(event)) => match event {
-                    ReplicationEvent::Registered { peer_id, multiaddr } => {
+                    SyncEvent::Registered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Registered: multiaddr={}", peer_id, multiaddr);
                         let peer = Peer::registered(peer_id.clone(), None, None);
@@ -270,7 +270,7 @@ impl Replication {
                             )
                         }
                     }
-                    ReplicationEvent::ResolvedVersion { peer_id, version } => {
+                    SyncEvent::ResolvedVersion { peer_id, version } => {
                         debug!("[{}] Resolved peer version: version={}", peer_id, version);
                         let new_version = version;
                         match self.peers.get_mut(&peer_id) {
@@ -296,18 +296,18 @@ impl Replication {
                             }
                         }
                     }
-                    ReplicationEvent::Unregistered { peer_id, multiaddr } => {
+                    SyncEvent::Unregistered { peer_id, multiaddr } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Unregistered: multiaddr={}", peer_id, multiaddr);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
                         peer.remove_addr(multiaddr);
                     }
-                    ReplicationEvent::Disconnected { peer_id } => {
+                    SyncEvent::Disconnected { peer_id } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Disconnected.", peer_id);
                         let _peer = self.peers.remove(&peer_id).expect("peer is known");
                     }
-                    ReplicationEvent::Connected { peer_id, rx, tx } => {
+                    SyncEvent::Connected { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         if !self.has_upstream() {
                             debug!("[{}] Subscribing.", peer_id);
@@ -319,7 +319,7 @@ impl Replication {
                             peer.background(rx, tx);
                         }
                     }
-                    ReplicationEvent::Accepted { peer_id, rx, tx } => {
+                    SyncEvent::Accepted { peer_id, rx, tx } => {
                         assert_ne!(peer_id, self.peer_id);
                         if self.downstreams.get(&peer_id).is_some() {
                             debug!(
@@ -333,7 +333,7 @@ impl Replication {
                             }
                         }
                     }
-                    ReplicationEvent::ConnectionFailed { peer_id, error } => {
+                    SyncEvent::ConnectionFailed { peer_id, error } => {
                         assert_ne!(peer_id, self.peer_id);
                         debug!("[{}] Connection failed: {:?}", peer_id, error);
                         let peer = self.peers.get_mut(&peer_id).expect("peer is known");
@@ -424,7 +424,7 @@ impl Replication {
                 let peer = self.peers.get_mut(peer_id).unwrap();
                 peer.connecting();
                 self.network
-                    .replication_connect(peer_id.clone())
+                    .sync_connect(peer_id.clone())
                     .expect("network is alive");
             } else {
                 trace!("Can't find a new upstream");
@@ -452,7 +452,7 @@ impl Replication {
                 let peer = self.peers.get_mut(peer_id).unwrap();
                 peer.connecting();
                 self.network
-                    .replication_connect(peer_id.clone())
+                    .sync_connect(peer_id.clone())
                     .expect("network is alive");
             }
         }

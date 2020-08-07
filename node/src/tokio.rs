@@ -42,9 +42,9 @@ use std::thread;
 use stegos_blockchain::{Block, BlockReader, Blockchain, Transaction};
 use stegos_crypto::pbc;
 use stegos_network::PeerId;
-use stegos_network::{Network, ReplicationEvent};
-use stegos_replication::{Replication, ReplicationRow};
+use stegos_network::{Network, SyncEvent};
 use stegos_serialization::traits::ProtoConvert;
+use stegos_sync::{Sync, SyncEntry};
 pub use stegos_txpool::MAX_PARTICIPANTS;
 use tokio::time::{self, Delay, Instant, Interval};
 
@@ -206,10 +206,10 @@ pub struct NodeService {
     /// Network interface.
     network: Network,
 
-    /// Replication
-    replication: Replication,
-    replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
-    replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+    /// Sync
+    sync: Sync,
+    sync_rx: mpsc::UnboundedReceiver<SyncEvent>,
+    sync_tx: mpsc::UnboundedSender<SyncEvent>,
 
     outgoing_rx: mpsc::UnboundedReceiver<NodeOutgoingEvent>,
 
@@ -231,7 +231,7 @@ impl NodeService {
         network: Network,
         chain_name: String,
         peer_id: PeerId,
-        replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
+        sync_rx: mpsc::UnboundedReceiver<SyncEvent>,
     ) -> Result<(Self, Node), Error> {
         let (out_tx, out_rx) = mpsc::unbounded();
         let state = NodeState::new(cfg, chain, network_skey, network_pkey, chain_name, out_tx)?;
@@ -296,9 +296,9 @@ impl NodeService {
             outbox,
             network: network.clone(),
         };
-        let (replication_tx, proxy_rx) = mpsc::unbounded();
+        let (sync_tx, proxy_rx) = mpsc::unbounded();
         let light = false;
-        let replication = Replication::new(peer_id, network.clone(), light, proxy_rx);
+        let sync = Sync::new(peer_id, network.clone(), light, proxy_rx);
 
         let service = NodeService {
             state,
@@ -306,9 +306,9 @@ impl NodeService {
             network: network.clone(),
             check_sync,
             events: stream::select_all(streams),
-            replication,
-            replication_rx,
-            replication_tx,
+            sync,
+            sync_rx,
+            sync_tx,
             status_subscribers,
             outgoing_rx: out_rx,
             mblock_propose_timer: Box::pin(Fuse::terminated()),
@@ -539,8 +539,8 @@ impl NodeService {
 
         // handle events, then flush responses.
         select! {
-            ev = self.replication_rx.next().fuse() => {
-                let _ = self.replication_tx.send(ev.unwrap()).await;
+            ev = self.sync_rx.next().fuse() => {
+                let _ = self.sync_tx.send(ev.unwrap()).await;
             }
             // outgoign events
             ev = self.outgoing_rx.next().fuse() => {
@@ -588,13 +588,13 @@ impl NodeService {
                     NodeIncomingEvent::Request { request, tx } => {
                         match request {
                             NodeRequest::ChangeUpstream {} => {
-                                self.replication.change_upstream(false);
+                                self.sync.change_upstream(false);
                                 let response = NodeResponse::UpstreamChanged;
                                 tx.send(response).ok(); // ignore errors.
                             }
-                            NodeRequest::ReplicationInfo {} => {
+                            NodeRequest::SyncStatus {} => {
                                 let response =
-                                    NodeResponse::ReplicationInfo(self.replication.info());
+                                    NodeResponse::SyncStatus(self.sync.status());
                                 tx.send(response).ok(); // ignore errors.
                             }
                             NodeRequest::SubscribeChain { epoch, offset } => {
@@ -650,16 +650,16 @@ impl NodeService {
             },
         }
 
-        strace!(self, "Processed tokio and timers, on to replication...");
-        // Replication
+        strace!(self, "Processed tokio and timers, on to sync...");
+        // Sync
         'inner: loop {
-            // Replication interface need deep interaction with state and blockchain.
+            // Sync interface need deep interaction with state and blockchain.
             // So we create a temporary feature that fastly return result of poll.
             // TODO: Replace by refcell and local task
-            let replication_fut = future::poll_fn(|cx| {
+            let sync_fut = future::poll_fn(|cx| {
                 let blocks_in_epoch = self.state.chain.cfg().blocks_in_epoch;
                 let block_reader: &dyn BlockReader = &self.state.chain;
-                Poll::Ready(self.replication.poll(
+                Poll::Ready(self.sync.poll(
                     cx,
                     self.state.chain.epoch(),
                     self.state.chain.offset(),
@@ -668,20 +668,20 @@ impl NodeService {
                 ))
             });
 
-            match replication_fut.await {
-                Poll::Ready(Some(ReplicationRow::LightBlock(_block))) => {
-                    panic!("Received the light block from the replication");
+            match sync_fut.await {
+                Poll::Ready(Some(SyncEntry::LightBlock(_block))) => {
+                    panic!("Received the light block from the sync");
                 }
-                Poll::Ready(Some(ReplicationRow::OutputsInfo(_outputs_info))) => {
-                    panic!("Received the light node outputs info from the replication");
+                Poll::Ready(Some(SyncEntry::OutputsInfo(_outputs_info))) => {
+                    panic!("Received the light node outputs info from the sync");
                 }
-                Poll::Ready(Some(ReplicationRow::Block(block))) => {
+                Poll::Ready(Some(SyncEntry::Block(block))) => {
                     let event = NodeIncomingEvent::DecodedBlock(block);
                     if let Err(e) = self.state.handle_event(event) {
                         serror!(self, "Error handling event: {}", e);
                     }
                 }
-                Poll::Ready(None) => panic!(), // Shutdown main feature (replication failure).
+                Poll::Ready(None) => panic!(), // Shutdown main feature (sync failure).
                 Poll::Pending => break 'inner,
             }
         }
@@ -698,7 +698,7 @@ impl NodeService {
         let result = match event {
             NodeOutgoingEvent::FacilitatorChanged { .. } => Ok(()),
             NodeOutgoingEvent::ChangeUpstream {} => {
-                self.replication.change_upstream(true);
+                self.sync.change_upstream(true);
                 Ok(())
             }
             NodeOutgoingEvent::Publish { topic, data } => {
@@ -769,14 +769,14 @@ impl NodeService {
                 // task::current().notify();
                 Ok(())
             }
-            NodeOutgoingEvent::ReplicationBlock { block, light_block } => {
+            NodeOutgoingEvent::SyncBlock { block, light_block } => {
                 // TODO: refator on_block to be async fn.
                 let block = block;
                 let light_block = light_block;
-                //let replication = &mut replication;
+                //let sync = &mut sync;
                 //let state = &state;
                 future::poll_fn(move |cx| {
-                    self.replication.on_block(
+                    self.sync.on_block(
                         cx,
                         block.clone(),
                         light_block.clone(),

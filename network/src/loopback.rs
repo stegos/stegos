@@ -22,7 +22,7 @@
 // SOFTWARE.
 #![allow(dead_code)]
 
-use crate::replication::ReplicationEvent;
+use crate::sync::SyncEvent;
 use crate::{Network, NetworkProvider, NetworkResponse, UnicastMessage};
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
@@ -119,11 +119,11 @@ impl NetworkProvider for LoopbackNetwork {
         Ok(())
     }
 
-    fn replication_connect(&self, _peer_id: PeerId) -> Result<(), Error> {
+    fn sync_connect(&self, _peer_id: PeerId) -> Result<(), Error> {
         Ok(())
     }
 
-    fn replication_disconnect(&self, _peer_id: PeerId) -> Result<(), Error> {
+    fn sync_disconnect(&self, _peer_id: PeerId) -> Result<(), Error> {
         Ok(())
     }
 
@@ -155,7 +155,7 @@ struct LoopbackState {
     consumers: HashMap<String, Vec<mpsc::UnboundedSender<Vec<u8>>>>,
     unicast_consumers: HashMap<String, Vec<mpsc::UnboundedSender<UnicastMessage>>>,
     queue: VecDeque<Message>,
-    replication_tx: mpsc::UnboundedSender<ReplicationEvent>,
+    sync_tx: mpsc::UnboundedSender<SyncEvent>,
     pkey: pbc::PublicKey,
 }
 
@@ -171,7 +171,7 @@ impl Loopback {
         Loopback,
         Network,
         PeerId,
-        mpsc::UnboundedReceiver<ReplicationEvent>,
+        mpsc::UnboundedReceiver<SyncEvent>,
     ) {
         let keypair = ed25519::Keypair::generate();
         let local_key = identity::Keypair::Ed25519(keypair);
@@ -179,12 +179,12 @@ impl Loopback {
         let peer_id = local_pub_key.clone().into_peer_id();
         let consumers = HashMap::new();
         let unicast_consumers = HashMap::new();
-        let (replication_tx, replication_rx) = mpsc::unbounded::<ReplicationEvent>();
+        let (sync_tx, sync_rx) = mpsc::unbounded::<SyncEvent>();
         let queue = VecDeque::new();
         let state = LoopbackState {
             consumers,
             unicast_consumers,
-            replication_tx,
+            sync_tx,
             queue,
             pkey: pkey.clone(),
         };
@@ -193,7 +193,7 @@ impl Loopback {
             state: state.clone(),
         };
         let service = Loopback { state };
-        (service, Box::new(network), peer_id, replication_rx)
+        (service, Box::new(network), peer_id, sync_rx)
     }
 
     pub fn assert_empty_queue(&self, pkey: &pbc::PublicKey) {

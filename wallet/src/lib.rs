@@ -52,16 +52,16 @@ use stegos_blockchain::*;
 use stegos_crypto::hash::Hash;
 use stegos_crypto::{pbc, scc};
 use stegos_keychain::keyfile::{load_account_pkey, write_account_pkey, write_account_skey};
-use stegos_network::{Network, PeerId, ReplicationEvent};
-use stegos_replication::api::PeerInfo;
-use stegos_replication::{OutputsInfo, Replication, ReplicationRow};
+use stegos_network::{Network, PeerId, SyncEvent};
+use stegos_sync::api::PeerInfo;
+use stegos_sync::{OutputsInfo, Sync, SyncEntry};
 use tokio::time::{Duration, Instant};
 
 use futures::stream::SelectAll;
 
 const STAKE_FEE: i64 = 0;
-const REPLICATION_RETRY_REQUEST: Duration = Duration::from_secs(30);
-const REPLICATION_RETRY_ON_NO_CONNECTION: Duration = Duration::from_secs(3);
+const SYNC_RETRY_REQUEST: Duration = Duration::from_secs(30);
+const SYNC_RETRY_ON_NO_CONNECTION: Duration = Duration::from_secs(3);
 const RESEND_TX_INTERVAL: Duration = Duration::from_secs(2 * 60);
 const PENDING_UTXO_TIME: Duration = Duration::from_secs(5 * 60);
 const CHECK_LOCKED_INPUTS: Duration = Duration::from_secs(10);
@@ -137,7 +137,7 @@ pub struct AccountHandle {
     /// True if unsealed.
     pub unsealed: bool,
     /// A channel to send blocks,
-    pub chain_tx: mpsc::Sender<ReplicationOutEvent>,
+    pub chain_tx: mpsc::Sender<SyncOutEvent>,
 }
 
 pub struct WalletService {
@@ -155,7 +155,7 @@ pub struct WalletService {
     subscribers: Vec<mpsc::UnboundedSender<WalletNotification>>,
 
     events: mpsc::UnboundedReceiver<(WalletRequest, oneshot::Sender<WalletResponse>)>,
-    replication: ReplicationBlockCollector,
+    sync: SyncBlockCollector,
 }
 
 impl WalletService {
@@ -165,7 +165,7 @@ impl WalletService {
         network_pkey: pbc::PublicKey,
         network: Network,
         peer_id: PeerId,
-        replication_rx: mpsc::UnboundedReceiver<ReplicationEvent>,
+        sync_rx: mpsc::UnboundedReceiver<SyncEvent>,
         genesis_hash: Hash,
         chain_cfg: ChainConfig,
         max_inputs_in_tx: usize,
@@ -174,9 +174,9 @@ impl WalletService {
         let subscribers = Vec::new();
         let account_notifications = SelectAll::new();
         let light = true;
-        let replication = ReplicationBlockCollector::new(
+        let sync = SyncBlockCollector::new(
             chain_cfg.clone(),
-            Replication::new(peer_id, network.clone(), light, replication_rx),
+            Sync::new(peer_id, network.clone(), light, sync_rx),
         );
         let mut service = WalletService {
             accounts_dir: accounts_dir.to_path_buf(),
@@ -190,7 +190,7 @@ impl WalletService {
             subscribers,
             account_notifications,
             events,
-            replication,
+            sync,
         };
 
         info!("Scanning directory {:?} for accounts", accounts_dir);
@@ -345,8 +345,8 @@ impl WalletService {
                         )
                     })
                     .collect();
-                let replication_info = self.replication.replication.info();
-                let remote_epoch = replication_info
+                let sync_info = self.sync.sync.status();
+                let remote_epoch = sync_info
                     .peers
                     .into_iter()
                     .filter_map(|r| match r {
@@ -387,9 +387,9 @@ impl WalletService {
             WalletControlRequest::DeleteAccount { .. } => {
                 unreachable!("Delete account should be already processed in different routine")
             }
-            WalletControlRequest::LightReplicationInfo {} => Ok(
-                WalletControlResponse::LightReplicationInfo(self.replication.replication.info()),
-            ),
+            WalletControlRequest::LightSyncStatus {} => Ok(WalletControlResponse::LightSyncStatus(
+                self.sync.sync.status(),
+            )),
             WalletControlRequest::SubscribeWalletUpdates {} => {
                 let (sender, rx) = mpsc::unbounded();
                 self.subscribers.push(sender);
@@ -539,7 +539,7 @@ impl WalletService {
                                 AccountNotification::Unsealed => {
                                     debug!("Account unsealed: account_id={}", account_id);
                                     handle.unsealed = true;
-                                    self.replication.change_upstream(false);
+                                    self.sync.change_upstream(false);
                                 }
 
                                 AccountNotification::Sealed => {
@@ -548,7 +548,7 @@ impl WalletService {
                                 }
                                 AccountNotification::UpstreamError(e) => {
                                     debug!("Upstream error: {}", e);
-                                    self.replication.change_upstream(false);
+                                    self.sync.change_upstream(false);
                                 }
                                 _ => {}
                             }
@@ -564,11 +564,11 @@ impl WalletService {
                         }
                     }
                 }
-                event = self.replication.select(&mut self.accounts).fuse() => {
-                    trace!("Return replication event = {:?}", event);
+                event = self.sync.select(&mut self.accounts).fuse() => {
+                    trace!("Return sync event = {:?}", event);
 
-                    if let Some(event) = self.replication.process_event(&mut self.accounts, event).await {
-                        error!("Replication shutdown.");
+                    if let Some(event) = self.sync.process_event(&mut self.accounts, event).await {
+                        error!("Sync shutdown.");
                         return;
                     }
                 }
@@ -642,7 +642,7 @@ impl BlockEvent {
 }
 
 #[derive(Debug)]
-pub enum ReplicationOutEvent {
+pub enum SyncOutEvent {
     FullBlock {
         block: LightBlock,
         outputs: Vec<Output>,
@@ -701,33 +701,33 @@ impl<B> BlockState<B> {
     }
 }
 
-pub struct ReplicationBlockCollector {
-    replication: Replication,
+pub struct SyncBlockCollector {
+    sync: Sync,
     pending_blocks: VecDeque<BlockState<LightMacroblock>>,
     ubs: VecDeque<BlockState<LightMicroblock>>,
     chain_cfg: ChainConfig,
 
-    replication_responses: stream::FuturesUnordered<
+    sync_replies: stream::FuturesUnordered<
         Box<dyn Future<Output = Result<BlockEvent, oneshot::Canceled>> + Unpin + Send>,
     >,
 
     timer: tokio::time::Interval,
 }
 
-impl ReplicationBlockCollector {
-    fn new(chain_cfg: ChainConfig, replication: Replication) -> Self {
+impl SyncBlockCollector {
+    fn new(chain_cfg: ChainConfig, sync: Sync) -> Self {
         Self {
-            replication,
+            sync,
             pending_blocks: VecDeque::new(),
             ubs: VecDeque::new(),
             chain_cfg,
-            replication_responses: stream::FuturesUnordered::new(),
+            sync_replies: stream::FuturesUnordered::new(),
             timer: tokio::time::interval(Duration::from_secs(2)),
         }
     }
 
     fn change_upstream(&mut self, error: bool) {
-        self.replication.change_upstream(error)
+        self.sync.change_upstream(error)
     }
 
     fn first_epoch(&self) -> Option<u64> {
@@ -743,7 +743,7 @@ impl ReplicationBlockCollector {
     }
 
     fn block_process_event<B: BlockInfo>(
-        replication: &mut Replication,
+        sync: &mut Sync,
         original_block: &mut BlockState<B>,
         event: BlockEvent,
     ) {
@@ -817,14 +817,14 @@ impl ReplicationBlockCollector {
                         };
                         return;
                     } else {
-                        let deadline = if replication.try_request_outputs(
+                        let deadline = if sync.try_request_outputs(
                             epoch,
                             offset.unwrap_or(std::u32::MAX),
                             collected_outputs,
                         ) {
-                            Instant::now() + REPLICATION_RETRY_REQUEST
+                            Instant::now() + SYNC_RETRY_REQUEST
                         } else {
-                            Instant::now() + REPLICATION_RETRY_ON_NO_CONNECTION
+                            Instant::now() + SYNC_RETRY_ON_NO_CONNECTION
                         };
                         debug!(
                             "Block({}:{:?}) WaitCanaryValidate -> BlockPending",
@@ -903,15 +903,12 @@ impl ReplicationBlockCollector {
                 *original_block = state;
             }
             (BlockEvent::OutputsReceived { .. }, state) => {
-                warn!(
-                    "Outdated OutputsReceived from replication, state = {:?}",
-                    state
-                );
+                warn!("Outdated OutputsReceived from sync, state = {:?}", state);
                 *original_block = state;
             }
             (BlockEvent::CanaryProcessed { .. }, s) => {
                 // if we receive oudated CanaryProcessed event, then some account was skipped
-                panic!("Outdated CanaryProcessed from replication, state = {:?}", s)
+                panic!("Outdated CanaryProcessed from sync, state = {:?}", s)
             }
         }
     }
@@ -927,7 +924,7 @@ impl ReplicationBlockCollector {
                 continue;
             }
             trace!("Sending block to account={}", account_id);
-            let event = ReplicationOutEvent::FullBlock {
+            let event = SyncOutEvent::FullBlock {
                 block: block.clone(),
                 outputs: outputs.clone(),
             };
@@ -953,7 +950,7 @@ impl ReplicationBlockCollector {
 
             trace!("Sending canary to account={}", account_id);
             let (tx, rx) = oneshot::channel::<CanaryProcessed>();
-            let event = ReplicationOutEvent::CanaryList {
+            let event = SyncOutEvent::CanaryList {
                 canaries: canaries.clone(),
                 outputs: outputs.clone(),
                 tx,
@@ -964,7 +961,7 @@ impl ReplicationBlockCollector {
             let epoch = epoch.clone();
             let offset = offset.clone();
             let account_id = account_id.clone();
-            self.replication_responses
+            self.sync_replies
                 .push(Box::new(rx.map_ok(move |r| BlockEvent::CanaryProcessed {
                     response: r,
                     epoch,
@@ -990,7 +987,7 @@ impl ReplicationBlockCollector {
                 }
                 let id = offset - first_offset;
                 if let Some(block) = self.ubs.get_mut(id as usize) {
-                    Self::block_process_event(&mut self.replication, block, event)
+                    Self::block_process_event(&mut self.sync, block, event)
                 } else {
                     warn!("Not found block for event = {:?}", event);
                 }
@@ -1007,7 +1004,7 @@ impl ReplicationBlockCollector {
             }
             let id = epoch - first_epoch;
             if let Some(block) = self.pending_blocks.get_mut(id as usize) {
-                Self::block_process_event(&mut self.replication, block, event)
+                Self::block_process_event(&mut self.sync, block, event)
             } else {
                 warn!("Not found block for event = {:?}", event);
             }
@@ -1015,15 +1012,12 @@ impl ReplicationBlockCollector {
     }
 
     pub fn process_timer(&mut self, now: Instant) {
-        Self::process_timer_inner(&mut self.replication, self.pending_blocks.iter_mut(), now);
-        Self::process_timer_inner(&mut self.replication, self.ubs.iter_mut(), now);
+        Self::process_timer_inner(&mut self.sync, self.pending_blocks.iter_mut(), now);
+        Self::process_timer_inner(&mut self.sync, self.ubs.iter_mut(), now);
     }
 
-    fn process_timer_inner<'a, B: BlockInfo + 'static, I>(
-        replication: &mut Replication,
-        blocks: I,
-        now: Instant,
-    ) where
+    fn process_timer_inner<'a, B: BlockInfo + 'static, I>(sync: &mut Sync, blocks: I, now: Instant)
+    where
         I: Iterator<Item = &'a mut BlockState<B>>,
     {
         for block in blocks {
@@ -1047,14 +1041,14 @@ impl ReplicationBlockCollector {
                     }
 
                     // Update timers
-                    let new_deadline = if replication.try_request_outputs(
+                    let new_deadline = if sync.try_request_outputs(
                         epoch,
                         offset.unwrap_or(std::u32::MAX),
                         collected_outputs,
                     ) {
-                        Instant::now() + REPLICATION_RETRY_REQUEST
+                        Instant::now() + SYNC_RETRY_REQUEST
                     } else {
-                        Instant::now() + REPLICATION_RETRY_ON_NO_CONNECTION
+                        Instant::now() + SYNC_RETRY_ON_NO_CONNECTION
                     };
                     *deadline = new_deadline;
                 }
@@ -1066,10 +1060,10 @@ impl ReplicationBlockCollector {
     async fn process_event(
         &mut self,
         accounts: &mut HashMap<AccountId, AccountHandle>,
-        event: ReplicationInEvent,
+        event: SyncInEvent,
     ) -> Option<()> {
         match event {
-            ReplicationInEvent::ReplicationBlock { block } => {
+            SyncInEvent::SyncBlock { block } => {
                 debug!("Received block");
                 let mut active_accounts = Vec::new();
                 for (account_id, handle) in accounts.iter() {
@@ -1130,7 +1124,7 @@ impl ReplicationBlockCollector {
                     }
                 }
             }
-            ReplicationInEvent::ReplicationOutputs { outputs_info } => {
+            SyncInEvent::SyncOutputs { outputs_info } => {
                 debug!("Received OutputsInfo");
                 let epoch = outputs_info.block_epoch;
                 let offset = if outputs_info.block_offset == std::u32::MAX {
@@ -1145,10 +1139,10 @@ impl ReplicationBlockCollector {
                 };
                 self.process_block_event(event);
             }
-            ReplicationInEvent::Timer { now } => self.process_timer(now),
+            SyncInEvent::Timer { now } => self.process_timer(now),
 
-            ReplicationInEvent::BlockEvent { block_event } => self.process_block_event(block_event),
-            ReplicationInEvent::Shutdown => return Some(()),
+            SyncInEvent::BlockEvent { block_event } => self.process_block_event(block_event),
+            SyncInEvent::Shutdown => return Some(()),
         }
 
         while let Some(BlockState::BlockReady { .. }) = self.pending_blocks.front() {
@@ -1179,13 +1173,10 @@ impl ReplicationBlockCollector {
         None
     }
 
-    async fn select(
-        &mut self,
-        accounts: &mut HashMap<AccountId, AccountHandle>,
-    ) -> ReplicationInEvent {
-        // Replication
+    async fn select(&mut self, accounts: &mut HashMap<AccountId, AccountHandle>) -> SyncInEvent {
+        // Sync
         loop {
-            // Sic: check that all accounts are ready before polling the replication.
+            // Sic: check that all accounts are ready before polling the sync.
             let mut current_epoch = std::u64::MAX;
             let mut current_offset = std::u32::MAX;
             let mut unsealed = false;
@@ -1234,7 +1225,7 @@ impl ReplicationBlockCollector {
                 }
             }
 
-            // TODO: move this logic into replication.
+            // TODO: move this logic into sync.
             if let Some(b) = self.ubs.back() {
                 current_epoch = b.block().header.epoch;
                 current_offset = b.block().header.offset + 1;
@@ -1243,14 +1234,14 @@ impl ReplicationBlockCollector {
             }
 
             trace!(
-                "Poll replication: current_epoch={}, current_offset={}",
+                "Poll sync: current_epoch={}, current_offset={}",
                 current_epoch,
                 current_offset
             );
 
-            let replication = &mut self.replication;
-            let replication_fut = future::poll_fn(|cx| {
-                replication.poll(
+            let sync = &mut self.sync;
+            let sync_fut = future::poll_fn(|cx| {
+                sync.poll(
                     cx,
                     current_epoch,
                     current_offset,
@@ -1259,28 +1250,28 @@ impl ReplicationBlockCollector {
                 )
             });
             select! {
-                event = replication_fut.fuse() => match event {
-                    Some(ReplicationRow::LightBlock(block)) => {
-                        return ReplicationInEvent::ReplicationBlock { block, };
+                event = sync_fut.fuse() => match event {
+                    Some(SyncEntry::LightBlock(block)) => {
+                        return SyncInEvent::SyncBlock { block, };
                     }
-                    Some(ReplicationRow::OutputsInfo(outputs_info)) => {
-                        return ReplicationInEvent::ReplicationOutputs { outputs_info, };
+                    Some(SyncEntry::OutputsInfo(outputs_info)) => {
+                        return SyncInEvent::SyncOutputs { outputs_info, };
                     }
-                    Some(ReplicationRow::Block(_block)) => {
-                        panic!("The full block received from replication");
+                    Some(SyncEntry::Block(_block)) => {
+                        panic!("The full block received from sync");
                     }
-                    None => return ReplicationInEvent::Shutdown, // Shutdown.
+                    None => return SyncInEvent::Shutdown, // Shutdown.
                 },
-                notifications = self.replication_responses.next() => {
+                notifications = self.sync_replies.next() => {
                     if let Some(event) = notifications {
                         match event {
-                            Ok(block_event) => return ReplicationInEvent::BlockEvent {block_event},
+                            Ok(block_event) => return SyncInEvent::BlockEvent {block_event},
                             Err(e) => panic!("{}", e)// TODO handle eeror
                         }
                     }
                 }
                 now = self.timer.tick().fuse() => {
-                    return ReplicationInEvent::Timer { now, };
+                    return SyncInEvent::Timer { now, };
                 }
             }
         }
@@ -1288,11 +1279,11 @@ impl ReplicationBlockCollector {
 }
 
 #[derive(Debug)]
-pub enum ReplicationInEvent {
+pub enum SyncInEvent {
     BlockEvent { block_event: BlockEvent },
     Timer { now: Instant },
-    ReplicationBlock { block: LightBlock },
-    ReplicationOutputs { outputs_info: OutputsInfo },
+    SyncBlock { block: LightBlock },
+    SyncOutputs { outputs_info: OutputsInfo },
     Shutdown,
 }
 

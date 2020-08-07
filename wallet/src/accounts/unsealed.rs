@@ -31,7 +31,7 @@ use crate::transaction::*;
 use crate::AccountEvent;
 
 use crate::CanaryProcessed;
-use crate::ReplicationOutEvent;
+use crate::SyncOutEvent;
 use bit_vec::BitVec;
 use failure::{format_err, Error};
 use futures::channel::{mpsc, oneshot};
@@ -124,7 +124,7 @@ pub struct UnsealedAccountService {
     /// API Requests.
     pub(super) events: mpsc::UnboundedReceiver<AccountEvent>,
     /// Chain notifications
-    pub(super) chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
+    pub(super) chain_notifications: mpsc::Receiver<SyncOutEvent>,
     /// Incoming transactions from the network.
     /// Sic: this subscription is only needed for outgoing messages.
     /// Floodsub doesn't accept outgoing messages if you are not subscribed
@@ -147,7 +147,7 @@ impl UnsealedAccountService {
         max_inputs_in_tx: usize,
         subscribers: Vec<mpsc::UnboundedSender<AccountNotification>>,
         events: mpsc::UnboundedReceiver<AccountEvent>,
-        chain_notifications: mpsc::Receiver<ReplicationOutEvent>,
+        chain_notifications: mpsc::Receiver<SyncOutEvent>,
     ) -> Self {
         info!("My account key: {}", String::from(&account_pkey));
         debug!("My network key: {}", network_pkey.to_hex());
@@ -1031,8 +1031,8 @@ impl UnsealedAccountService {
                 event = self.chain_notifications.next() => {
                     drop((expire_locked_inputs, pending_tx));
                     match event {
-                        Some(ReplicationOutEvent::CanaryList {canaries, outputs, tx}) => {
-                            debug!("ReplicationOutEvent::CanaryList");
+                        Some(SyncOutEvent::CanaryList {canaries, outputs, tx}) => {
+                            debug!("SyncOutEvent::CanaryList");
                             let needed_outputs = canaries.into_iter().zip(outputs).enumerate().filter_map(|(id, (c, hash))|{
                                 if c.is_my(&self.account_pkey, &self.account_skey) {
                                     info!("Found my output in outputs list: output_hash={}", hash);
@@ -1048,7 +1048,7 @@ impl UnsealedAccountService {
                                 error!("Error during processing oneshot sender = {:?}", e);
                             }
                         }
-                        Some(ReplicationOutEvent::FullBlock {block, outputs}) => {
+                        Some(SyncOutEvent::FullBlock {block, outputs}) => {
                             let r = match block {
                                 LightBlock::LightMacroblock(block) => {
                                     debug!("Got Macroblock: epoch={}, inputs={:?}", block.header.epoch, block.input_hashes);

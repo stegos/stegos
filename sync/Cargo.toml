@@ -1,5 +1,5 @@
 [package]
-name = "stegos_replication"
+name = "stegos_sync"
 version = "1.0.0"
 authors = ["Stegos AG <info@stegos.com>"]
 build = "build.rs"
@@ -8,9 +8,9 @@ edition = "2018"
 homepage = "https://stegos.com"
 keywords = ["stegos", "blockchain", "cryptocurrency", "crypto", "privacy"]
 license = "MIT"
-links = "stegos_replication"
+links = "stegos_sync"
 repository = "https://github.com/stegos/stegos"
-description = "Stegos - Replication Protocol"
+description = "Stegos - Sync Protocol"
 
 [dependencies]
 stegos_crypto = { version = "1.0.0", path = "../crypto" }

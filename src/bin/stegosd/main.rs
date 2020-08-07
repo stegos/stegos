@@ -534,7 +534,7 @@ async fn run() -> Result<(), Error> {
     let (network_skey, network_pkey) = load_network_keys(&network_skey_file, &network_pkey_file)?;
 
     // Initialize network
-    let (network, network_service, peer_id, replication_rx) = Libp2pNetwork::new(
+    let (network, network_service, peer_id, sync_rx) = Libp2pNetwork::new(
         cfg.network.clone(),
         NetworkName::from_str(&cfg.general.chain).expect("Valid network name."),
         network_skey.clone(),
@@ -581,7 +581,7 @@ async fn run() -> Result<(), Error> {
             network.clone(),
             cfg.general.chain.clone(),
             peer_id,
-            replication_rx,
+            sync_rx,
         )?;
 
         let network_clone = network.clone();
@@ -614,7 +614,7 @@ async fn run() -> Result<(), Error> {
             network_pkey,
             network.clone(),
             peer_id,
-            replication_rx,
+            sync_rx,
             Hash::digest(&genesis),
             chain_cfg,
             cfg.node.max_inputs_in_tx,

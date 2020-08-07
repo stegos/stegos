@@ -1,6 +1,6 @@
 use super::api::PeerInfo;
 use super::peer::Peer;
-use super::protos::{OutputsInfo, ReplicationRequest, ReplicationResponse};
+use super::protos::{OutputsInfo, SyncReply, SyncRequest};
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -13,25 +13,17 @@ use std::collections::HashSet;
 use std::time::Duration;
 use stegos_blockchain::{Block, BlockReader, LightBlock};
 use stegos_blockchain::{MacroblockHeader, MicroblockHeader};
-use stegos_network::{Multiaddr, PeerId, ReplicationVersion};
+use stegos_network::{Multiaddr, PeerId, SyncVersion};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::time::Instant;
 
-trait IntoReplicationResponse: Sized {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse;
+trait IntoSyncReply: Sized {
+    fn into_sync_reply(self, current_epoch: u64, current_offset: u32) -> SyncReply;
 }
 
-impl IntoReplicationResponse for Block {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse {
-        ReplicationResponse::Block {
+impl IntoSyncReply for Block {
+    fn into_sync_reply(self, current_epoch: u64, current_offset: u32) -> SyncReply {
+        SyncReply::Block {
             current_epoch,
             current_offset,
             block: self,
@@ -39,13 +31,9 @@ impl IntoReplicationResponse for Block {
     }
 }
 
-impl IntoReplicationResponse for LightBlock {
-    fn into_replication_response(
-        self,
-        current_epoch: u64,
-        current_offset: u32,
-    ) -> ReplicationResponse {
-        ReplicationResponse::LightBlock {
+impl IntoSyncReply for LightBlock {
+    fn into_sync_reply(self, current_epoch: u64, current_offset: u32) -> SyncReply {
+        SyncReply::LightBlock {
             current_epoch,
             current_offset,
             block: self,
@@ -92,9 +80,9 @@ impl NextEpochOffset for LightBlock {
 }
 
 /// How long a peer can stay without network activity.
-const MAX_IDLE_DURATION: Duration = Duration::from_secs(60);
+const MAX_IDLE_TIME: Duration = Duration::from_secs(60);
 /// How long a peer can stay in Receiving/Sending state.
-const MAX_STREAMING_DURATION: Duration = Duration::from_secs(60 * 10);
+const MAX_STREAM_TIME: Duration = Duration::from_secs(60 * 10);
 /// Maximal size of batch in blocks.
 pub const MAX_BLOCKS_PER_BATCH: usize = 100; // Average block size is 100k.
 /// Maximal size of batch in bytes.
@@ -103,7 +91,7 @@ const MAX_BYTES_PER_BATCH: u64 = 10 * 1024 * 1024; // 10Mb.
 pub enum Downstream {
     BugState,
     Accepted {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
@@ -111,7 +99,7 @@ pub enum Downstream {
         rx: mpsc::Receiver<Vec<u8>>,
     },
     Sending {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -195,7 +183,7 @@ impl Downstream {
                         return Poll::Ready(());
                     }
                     Poll::Pending => {
-                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_TIME {
                             debug!("[{}] Peer is not active, disconnecting", peer_id);
                             return Poll::Ready(());
                         }
@@ -207,7 +195,7 @@ impl Downstream {
                 // Parse the request.
                 //
                 trace!("[{}] -> {:?}", peer_id, request);
-                let request = match ReplicationRequest::from_buffer(&request) {
+                let request = match SyncRequest::from_buffer(&request) {
                     Ok(request) => request,
                     Err(error) => {
                         let error = format!(
@@ -223,7 +211,7 @@ impl Downstream {
                 //
                 trace!("[{}] -> {:?}", peer_id, request);
                 match request {
-                    ReplicationRequest::Subscribe {
+                    SyncRequest::Subscribe {
                         epoch,
                         offset,
                         light,
@@ -242,7 +230,7 @@ impl Downstream {
                             _ => unreachable!("We in accept so no other state should apear.")
                         };
 
-                        let response = ReplicationResponse::Subscribed {
+                        let response = SyncReply::Subscribed {
                             current_epoch,
                             current_offset,
                         };
@@ -272,7 +260,7 @@ impl Downstream {
                             }
                         }
                     }
-                    ReplicationRequest::RequestOutputs(request) => {
+                    SyncRequest::RequestOutputs(request) => {
                         debug!("Peer request outputs: {:?}", request);
                         let found_outputs = match block_reader.get_block(request.block_epoch, request.block_offset) {
                             Ok(block ) => {
@@ -299,7 +287,7 @@ impl Downstream {
                             block_offset: request.block_offset,
                             found_outputs,
                         };
-                        let response = ReplicationResponse::OutputsInfo(outputs_info).into_buffer().unwrap();
+                        let response = SyncReply::OutputsInfo(outputs_info).into_buffer().unwrap();
                         match tx.try_send(response) {
                             Ok(()) => {}
                             Err(mpsc::TrySendError { .. }) => {
@@ -327,7 +315,7 @@ impl Downstream {
                 //
                 // Check quota.
                 //
-                if Instant::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
+                if Instant::now().duration_since(*start_clock) >= MAX_STREAM_TIME {
                     debug!("[{}] Quota exceeded, disconnected", peer_id);
                     return Poll::Ready(());
                 }
@@ -403,7 +391,7 @@ impl Downstream {
     ) -> bool
     where
         BlocksIter: IntoIterator<Item = I>,
-        I: IntoReplicationResponse + NextEpochOffset + Sized,
+        I: IntoSyncReply + NextEpochOffset + Sized,
     {
         let (peer_id, tx, epoch, offset, total_bytes_sent, total_blocks_sent, clock) = match self {
             Downstream::Sending {
@@ -441,8 +429,7 @@ impl Downstream {
                 break;
             }
             let (next_epoch, next_offset) = block.next_epoch_offset(blocks_in_epoch);
-            let response: ReplicationResponse =
-                block.into_replication_response(current_epoch, current_offset);
+            let response: SyncReply = block.into_sync_reply(current_epoch, current_offset);
             let response = response.into_buffer().unwrap();
             let response_len = response.len();
             match tx.try_send(response) {
@@ -461,7 +448,7 @@ impl Downstream {
                         bytes_sent,
                         blocks_sent
                     );
-                    if Instant::now().duration_since(*clock) >= MAX_IDLE_DURATION {
+                    if Instant::now().duration_since(*clock) >= MAX_IDLE_TIME {
                         debug!("[{}] Peer is not active, disconnecting", peer_id);
                         return false;
                     }

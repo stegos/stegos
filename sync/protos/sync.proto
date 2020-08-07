@@ -1,5 +1,5 @@
 syntax = "proto3";
-package stegos.replication;
+package stegos.sync;
 
 import "crypto.proto";
 import "blockchain.proto";
@@ -9,7 +9,7 @@ message Subscribe {
     uint32 offset = 2;
 }
 
-message ReplicationRequest {
+message SyncRequest {
     oneof request {
         Subscribe subscribe_full = 1;
         Subscribe subscribe_light = 2;
@@ -50,7 +50,7 @@ message OutputsInfo {
     repeated stegos.blockchain.Output found_outputs = 3; 
 }
 
-message ReplicationResponse {
+message SyncReply {
     oneof response {
         Subscribed subscribed = 1;
         Block block = 2;

@@ -1,4 +1,4 @@
-//! Replication - Peer State Machine.
+//! Sync - Peer State Machine.
 
 //
 // Copyright (c) 2019 Stegos AG
@@ -23,9 +23,9 @@
 
 use super::api::PeerInfo;
 use super::downstream::Downstream;
-use super::protos::{ReplicationRequest, ReplicationResponse};
+use super::protos::{SyncReply, SyncRequest};
 use crate::protos::RequestOutputs;
-use crate::ReplicationRow;
+use crate::SyncEntry;
 use futures::channel::mpsc;
 use futures::{
     task::{Context, Poll},
@@ -35,37 +35,37 @@ use log::*;
 use std::collections::HashMap;
 use std::time::Duration;
 use stegos_blockchain::{Block, LightBlock};
-use stegos_network::{Multiaddr, PeerId, ReplicationVersion};
+use stegos_network::{Multiaddr, PeerId, SyncVersion};
 use stegos_serialization::traits::ProtoConvert;
 use tokio::time::Instant;
 
 /// How long a peer can stay without network activity.
-const MAX_IDLE_DURATION: Duration = Duration::from_secs(60);
+const MAX_IDLE_TIME: Duration = Duration::from_secs(60);
 /// How long a peer can stay in Receiving/Sending state.
-const MAX_STREAMING_DURATION: Duration = Duration::from_secs(60 * 10);
+const MAX_STREAM_TIME: Duration = Duration::from_secs(60 * 10);
 /// Maximal size of batch in blocks.
 pub const MAX_BLOCKS_PER_BATCH: usize = 100; // Average block size is 100k.
 
-/// Replication Peer.
+/// Sync Peer.
 #[derive(Debug)]
 pub(super) enum Peer {
-    /// Replication protocol resolved.
+    /// Sync protocol resolved.
     Registered {
-        version: Option<ReplicationVersion>,
+        version: Option<SyncVersion>,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer is connecting to a remote side.
     Connecting {
-        version: Option<ReplicationVersion>,
+        version: Option<SyncVersion>,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
     },
     /// Peer is connected, but his connection keeped unsubscribed for future usage.
     Background {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
@@ -74,7 +74,7 @@ pub(super) enum Peer {
     },
     /// Peer has been connected to a remote side.
     Connected {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -83,7 +83,7 @@ pub(super) enum Peer {
         rx: mpsc::Receiver<Vec<u8>>,
     },
     Receiving {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         light: bool,
@@ -98,7 +98,7 @@ pub(super) enum Peer {
         bytes_received: u64,
     },
     Failed {
-        version: ReplicationVersion,
+        version: SyncVersion,
         peer_id: PeerId,
         multiaddr: HashMap<Multiaddr, bool>,
         last_clock: Instant,
@@ -137,11 +137,7 @@ impl Peer {
     ///
     /// Create a new peer in Registered state.
     ///
-    pub(super) fn registered<H>(
-        peer_id: PeerId,
-        multiaddr: H,
-        version: Option<ReplicationVersion>,
-    ) -> Self
+    pub(super) fn registered<H>(peer_id: PeerId, multiaddr: H, version: Option<SyncVersion>) -> Self
     where
         H: IntoIterator<Item = (Multiaddr, bool)>,
     {
@@ -233,7 +229,7 @@ impl Peer {
             block_offset,
             outputs_ids,
         };
-        let request = ReplicationRequest::RequestOutputs(request);
+        let request = SyncRequest::RequestOutputs(request);
         trace!("[{}] <- {:?}", peer_id, request);
         let request = request.into_buffer().unwrap();
         let new_state = match tx.try_send(request) {
@@ -281,7 +277,7 @@ impl Peer {
                 return self.disconnected();
             }
         };
-        let request = ReplicationRequest::Subscribe {
+        let request = SyncRequest::Subscribe {
             epoch,
             offset,
             light,
@@ -369,7 +365,7 @@ impl Peer {
             _ => unreachable!("Handled in previous match"),
         };
 
-        let request = ReplicationRequest::Subscribe {
+        let request = SyncRequest::Subscribe {
             epoch,
             offset,
             light,
@@ -657,7 +653,7 @@ impl Peer {
     ///
     /// The state machine.
     ///
-    pub(super) fn poll(&mut self, cx: &mut Context) -> Poll<ReplicationRow> {
+    pub(super) fn poll(&mut self, cx: &mut Context) -> Poll<SyncEntry> {
         match self {
             //--------------------------------------------------------------------------------------
             // Registered
@@ -698,7 +694,7 @@ impl Peer {
                         return Poll::Pending;
                     }
                     Poll::Pending => {
-                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_TIME {
                             debug!("[{}] Peer is not active, disconnecting", peer_id);
                             self.disconnected();
                         }
@@ -710,7 +706,7 @@ impl Peer {
                 // Parse the response.
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
-                let response = match ReplicationResponse::from_buffer(&response) {
+                let response = match SyncReply::from_buffer(&response) {
                     Ok(response) => response,
                     Err(error) => {
                         let error = format!(
@@ -751,7 +747,7 @@ impl Peer {
                         _ => unreachable!("Expected Connected state"),
                     };
                 let new_state = match response {
-                    ReplicationResponse::Subscribed {
+                    SyncReply::Subscribed {
                         current_epoch,
                         current_offset,
                     } => {
@@ -815,7 +811,7 @@ impl Peer {
                         return Poll::Pending;
                     }
                     Poll::Pending => {
-                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                        if Instant::now().duration_since(*last_clock) >= MAX_IDLE_TIME {
                             debug!("[{}] Peer is not active, disconnecting", peer_id);
                             self.disconnected();
                         }
@@ -827,7 +823,7 @@ impl Peer {
                 // Parse the response.
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
-                let response = match ReplicationResponse::from_buffer(&response) {
+                let response = match SyncReply::from_buffer(&response) {
                     Ok(response) => response,
                     Err(error) => {
                         let error = format!(
@@ -853,8 +849,8 @@ impl Peer {
                 //
                 trace!("[{}] -> {:?}", peer_id, response);
                 let new_state = match response {
-                    ReplicationResponse::OutputsInfo(outputs_info) => {
-                        return Poll::Ready(ReplicationRow::OutputsInfo(outputs_info));
+                    SyncReply::OutputsInfo(outputs_info) => {
+                        return Poll::Ready(SyncEntry::OutputsInfo(outputs_info));
                     }
                     response => {
                         let error = format!(
@@ -898,7 +894,7 @@ impl Peer {
                 //
                 // Check quota.
                 //
-                if Instant::now().duration_since(*start_clock) >= MAX_STREAMING_DURATION {
+                if Instant::now().duration_since(*start_clock) >= MAX_STREAM_TIME {
                     debug!("[{}] Quota exceeded, disconnected", peer_id);
                     self.disconnected();
                     return Poll::Pending;
@@ -912,7 +908,7 @@ impl Peer {
                             //
                             trace!("[{}] -> {:?}", peer_id, response);
                             let response_len = response.len();
-                            let response = match ReplicationResponse::from_buffer(&response) {
+                            let response = match SyncReply::from_buffer(&response) {
                                 Ok(response) => response,
                                 Err(error) => {
                                     let error = format!(
@@ -938,7 +934,7 @@ impl Peer {
                             //
                             trace!("[{}] -> {:?}", peer_id, response);
                             match response {
-                                ReplicationResponse::Block {
+                                SyncReply::Block {
                                     current_epoch,
                                     current_offset,
                                     block,
@@ -962,9 +958,9 @@ impl Peer {
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    return Poll::Ready(ReplicationRow::Block(block));
+                                    return Poll::Ready(SyncEntry::Block(block));
                                 }
-                                ReplicationResponse::LightBlock {
+                                SyncReply::LightBlock {
                                     current_epoch,
                                     current_offset,
                                     block,
@@ -988,7 +984,7 @@ impl Peer {
                                     *total_bytes_received += response_len as u64;
                                     *epoch = current_epoch;
                                     *offset = current_offset;
-                                    return Poll::Ready(ReplicationRow::LightBlock(block));
+                                    return Poll::Ready(SyncEntry::LightBlock(block));
                                 }
                                 response => {
                                     let error = format!(
@@ -1017,7 +1013,7 @@ impl Peer {
                         }
                         Poll::Pending => {
                             trace!("[{}] Not ready for reading", peer_id,);
-                            if Instant::now().duration_since(*last_clock) >= MAX_IDLE_DURATION {
+                            if Instant::now().duration_since(*last_clock) >= MAX_IDLE_TIME {
                                 debug!("[{}] Peer is not active, disconnecting", peer_id);
                                 self.disconnected();
                             }

@@ -17,7 +17,7 @@ COPY ./keychain/Cargo.toml ./keychain/Cargo.toml
 COPY ./network/Cargo.toml ./network/Cargo.toml
 COPY ./node/Cargo.toml ./node/Cargo.toml
 COPY ./txpool/Cargo.toml ./txpool/Cargo.toml
-COPY ./replication/Cargo.toml ./replication/Cargo.toml
+COPY ./sync/Cargo.toml ./sync/Cargo.toml
 COPY ./serialization/Cargo.toml ./serialization/Cargo.toml
 COPY ./wallet/Cargo.toml ./wallet/Cargo.toml
 COPY ./stegos_lib_test/Cargo.toml ./stegos_lib_test/Cargo.toml

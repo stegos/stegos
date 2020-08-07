@@ -24,5 +24,5 @@ pub mod protocol;
 
 mod behavior;
 
-pub use self::behavior::{Replication, ReplicationEvent};
-pub use self::protocol::ReplicationVersion;
+pub use self::behavior::{SyncEvent, SyncQueue};
+pub use self::protocol::SyncVersion;

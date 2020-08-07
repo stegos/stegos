@@ -356,8 +356,8 @@ impl ConsoleService {
         eprintln!("show history [STARTING DATE] - print history since date");
         eprintln!("show election - show consensus state");
         eprintln!("show escrow - print escrow");
-        eprintln!("show replication - show replication status");
-        eprintln!("change upstream - change the current replication upstream");
+        eprintln!("show sync - show sync status");
+        eprintln!("change upstream - change the current sync upstream");
         eprintln!("show recovery - print recovery information");
         eprintln!("show block EPOCH [OFFSET] - show a block");
         eprintln!("pop block - revert the latest micro block");
@@ -924,8 +924,8 @@ impl ConsoleService {
         } else if msg == "show escrow" {
             let request = NodeRequest::EscrowInfo {};
             self.send_node_request(request).await?
-        } else if msg == "show replication" {
-            let request = NodeRequest::ReplicationInfo {};
+        } else if msg == "show sync" {
+            let request = NodeRequest::SyncStatus {};
             self.send_node_request(request).await?
         } else if msg == "change upstream" {
             let request = NodeRequest::ChangeUpstream {};
@@ -933,8 +933,8 @@ impl ConsoleService {
         } else if msg == "show utxo" {
             let request = AccountRequest::UnspentInfo {};
             self.send_account_request(request).await?
-        } else if msg == "show light replication" {
-            let request = WalletControlRequest::LightReplicationInfo {};
+        } else if msg == "show light sync" {
+            let request = WalletControlRequest::LightSyncStatus {};
             self.send_wallet_control_request(request).await?
         } else if msg.starts_with("show history") {
             let arg = &msg[12..];

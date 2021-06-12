@@ -35,7 +35,7 @@ paired = "0.15"
 ff = "0.4"
 curve25519-dalek = "1"
 merlin = "1"
-ristretto_bulletproofs = { package = "bulletproofs", version = "1" }
+ristretto_bulletproofs = { package = "bulletproofs", version = "4" }
 vdf_field = { path = "stubs/vdf_field" }
 clap = "2.32"
 base58check = {version="0.0.1", optional=true}
